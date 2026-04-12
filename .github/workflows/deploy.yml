@@ -52,7 +52,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cabal/store
-          key: cabal-store-${{ runner.os }}-${{ hashFiles('cabal.project.freeze', 'bricks.cabal', 'devenv.lock', 'devenv.nix') }}
+          key: cabal-store-${{ runner.os }}-${{ hashFiles('cabal.project.freeze', 'brick-frame.cabal', 'devenv.lock', 'devenv.nix') }}
           restore-keys: cabal-store-${{ runner.os }}-
 
       - name: Update Cabal package index

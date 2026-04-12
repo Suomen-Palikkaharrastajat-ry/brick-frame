@@ -1,11 +1,11 @@
 # AGENTS.md — Palikkakehys
 
-Browser-based LEGO Bricks gear simulator built with Elm + WebGL. Loads LDraw `.ldr`/`.mpd` files, renders 3D models, detects Bricks gear trains, and simulates gear rotation physics with playback controls.
+Browser-based Brick Frame gear simulator built with Elm + WebGL. Loads LDraw `.ldr`/`.mpd` files, renders 3D models, detects gear trains, and simulates gear rotation physics with playback controls.
 
 ## Project Structure
 
 ```
-packages/bricks-simulator/src/
+packages/brick-frame-simulator/src/
   LDraw/
     Types.elm           # LDrawLine union type and supporting types
     Parser.elm          # parseLine, parseFile, splitMpd
@@ -46,7 +46,7 @@ In-depth documentation for agents and contributors:
 
 - [docs/rendering.md](docs/rendering.md) — WebGL pipeline, shaders, coordinate system, camera, BFC, conditional lines, and rendering limitations.
 - [docs/physics.md](docs/physics.md) — Gear detection algorithm, adjacency graph, BFS rotation propagation, gear types, and physics limitations.
-- [docs/library-usage.md](docs/library-usage.md) — How to integrate `packages/bricks-simulator` into a custom Elm application, including setup, port contracts, module reference, and a step-by-step walkthrough.
+- [docs/library-usage.md](docs/library-usage.md) — How to integrate `packages/brick-frame-simulator` into a custom Elm application, including setup, port contracts, module reference, and a step-by-step walkthrough.
 
 ## Key Technical Facts
 
@@ -84,7 +84,7 @@ make generate  # Run Haskell generator (writes elm-app/src/Data.elm)
 | `make build` | Production build → `build/` |
 | `make generate` | Run Haskell generator only |
 | `make test` | hlint + cabal test + elm-test |
-| `make test-lib` | Run tests in `packages/bricks-simulator/` only |
+| `make test-lib` | Run tests in `packages/brick-frame-simulator/` only |
 | `make check` | Validate formatting + hlint + elm-review (no changes) |
 | `make format` | Auto-format Haskell (fourmolu) and Elm (elm-format) |
 | `make elm-review` | Run elm-review LLM-agent rules only |

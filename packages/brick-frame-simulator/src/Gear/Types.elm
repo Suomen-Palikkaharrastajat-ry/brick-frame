@@ -5,7 +5,7 @@ module Gear.Types exposing
     , GearSpec
     )
 
-{-| Core types for Bricks gear detection and simulation.
+{-| Core types for gear detection and simulation.
 
 ## Coordinate system
 
@@ -23,7 +23,7 @@ import Math.Vector3 exposing (Vec3)
 -- ── GearSpec ──────────────────────────────────────────────────────────────────
 
 
-{-| Static properties of a known Bricks gear part.
+{-| Static properties of a known gear part.
 
   - `partFile`    — normalised LDraw filename (lowercase, forward slashes)
   - `teeth`       — tooth count (determines gear ratio)

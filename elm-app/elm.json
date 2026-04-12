@@ -2,7 +2,7 @@
     "type": "application",
     "source-directories": [
         ".elm-tailwind",
-        "../packages/bricks-simulator/src",
+        "../packages/brick-frame-simulator/src",
         "src",
         "packages/design-tokens/src",
         "packages/ui-components/src"

@@ -1,6 +1,6 @@
-# Using bricks-simulator in a custom Elm application
+# Using Brick Frame simulator in a custom Elm application
 
-`packages/bricks-simulator/` is a self-contained Elm source package that
+`packages/brick-frame-simulator/` is a self-contained Elm source package that
 provides LDraw parsing, 3D rendering, gear detection, and gear physics as
 **pure functions**. It has no ports of its own — those live in the host
 application. The `elm-app/` demo wires everything together and serves as a
@@ -12,7 +12,7 @@ The project also ships a browser-native Web Components bundle with two custom
 elements:
 
 - `<bricks-viewer>`: render model only (no simulation controls)
-- `<bricks-simulator>`: render model + Bricks simulation UI
+- `<bricks-simulator>`: render model + simulation UI
 
 Minimal HTML usage:
 
@@ -55,7 +55,7 @@ directory:
 {
   "source-directories": [
     "src",
-    "../packages/bricks-simulator/src"
+    "../packages/brick-frame-simulator/src"
   ]
 }
 ```
@@ -295,19 +295,19 @@ construction and frustum culling pattern.
 | `ldrawColors` | `Dict Int { r, g, b, alpha }` | Known LDraw/LEGO color codes used by the simulator |
 | `embeddedParts` | `Dict String String` | Pre-loaded LDraw part text for core gears and their dependencies |
 | `lodParts` | `Dict String String` | Simplified (LOD) versions of embedded parts |
-| `gearParts` | `List { partFile, teeth, pitchRadius }` | Known Bricks gear specs |
+| `gearParts` | `List { partFile, teeth, pitchRadius }` | Known gear specs |
 | `exampleModels` | `List { label, url }` | Sample model URLs (not exposed in demo UI) |
 
 ---
 
 ## Running tests for the package
 
-The package has its own test suite in `packages/bricks-simulator/tests/`:
+The package has its own test suite in `packages/brick-frame-simulator/tests/`:
 
 ```sh
 make test-lib
 # or manually:
-cd packages/bricks-simulator && elm-test
+cd packages/brick-frame-simulator && elm-test
 ```
 
 Tests cover `LDraw.Parser`, `LDraw.Geometry`, `Gear.Detect`, `Gear.Physics`,

@@ -6,7 +6,7 @@ module Gear.Components exposing
     , extractComponents
     )
 
-{-| Detect Bricks non-gear drivetrain components (axles, beams) in a loaded
+{-| Detect non-gear drivetrain components (axles, beams) in a loaded
 LDraw part tree.
 -}
 

@@ -1,6 +1,6 @@
 module Gear.Detect exposing (buildGearGraph, extractGears)
 
-{-| Gear detection: identify known Bricks gear parts within a loaded LDraw
+{-| Gear detection: identify known gear parts within a loaded LDraw
 model and build a connectivity graph from their world positions.
 
 ## Detection algorithm

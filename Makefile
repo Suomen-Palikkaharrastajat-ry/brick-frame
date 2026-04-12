@@ -41,20 +41,20 @@ devenv.local.yaml:
 .PHONY: all
 all: build ## Build everything
 
-HS_SOURCES := $(shell find src generator -name '*.hs') bricks.cabal $(wildcard cabal.project*)
+HS_SOURCES := $(shell find src generator -name '*.hs') brick-frame.cabal $(wildcard cabal.project*)
 ELM_APP_SOURCES := $(shell find elm-app/src -name '*.elm' ! -name 'Data.elm')
 ELM_PACKAGE_SOURCES := $(shell find vendor/master-builder/packages -name '*.elm' -o -name '*.css' 2>/dev/null)
 WC_SOURCES := $(shell find elm-app/web-components elm-app/runtime -name '*.js' 2>/dev/null)
 
-bricks-generator: $(HS_SOURCES)
+brick-frame-generator: $(HS_SOURCES)
 	cabal build generator
 	cp $$(cabal list-bin generator) $@
 
 .PHONY: generate
 generate: elm-app/src/Data.elm ## Run Haskell generator to produce elm-app/src/Data.elm
 
-elm-app/src/Data.elm: bricks-generator
-	./bricks-generator
+elm-app/src/Data.elm: brick-frame-generator
+	./brick-frame-generator
 
 elm-app/src/.data-nix-stamp:
 	$(GENERATOR_NIX)
@@ -128,7 +128,7 @@ dist-ci: build/.elm-stamp-ci build/.wc-stamp-ci ## CI build: generator (Nix bina
 .PHONY: watch
 watch: ## Watch Haskell sources and run Vite dev server
 	make generate
-	find src generator bricks.cabal -name "*.hs" -o -name "*.cabal" | entr -s 'make generate' &
+	find src generator brick-frame.cabal -name "*.hs" -o -name "*.cabal" | entr -s 'make generate' &
 	cd elm-app && elm-tailwind-classes gen && vite
 
 .PHONY: sync-ldraw
@@ -151,8 +151,8 @@ test: check ## Run all tests
 	$(MAKE) test-lib
 
 .PHONY: test-lib
-test-lib: ## Run bricks-simulator library unit tests
-	cd packages/bricks-simulator && elm-test
+test-lib: ## Run brick-frame-simulator library unit tests
+	cd packages/brick-frame-simulator && elm-test
 
 .PHONY: repl
 repl: ## Open GHCi REPL
@@ -179,4 +179,4 @@ format: ## Auto-format Haskell and Elm source files
 .PHONY: clean
 clean: ## Remove build artifacts and generated output
 	cabal clean
-	rm -rf build bricks-generator .hpc elm-app/.elm-tailwind elm-app/elm-stuff elm-app/src/Data.elm elm-app/src/.data-nix-stamp build/.wc-stamp build/.wc-stamp-ci
+	rm -rf build brick-frame-generator .hpc elm-app/.elm-tailwind elm-app/elm-stuff elm-app/src/Data.elm elm-app/src/.data-nix-stamp build/.wc-stamp build/.wc-stamp-ci

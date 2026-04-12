@@ -9,7 +9,7 @@ import Test exposing (Test, describe, test)
 
 suite : Test
 suite =
-    describe "bricks-simulator package"
+    describe "brick-frame-simulator package"
         [ test "test harness is wired" <|
             \_ ->
                 Expect.equal True True

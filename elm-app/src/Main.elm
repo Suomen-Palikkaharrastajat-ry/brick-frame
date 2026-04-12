@@ -1,6 +1,6 @@
 module Main exposing (main)
 
-{-| Main application entrypoint for the LEGO Bricks simulator.
+{-| Main application entrypoint for Brick Frame (Palikkakehys).
 -}
 
 import Array
@@ -1352,7 +1352,7 @@ finishLoading model =
 
                     else
                         runtimeEventCmd "simulation-unavailable"
-                            [ ( "reason", Encode.string "No Bricks gear train detected" ) ]
+                            [ ( "reason", Encode.string "No supported gear train detected" ) ]
             in
             ( { model
                 | camera = nextCamera
@@ -3208,7 +3208,7 @@ viewSimulationUnavailablePanel =
             , Attr.style "font-size" "11px"
             , Attr.style "color" Theme.textMuted
             ]
-            [ text "No Bricks gear train detected in this model." ]
+            [ text "No supported gear train detected in this model." ]
         ]
 
 

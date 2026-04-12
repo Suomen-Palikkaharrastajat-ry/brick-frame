@@ -125,7 +125,7 @@ data GearSpec = GearSpec
     }
     deriving (Show)
 
--- Known Bricks gear parts with pitch radii in LDraw units (LDU).
+-- Known gear parts with pitch radii in LDraw units (LDU).
 -- Pitch radii: teeth × 1.25 LDU  (module M = 1 mm = 2.5 LDU, so r = teeth × M / 2)
 knownGears :: [GearSpec]
 knownGears =
@@ -196,7 +196,7 @@ generateElmModule = do
             , "        ]"
             , ""
             , ""
-            , "-- Known Bricks gear parts"
+            , "-- Known gear parts"
             , "gearParts : List { partFile : String, teeth : Int, pitchRadius : Float }"
             , "gearParts ="
             , "    [ " <> Text.intercalate "\n    , " (map gearEntry knownGears)

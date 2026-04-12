@@ -15,14 +15,14 @@ elm-app/packages
 # --- Haskell build artifacts ---
 dist-newstyle/
 template-generator
-technic-generator
+brick-frame-generator
 
 # --- Elm / frontend build artifacts ---
 elm-app/elm-stuff/
 elm-app/.elm-tailwind/
 elm-app/.vite/
 elm-app/public/ldraw/
-packages/bricks-simulator/elm-stuff/
+packages/brick-frame-simulator/elm-stuff/
 build/
 
 # --- Generated output ---
