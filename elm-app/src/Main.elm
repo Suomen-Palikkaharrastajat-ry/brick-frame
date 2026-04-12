@@ -1001,11 +1001,17 @@ finishLoading model =
         gearInstances =
             Detect.extractGears Data.gearParts model.topLevelLines model.partCache
 
+        components =
+            topLevelComponents model.topLevelLines
+
+        drivenAxles =
+            buildDrivenAxles model.partCache components gearInstances
+
         -- For each top-level line, compute the gear it co-rotates with (if any).
         -- Used to both exclude those lines from the static scene and build
         -- rotating meshes for them.
         coaxialGearByLine =
-            List.map (\line -> topLevelCoaxialGear line gearInstances) model.topLevelLines
+            List.map (\line -> topLevelCoaxialGear drivenAxles line gearInstances) model.topLevelLines
 
         -- Lines that belong to the static (non-rotating) scene: drop gears,
         -- known components, and co-axial parts that will get their own
@@ -1044,9 +1050,6 @@ finishLoading model =
 
         graph =
             Detect.buildGearGraph gearInstances
-
-        components =
-            topLevelComponents model.topLevelLines
 
         -- Auto-select the first detected gear as the motor
         firstGearId =
@@ -1762,52 +1765,81 @@ Used in `finishLoading` to decide which non-gear, non-component parts should
 rotate with a gear rather than being baked into the static scene.
 
 -}
-topLevelCoaxialGear : LDrawLine -> List GearInstance -> Maybe GearId
-topLevelCoaxialGear line gears =
+topLevelCoaxialGear : List DrivenAxle -> LDrawLine -> List GearInstance -> Maybe GearId
+topLevelCoaxialGear drivenAxles line gears =
     case line of
         SubFileRef ref ->
             let
                 pos =
                     toYUpPoint (Mat4.transform ref.transform (Vec3.vec3 0 0 0))
-            in
-            gears
-                |> List.filterMap
-                    (\gear ->
-                        let
-                            gearCenter =
-                                toYUpPoint gear.worldPosition
 
-                            gearAxisEnd =
-                                toYUpPoint (Mat4.transform gear.worldMatrix (Vec3.vec3 0 0 1))
+                axleMatch =
+                    drivenAxles
+                        |> List.filterMap
+                            (\axle ->
+                                let
+                                    lineDist =
+                                        pointToLineDistance pos axle.center axle.axis
 
-                            gearAxisRaw =
-                                Vec3.sub gearAxisEnd gearCenter
-
-                            gearAxisLen =
-                                Vec3.length gearAxisRaw
-
-                            gearAxis =
-                                if gearAxisLen < 1.0e-6 then
-                                    Vec3.vec3 0 1 0
+                                    axialOffset =
+                                        abs (Vec3.dot (Vec3.sub pos axle.center) axle.axis)
+                                in
+                                if lineDist <= 6 && axialOffset <= 240 then
+                                    Just ( lineDist, axialOffset, axle.drivingGearId )
 
                                 else
-                                    Vec3.scale (1 / gearAxisLen) gearAxisRaw
+                                    Nothing
+                            )
+                        |> List.sortBy (\( lineDist, axialOffset, _ ) -> ( lineDist, axialOffset ))
+                        |> List.head
+                        |> Maybe.map (\( _, _, gearId ) -> gearId)
 
-                            lineDist =
-                                pointToLineDistance pos gearCenter gearAxis
+                gearMatch =
+                    gears
+                        |> List.filterMap
+                            (\gear ->
+                                let
+                                    gearCenter =
+                                        toYUpPoint gear.worldPosition
 
-                            axialOffset =
-                                abs (Vec3.dot (Vec3.sub pos gearCenter) gearAxis)
-                        in
-                        if lineDist <= 2.5 && axialOffset <= 120 then
-                            Just ( lineDist, gear.id )
+                                    gearAxisEnd =
+                                        toYUpPoint (Mat4.transform gear.worldMatrix (Vec3.vec3 0 0 1))
 
-                        else
-                            Nothing
-                    )
-                |> List.sortBy Tuple.first
-                |> List.head
-                |> Maybe.map Tuple.second
+                                    gearAxisRaw =
+                                        Vec3.sub gearAxisEnd gearCenter
+
+                                    gearAxisLen =
+                                        Vec3.length gearAxisRaw
+
+                                    gearAxis =
+                                        if gearAxisLen < 1.0e-6 then
+                                            Vec3.vec3 0 1 0
+
+                                        else
+                                            Vec3.scale (1 / gearAxisLen) gearAxisRaw
+
+                                    lineDist =
+                                        pointToLineDistance pos gearCenter gearAxis
+
+                                    axialOffset =
+                                        abs (Vec3.dot (Vec3.sub pos gearCenter) gearAxis)
+                                in
+                                if lineDist <= 2.5 && axialOffset <= 120 then
+                                    Just ( lineDist, axialOffset, gear.id )
+
+                                else
+                                    Nothing
+                            )
+                        |> List.sortBy (\( lineDist, axialOffset, _ ) -> ( lineDist, axialOffset ))
+                        |> List.head
+                        |> Maybe.map (\( _, _, gearId ) -> gearId)
+            in
+            case axleMatch of
+                Just gearId ->
+                    Just gearId
+
+                Nothing ->
+                    gearMatch
 
         _ ->
             Nothing
@@ -1911,6 +1943,30 @@ type alias GearAxisInfo =
     { center : Vec3.Vec3
     , axis : Vec3.Vec3
     }
+
+
+type alias DrivenAxle =
+    { center : Vec3.Vec3
+    , axis : Vec3.Vec3
+    , drivingGearId : GearId
+    }
+
+
+buildDrivenAxles : PartCache -> List Components.ComponentInstance -> List GearInstance -> List DrivenAxle
+buildDrivenAxles cache components gears =
+    components
+        |> List.filter (\component -> component.kind == Components.AxleLike)
+        |> List.filterMap
+            (\component ->
+                componentDrivingGear cache component gears
+                    |> Maybe.map
+                        (\gearId ->
+                            { center = toYUpPoint component.worldPosition
+                            , axis = inferComponentAxis cache component
+                            , drivingGearId = gearId
+                            }
+                        )
+            )
 
 
 gearAxisInfoById : GearId -> List GearInstance -> Maybe GearAxisInfo
