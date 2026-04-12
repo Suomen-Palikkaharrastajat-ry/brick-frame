@@ -96,11 +96,11 @@ elm-format: ## Auto-format Elm source files
 
 .PHONY: elm-review
 elm-review: ## Run elm-review LLM-agent rules (no changes)
-	cd elm-app && elm-review
+	cd elm-app && ./node_modules/.bin/elm-review
 
 .PHONY: elm-review-fix
 elm-review-fix: ## Run elm-review with auto-fix
-	cd elm-app && elm-review --fix
+	cd elm-app && ./node_modules/.bin/elm-review --fix
 
 # ── Combined targets ──────────────────────────────────────────────────────────
 
