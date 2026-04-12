@@ -18,10 +18,21 @@
       font-size: 1.25rem;
     }
 
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    h2 {
+      margin: 8px 0 12px;
+      font-size: 1rem;
+    }
+
+    p {
+      margin: 8px 0;
+      line-height: 1.45;
+    }
+
+    .stack {
+      display: flex;
+      flex-direction: column;
       gap: 16px;
+      margin-top: 18px;
     }
 
     .card {
@@ -30,6 +41,17 @@
       border-radius: 10px;
       padding: 12px;
       box-shadow: 0 8px 24px rgba(5, 19, 29, 0.08);
+    }
+
+    pre {
+      margin: 10px 0 0;
+      padding: 10px;
+      overflow-x: auto;
+      border-radius: 8px;
+      background: #f3f4f6;
+      border: 1px solid #e5e7eb;
+      font-size: 12px;
+      line-height: 1.4;
     }
 
     bricks-viewer,
@@ -47,7 +69,21 @@
   <h1>Palikkakehys Web Components Demo</h1>
   <p>Plain HTML + built bundle only.</p>
 
-  <div class="grid">
+  <section class="card">
+    <h2>Usage</h2>
+    <p>
+      Load the bundle from:
+      <code>https://kehys.palikkaharrastajat.fi/examples/web-components/bricks-web-components.iife.js</code>
+    </p>
+    <p>Minimal HTML:</p>
+    <pre>&lt;script src="https://kehys.palikkaharrastajat.fi/examples/web-components/bricks-web-components.iife.js"&gt;&lt;/script&gt;
+
+&lt;bricks-viewer src="https://kehys.palikkaharrastajat.fi/examples/gears.ldr"&gt;&lt;/bricks-viewer&gt;
+
+&lt;bricks-simulator src="https://kehys.palikkaharrastajat.fi/examples/gears.ldr"&gt;&lt;/bricks-simulator&gt;</pre>
+  </section>
+
+  <div class="stack">
     <section class="card">
       <h2>Viewer</h2>
       <bricks-viewer src="../gears.ldr"></bricks-viewer>
