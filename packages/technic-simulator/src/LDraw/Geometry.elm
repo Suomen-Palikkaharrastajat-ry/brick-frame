@@ -82,7 +82,7 @@ flatten lines cache parentColor worldTransform =
             flattenLines lines cache parentColor worldTransform { triangles = [], lines = [], conditionalLines = [], bfcCertified = False }
     in
     { result
-        | triangles = smoothTriangles result.triangles
+        | triangles = result.triangles
         , bfcCertified = bfc
     }
 

@@ -38,7 +38,7 @@ assigned sequentially starting at 0.
 -}
 extractGears : List GearSpec -> List LDrawLine -> PartCache -> List GearInstance
 extractGears gearSpecs lines cache =
-    walkLines gearSpecs lines cache Mat4.identity []
+    walkLines gearSpecs lines cache 15 Mat4.identity []
         |> List.reverse
         |> List.indexedMap (\i inst -> { inst | id = i })
 
@@ -208,18 +208,25 @@ addConnection from to dict =
 {-| Recursive part-tree walk. Accumulates gear instances (without final IDs —
 those are assigned after the walk in `extractGears`).
 -}
-walkLines : List GearSpec -> List LDrawLine -> PartCache -> Mat4 -> List GearInstance -> List GearInstance
-walkLines gearSpecs lines cache worldMat acc =
-    List.foldl (walkLine gearSpecs cache worldMat) acc lines
+walkLines : List GearSpec -> List LDrawLine -> PartCache -> Int -> Mat4 -> List GearInstance -> List GearInstance
+walkLines gearSpecs lines cache parentColor worldMat acc =
+    List.foldl (walkLine gearSpecs cache parentColor worldMat) acc lines
 
 
-walkLine : List GearSpec -> PartCache -> Mat4 -> LDrawLine -> List GearInstance -> List GearInstance
-walkLine gearSpecs cache worldMat line acc =
+walkLine : List GearSpec -> PartCache -> Int -> Mat4 -> LDrawLine -> List GearInstance -> List GearInstance
+walkLine gearSpecs cache parentColor worldMat line acc =
     case line of
-        SubFileRef { file, transform } ->
+        SubFileRef { file, transform, color } ->
             let
                 combinedMat =
                     Mat4.mul worldMat transform
+
+                childColor =
+                    if color == 16 || color == -1 then
+                        parentColor
+
+                    else
+                        color
             in
             case matchGear gearSpecs file of
                 Just spec ->
@@ -231,6 +238,7 @@ walkLine gearSpecs cache worldMat line acc =
                         inst =
                             { id = 0 -- placeholder; set after walk
                             , spec = spec
+                            , color = childColor
                             , worldPosition = worldPos
                             , worldMatrix = combinedMat
                             }
@@ -241,7 +249,7 @@ walkLine gearSpecs cache worldMat line acc =
                     -- Not a gear — recurse into its sub-parts if cached
                     case Dict.get file cache of
                         Just (Loaded subLines) ->
-                            walkLines gearSpecs subLines cache combinedMat acc
+                            walkLines gearSpecs subLines cache childColor combinedMat acc
 
                         _ ->
                             acc

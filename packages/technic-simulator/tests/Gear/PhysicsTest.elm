@@ -25,6 +25,7 @@ makeInstance : GearId -> Int -> Float -> Gear.Types.GearInstance
 makeInstance id teeth pr =
     { id = id
     , spec = spec teeth pr
+    , color = 16
     , worldPosition = vec3 0 0 0
     , worldMatrix = Mat4.identity
     }

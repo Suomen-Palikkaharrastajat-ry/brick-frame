@@ -118,6 +118,7 @@ type alias Model =
     , cameraMode : CameraMode
     , touchGesture : TouchGesture
     , activeTouches : Dict Int TouchPoint
+    , controlsCollapsed : Bool
     }
 
 
@@ -223,6 +224,7 @@ init flags =
       , cameraMode = initialCameraMode
       , touchGesture = NoTouchGesture
       , activeTouches = Dict.empty
+      , controlsCollapsed = False
       }
     , Cmd.batch
         [ Browser.Dom.getViewport
@@ -285,6 +287,7 @@ type Msg
     | ToggleMotor
     | SetMotorGear GearId
     | SetMotorSpeed Float
+    | ToggleControlsPanel
     | KeyPressed String
 
 
@@ -646,6 +649,9 @@ update msg model =
               }
             , Cmd.none
             )
+
+        ToggleControlsPanel ->
+            ( { model | controlsCollapsed = not model.controlsCollapsed }, Cmd.none )
 
         KeyPressed key ->
             case key of
@@ -1099,7 +1105,12 @@ finishLoading model =
                         case ( line, coaxial ) of
                             ( SubFileRef ref, Just gearId ) ->
                                 if not (isTopLevelGearRef line) && not (isTopLevelComponentRef line) then
-                                    Just { file = ref.file, transform = ref.transform, drivingGearId = gearId }
+                                    Just
+                                        { file = ref.file
+                                        , color = resolveRootColor ref.color
+                                        , transform = ref.transform
+                                        , drivingGearId = gearId
+                                        }
 
                                 else
                                     Nothing
@@ -1280,6 +1291,7 @@ topLevelComponents lines =
                                 Just
                                     { kind = spec.kind
                                     , partFile = spec.partFile
+                                    , color = resolveRootColor ref.color
                                     , worldPosition = origin
                                     , worldAxis = axis
                                     , worldMatrix = ref.transform
@@ -1291,6 +1303,15 @@ topLevelComponents lines =
                     _ ->
                         Nothing
             )
+
+
+resolveRootColor : Int -> Int
+resolveRootColor colorCode =
+    if colorCode == 16 || colorCode == -1 then
+        15
+
+    else
+        colorCode
 
 
 encodeLDrawLine : LDrawLine -> Encode.Value
@@ -1496,7 +1517,7 @@ buildGearMeshes cache instances =
                     Just (Loaded lines) ->
                         let
                             geom =
-                                Geometry.flatten lines cache 16 inst.worldMatrix
+                                Geometry.flatten lines cache inst.color inst.worldMatrix
 
                             center =
                                 toYUpPoint (Mat4.transform inst.worldMatrix (Vec3.vec3 0 0 0))
@@ -1687,7 +1708,7 @@ buildComponentMeshRenders cache components gears =
                     Just (Loaded lines) ->
                         let
                             geom =
-                                Geometry.flatten lines cache 15 component.worldMatrix
+                                Geometry.flatten lines cache component.color component.worldMatrix
                         in
                         Just
                             { mesh = WebGL.triangles geom.triangles
@@ -1938,7 +1959,7 @@ with the same rotation angle as their driving gear.
 buildCoaxialMeshRenders :
     PartCache
     -> List GearInstance
-    -> List { file : String, transform : Mat4.Mat4, drivingGearId : GearId }
+    -> List { file : String, color : Int, transform : Mat4.Mat4, drivingGearId : GearId }
     -> List ComponentMeshRender
 buildCoaxialMeshRenders cache gears parts =
     List.filterMap
@@ -1947,7 +1968,7 @@ buildCoaxialMeshRenders cache gears parts =
                 Just (Loaded lines) ->
                     let
                         geom =
-                            Geometry.flatten lines cache 15 part.transform
+                            Geometry.flatten lines cache part.color part.transform
 
                         center =
                             toYUpPoint (Mat4.transform part.transform (Vec3.vec3 0 0 0))
@@ -2866,25 +2887,53 @@ viewGearPanel model =
                     , Attr.style "pointer-events" "auto"
                     ]
                     ([ div
-                        [ Attr.style "margin-bottom" "8px"
-                        , Attr.style "color" "#f5c518"
+                        [ Attr.style "display" "flex"
+                        , Attr.style "align-items" "center"
+                        , Attr.style "justify-content" "space-between"
                         ]
-                        [ text
-                            (String.fromInt (List.length instances)
-                                ++ " gear"
-                                ++ (if List.length instances == 1 then
-                                        ""
+                        [ div
+                            [ Attr.style "color" "#f5c518" ]
+                            [ text
+                                (String.fromInt (List.length instances)
+                                    ++ " gear"
+                                    ++ (if List.length instances == 1 then
+                                            ""
 
-                                    else
-                                        "s"
-                                   )
-                                ++ " detected"
-                            )
+                                        else
+                                            "s"
+                                       )
+                                    ++ " detected"
+                                )
+                            ]
+                        , button
+                            [ Html.Events.onClick ToggleControlsPanel
+                            , Attr.style "padding" "2px 8px"
+                            , Attr.style "background" "rgba(255,255,255,0.1)"
+                            , Attr.style "color" "#fff"
+                            , Attr.style "border" "1px solid rgba(255,255,255,0.25)"
+                            , Attr.style "border-radius" "3px"
+                            , Attr.style "cursor" "pointer"
+                            , Attr.style "font-family" "monospace"
+                            , Attr.style "font-size" "11px"
+                            ]
+                            [ text
+                                (if model.controlsCollapsed then
+                                    "Maximize"
+
+                                 else
+                                    "Minimize"
+                                )
+                            ]
                         ]
                      ]
-                        ++ [ viewComponentSummary axleCount beamCount ]
-                        ++ List.map (viewGearRow model graph ratios) instances
-                        ++ [ viewMotorControls model ]
+                        ++ (if model.controlsCollapsed then
+                                []
+
+                            else
+                                [ viewComponentSummary axleCount beamCount ]
+                                    ++ List.map (viewGearRow model graph ratios) instances
+                                    ++ [ viewMotorControls model ]
+                           )
                     )
 
 

@@ -31,6 +31,7 @@ type alias ComponentSpec =
 type alias ComponentInstance =
     { kind : ComponentKind
     , partFile : String
+    , color : Int
     , worldPosition : Vec3
     , worldAxis : Vec3
     , worldMatrix : Mat4
@@ -68,22 +69,29 @@ defaultSpecs =
 
 extractComponents : List ComponentSpec -> List LDrawLine -> PartCache -> List ComponentInstance
 extractComponents specs lines cache =
-    walkLines specs lines cache Mat4.identity []
+    walkLines specs lines cache 15 Mat4.identity []
         |> List.reverse
 
 
-walkLines : List ComponentSpec -> List LDrawLine -> PartCache -> Mat4 -> List ComponentInstance -> List ComponentInstance
-walkLines specs lines cache worldMat acc =
-    List.foldl (walkLine specs cache worldMat) acc lines
+walkLines : List ComponentSpec -> List LDrawLine -> PartCache -> Int -> Mat4 -> List ComponentInstance -> List ComponentInstance
+walkLines specs lines cache parentColor worldMat acc =
+    List.foldl (walkLine specs cache parentColor worldMat) acc lines
 
 
-walkLine : List ComponentSpec -> PartCache -> Mat4 -> LDrawLine -> List ComponentInstance -> List ComponentInstance
-walkLine specs cache worldMat line acc =
+walkLine : List ComponentSpec -> PartCache -> Int -> Mat4 -> LDrawLine -> List ComponentInstance -> List ComponentInstance
+walkLine specs cache parentColor worldMat line acc =
     case line of
-        SubFileRef { file, transform } ->
+        SubFileRef { file, transform, color } ->
             let
                 combinedMat =
                     Mat4.mul worldMat transform
+
+                childColor =
+                    if color == 16 || color == -1 then
+                        parentColor
+
+                    else
+                        color
             in
             case matchSpec specs file of
                 Just spec ->
@@ -109,6 +117,7 @@ walkLine specs cache worldMat line acc =
                     in
                     { kind = spec.kind
                     , partFile = spec.partFile
+                    , color = childColor
                     , worldPosition = origin
                     , worldAxis = axis
                     , worldMatrix = combinedMat
@@ -118,7 +127,7 @@ walkLine specs cache worldMat line acc =
                 Nothing ->
                     case Dict.get file cache of
                         Just (Loaded subLines) ->
-                            walkLines specs subLines cache combinedMat acc
+                            walkLines specs subLines cache childColor combinedMat acc
 
                         _ ->
                             acc

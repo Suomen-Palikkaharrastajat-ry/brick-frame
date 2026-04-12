@@ -155,7 +155,7 @@ suite =
 
                         [] ->
                             Expect.fail "Expected a triangle"
-            , test "shared vertices across adjacent faces get smoothed normals" <|
+            , test "shared vertices across adjacent faces keep per-face normals" <|
                 \_ ->
                     let
                         lines =
@@ -175,8 +175,10 @@ suite =
                     case originNormals of
                         n :: _ ->
                             Expect.all
-                                [ \normal -> Expect.greaterThan 0.0 (abs (Vec3.getY normal))
-                                , \normal -> Expect.greaterThan 0.0 (abs (Vec3.getZ normal))
+                                [ \normal ->
+                                    Expect.equal True
+                                        (abs (Vec3.getY normal) < 1.0e-6 || abs (Vec3.getZ normal) < 1.0e-6)
+                                , \normal -> Vec3.length normal |> Expect.within (Expect.Absolute 1.0e-5) 1.0
                                 ]
                                 n
 

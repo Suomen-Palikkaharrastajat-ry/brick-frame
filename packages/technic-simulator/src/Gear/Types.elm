@@ -63,6 +63,7 @@ type alias GearId =
 type alias GearInstance =
     { id : GearId
     , spec : GearSpec
+    , color : Int
     , worldPosition : Vec3
     , worldMatrix : Mat4
     }

@@ -141,7 +141,7 @@ suite =
                 \_ ->
                     let
                         gear =
-                            { id = 0, spec = spec8T, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
+                            { id = 0, spec = spec8T, color = 16, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
                     in
                     buildGearGraph [ gear ]
                         |> .connections
@@ -152,10 +152,10 @@ suite =
                     -- pitch radii: 10 + 20 = 30 LDU apart on X axis
                     let
                         g1 =
-                            { id = 0, spec = spec8T, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
+                            { id = 0, spec = spec8T, color = 16, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
 
                         g2 =
-                            { id = 1, spec = spec16T, worldPosition = vec3 30 0 0, worldMatrix = Mat4.identity }
+                            { id = 1, spec = spec16T, color = 16, worldPosition = vec3 30 0 0, worldMatrix = Mat4.identity }
 
                         graph =
                             buildGearGraph [ g1, g2 ]
@@ -168,10 +168,10 @@ suite =
                 \_ ->
                     let
                         g1 =
-                            { id = 0, spec = spec8T, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
+                            { id = 0, spec = spec8T, color = 16, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
 
                         g2 =
-                            { id = 1, spec = spec16T, worldPosition = vec3 30 0 0, worldMatrix = Mat4.identity }
+                            { id = 1, spec = spec16T, color = 16, worldPosition = vec3 30 0 0, worldMatrix = Mat4.identity }
 
                         graph =
                             buildGearGraph [ g1, g2 ]
@@ -185,10 +185,10 @@ suite =
                 \_ ->
                     let
                         g1 =
-                            { id = 0, spec = spec8T, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
+                            { id = 0, spec = spec8T, color = 16, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
 
                         g2 =
-                            { id = 1, spec = spec16T, worldPosition = vec3 200 0 0, worldMatrix = Mat4.identity }
+                            { id = 1, spec = spec16T, color = 16, worldPosition = vec3 200 0 0, worldMatrix = Mat4.identity }
 
                         graph =
                             buildGearGraph [ g1, g2 ]
@@ -202,11 +202,12 @@ suite =
                         -- Local Z is gear axis for identity transform.
                         -- g2 is offset in both X and Z, but keeps centre distance ~30.
                         g1 =
-                            { id = 0, spec = spec8T, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
+                            { id = 0, spec = spec8T, color = 16, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
 
                         g2 =
                             { id = 1
                             , spec = spec16T
+                            , color = 16
                             , worldPosition = vec3 29.5804 0 5
                             , worldMatrix = Mat4.identity
                             }
@@ -221,10 +222,10 @@ suite =
                 \_ ->
                     let
                         g1 =
-                            { id = 0, spec = spec8T, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
+                            { id = 0, spec = spec8T, color = 16, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
 
                         g2 =
-                            { id = 1, spec = spec16T, worldPosition = vec3 40 0 0, worldMatrix = Mat4.identity }
+                            { id = 1, spec = spec16T, color = 16, worldPosition = vec3 40 0 0, worldMatrix = Mat4.identity }
                     in
                     buildGearGraph [ g1, g2 ]
                         |> .instances
@@ -234,11 +235,12 @@ suite =
                 \_ ->
                     let
                         g1 =
-                            { id = 0, spec = specBevel20T, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
+                            { id = 0, spec = specBevel20T, color = 16, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
 
                         g2 =
                             { id = 1
                             , spec = specBevel20T
+                            , color = 16
                             , worldPosition = vec3 50 0 0
                             , worldMatrix = Mat4.makeRotate (pi / 2) (vec3 1 0 0)
                             }
@@ -254,11 +256,12 @@ suite =
                 \_ ->
                     let
                         g1 =
-                            { id = 0, spec = specBevel20T, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
+                            { id = 0, spec = specBevel20T, color = 16, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
 
                         g2 =
                             { id = 1
                             , spec = specBevel20T
+                            , color = 16
                             , worldPosition = vec3 50 0 0
                             , worldMatrix = Mat4.identity
                             }
@@ -273,11 +276,12 @@ suite =
                 \_ ->
                     let
                         crown =
-                            { id = 0, spec = specCrown24T, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
+                            { id = 0, spec = specCrown24T, color = 16, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
 
                         spur =
                             { id = 1
                             , spec = spec8T
+                            , color = 16
                             , worldPosition = vec3 40 0 0
                             , worldMatrix = Mat4.makeRotate (pi / 2) (vec3 1 0 0)
                             }
@@ -293,11 +297,12 @@ suite =
                 \_ ->
                     let
                         crown =
-                            { id = 0, spec = specCrown24T, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
+                            { id = 0, spec = specCrown24T, color = 16, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
 
                         spur =
                             { id = 1
                             , spec = spec8T
+                            , color = 16
                             , worldPosition = vec3 40 0 0
                             , worldMatrix = Mat4.identity
                             }

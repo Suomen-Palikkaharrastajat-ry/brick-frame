@@ -23,11 +23,12 @@ right, giving a gentle top-right highlight on most LEGO geometry.
 
   - `lightDirection` — world-space direction *toward* the light (not away).
     Normalised before use in the shader via `normalize(lightDirection)`.
-  - `ambientStrength = 0.3` — 30% ambient keeps the dark sides readable.
+  - `ambientStrength = 0.55` — brighter matte fill for more LEGO-like color
+    readability and less harsh contrast.
 
 -}
 defaultLight : LightUniforms
 defaultLight =
-    { lightDirection = Vec3.normalize (vec3 0.3 1.0 0.5)
-    , ambientStrength = 0.3
+    { lightDirection = Vec3.normalize (vec3 0.25 1.0 0.35)
+    , ambientStrength = 0.55
     }
