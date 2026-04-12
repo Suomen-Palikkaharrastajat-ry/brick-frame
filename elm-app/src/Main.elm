@@ -72,6 +72,24 @@ type alias PlaybackState =
     }
 
 
+type CameraMode
+    = CameraAutoFit
+    | CameraManual
+
+
+type alias TouchPoint =
+    { id : Int
+    , x : Float
+    , y : Float
+    }
+
+
+type TouchGesture
+    = NoTouchGesture
+    | SingleTouchGesture Int
+    | PinchGesture Int Int Float Float Float
+
+
 type alias Model =
     { camera : Camera
     , width : Int
@@ -97,6 +115,8 @@ type alias Model =
     , clickStart : Maybe ( Float, Float )
     , dragTravel : Float
     , lastFrameTime : Maybe Time.Posix
+    , cameraMode : CameraMode
+    , touchGesture : TouchGesture
     }
 
 
@@ -161,6 +181,13 @@ init flags =
 
         maxRpmValue =
             max 1 flags.maxRpm
+
+        initialCameraMode =
+            if hasExplicitHashCamera initialHash then
+                CameraManual
+
+            else
+                CameraAutoFit
     in
     ( { camera = initialCamera
       , width = 800
@@ -191,6 +218,8 @@ init flags =
       , clickStart = Nothing
       , dragTravel = 0.0
       , lastFrameTime = Nothing
+      , cameraMode = initialCameraMode
+      , touchGesture = NoTouchGesture
       }
     , Cmd.batch
         [ Browser.Dom.getViewport
@@ -230,6 +259,9 @@ type Msg
     | MouseMove Float Float
     | MouseUp Float Float
     | Wheel Float
+    | TouchStart (List TouchPoint)
+    | TouchMove (List TouchPoint)
+    | TouchEnd (List TouchPoint)
     | TopLevelLoaded String (Result Http.Error String)
     | PartLoaded String (Result Http.Error String)
     | UrlInputChanged String
@@ -265,6 +297,7 @@ update msg model =
                 | camera = Camera.onMouseDown x y model.camera
                 , clickStart = Just ( x, y )
                 , dragTravel = 0.0
+                , cameraMode = CameraManual
               }
             , Cmd.none
             )
@@ -282,6 +315,7 @@ update msg model =
             ( { model
                 | camera = Camera.onMouseMove x y model.camera
                 , dragTravel = model.dragTravel + stepDist
+                , cameraMode = CameraManual
               }
             , Cmd.none
             )
@@ -300,6 +334,7 @@ update msg model =
                         | camera = Camera.onMouseUp model.camera
                         , clickStart = Nothing
                         , dragTravel = 0.0
+                        , touchGesture = NoTouchGesture
                     }
             in
             case clickedGear of
@@ -312,7 +347,31 @@ update msg model =
         Wheel delta ->
             let
                 nextModel =
-                    { model | camera = Camera.onWheel delta model.camera }
+                    { model
+                        | camera = Camera.onWheel delta model.camera
+                        , cameraMode = CameraManual
+                    }
+            in
+            ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
+
+        TouchStart touches ->
+            let
+                nextModel =
+                    beginTouchGesture touches model
+            in
+            ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
+
+        TouchMove touches ->
+            let
+                nextModel =
+                    advanceTouchGesture touches model
+            in
+            ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
+
+        TouchEnd touches ->
+            let
+                nextModel =
+                    endTouchGesture touches model
             in
             ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
 
@@ -620,7 +679,242 @@ resetForLoad url m =
         , clickStart = Nothing
         , dragTravel = 0.0
         , lastFrameTime = Nothing
+        , cameraMode = CameraAutoFit
+        , touchGesture = NoTouchGesture
     }
+
+
+beginTouchGesture : List TouchPoint -> Model -> Model
+beginTouchGesture touches model =
+    case touches of
+        p1 :: p2 :: _ ->
+            let
+                dist =
+                    touchDistance p1 p2
+
+                ( midX, midY ) =
+                    touchMidpoint p1 p2
+            in
+            { model
+                | camera = Camera.onMouseUp model.camera
+                , touchGesture = PinchGesture p1.id p2.id dist midX midY
+                , cameraMode = CameraManual
+                , clickStart = Nothing
+                , dragTravel = 0.0
+            }
+
+        p1 :: [] ->
+            { model
+                | camera = Camera.onMouseDown p1.x p1.y model.camera
+                , touchGesture = SingleTouchGesture p1.id
+                , cameraMode = CameraManual
+                , clickStart = Nothing
+                , dragTravel = 0.0
+            }
+
+        [] ->
+            { model
+                | camera = Camera.onMouseUp model.camera
+                , touchGesture = NoTouchGesture
+                , clickStart = Nothing
+                , dragTravel = 0.0
+            }
+
+
+advanceTouchGesture : List TouchPoint -> Model -> Model
+advanceTouchGesture touches model =
+    case model.touchGesture of
+        SingleTouchGesture touchId ->
+            case findTouch touchId touches of
+                Just point ->
+                    { model
+                        | camera = Camera.onMouseMove point.x point.y model.camera
+                        , cameraMode = CameraManual
+                    }
+
+                Nothing ->
+                    beginTouchGesture touches { model | camera = Camera.onMouseUp model.camera }
+
+        PinchGesture idA idB lastDist lastMidX lastMidY ->
+            case ( findTouch idA touches, findTouch idB touches ) of
+                ( Just a, Just b ) ->
+                    let
+                        newDist =
+                            touchDistance a b
+
+                        ( midX, midY ) =
+                            touchMidpoint a b
+
+                        zoomDelta =
+                            -(newDist - lastDist) * 0.8
+
+                        panDx =
+                            midX - lastMidX
+
+                        panDy =
+                            midY - lastMidY
+
+                        cameraAfterZoom =
+                            Camera.onWheel zoomDelta model.camera
+
+                        cameraAfterPan =
+                            Camera.onPan panDx panDy cameraAfterZoom
+                    in
+                    { model
+                        | camera = cameraAfterPan
+                        , touchGesture = PinchGesture idA idB newDist midX midY
+                        , cameraMode = CameraManual
+                    }
+
+                _ ->
+                    endTouchGesture touches model
+
+        NoTouchGesture ->
+            beginTouchGesture touches model
+
+
+endTouchGesture : List TouchPoint -> Model -> Model
+endTouchGesture remainingTouches model =
+    case remainingTouches of
+        [] ->
+            { model
+                | camera = Camera.onMouseUp model.camera
+                , touchGesture = NoTouchGesture
+                , clickStart = Nothing
+                , dragTravel = 0.0
+            }
+
+        [ p1 ] ->
+            { model
+                | camera = Camera.onMouseDown p1.x p1.y (Camera.onMouseUp model.camera)
+                , touchGesture = SingleTouchGesture p1.id
+                , cameraMode = CameraManual
+                , clickStart = Nothing
+                , dragTravel = 0.0
+            }
+
+        p1 :: p2 :: _ ->
+            let
+                dist =
+                    touchDistance p1 p2
+
+                ( midX, midY ) =
+                    touchMidpoint p1 p2
+            in
+            { model
+                | camera = Camera.onMouseUp model.camera
+                , touchGesture = PinchGesture p1.id p2.id dist midX midY
+                , cameraMode = CameraManual
+                , clickStart = Nothing
+                , dragTravel = 0.0
+            }
+
+
+findTouch : Int -> List TouchPoint -> Maybe TouchPoint
+findTouch touchId touches =
+    touches |> List.filter (\p -> p.id == touchId) |> List.head
+
+
+touchDistance : TouchPoint -> TouchPoint -> Float
+touchDistance p1 p2 =
+    let
+        dx =
+            p2.x - p1.x
+
+        dy =
+            p2.y - p1.y
+    in
+    sqrt ((dx * dx) + (dy * dy))
+
+
+touchMidpoint : TouchPoint -> TouchPoint -> ( Float, Float )
+touchMidpoint p1 p2 =
+    ( (p1.x + p2.x) / 2
+    , (p1.y + p2.y) / 2
+    )
+
+
+autoFitCamera : Int -> Int -> List LDrawLine -> PartCache -> Camera -> Camera
+autoFitCamera width height lines cache currentCamera =
+    let
+        geom =
+            Geometry.flatten lines cache 15 Mat4.identity
+
+        points =
+            (geom.triangles
+                |> List.concatMap (\( a, b, c ) -> [ a.position, b.position, c.position ])
+            )
+                ++ (geom.lines |> List.concatMap (\( p1, p2 ) -> [ p1, p2 ]))
+                ++ (geom.conditionalLines |> List.concatMap (\e -> [ e.p1, e.p2, e.c1, e.c2 ]))
+    in
+    case points of
+        [] ->
+            currentCamera
+
+        p0 :: rest ->
+            let
+                bounds =
+                    List.foldl
+                        (\p acc ->
+                            { minX = min acc.minX (Vec3.getX p)
+                            , maxX = max acc.maxX (Vec3.getX p)
+                            , minY = min acc.minY (Vec3.getY p)
+                            , maxY = max acc.maxY (Vec3.getY p)
+                            , minZ = min acc.minZ (Vec3.getZ p)
+                            , maxZ = max acc.maxZ (Vec3.getZ p)
+                            }
+                        )
+                        { minX = Vec3.getX p0
+                        , maxX = Vec3.getX p0
+                        , minY = Vec3.getY p0
+                        , maxY = Vec3.getY p0
+                        , minZ = Vec3.getZ p0
+                        , maxZ = Vec3.getZ p0
+                        }
+                        rest
+
+                center =
+                    Vec3.vec3
+                        ((bounds.minX + bounds.maxX) / 2)
+                        ((bounds.minY + bounds.maxY) / 2)
+                        ((bounds.minZ + bounds.maxZ) / 2)
+
+                extentX =
+                    bounds.maxX - bounds.minX
+
+                extentY =
+                    bounds.maxY - bounds.minY
+
+                extentZ =
+                    bounds.maxZ - bounds.minZ
+
+                radius =
+                    max 1 (sqrt (extentX * extentX + extentY * extentY + extentZ * extentZ) / 2)
+
+                aspect =
+                    toFloat width / max 1 (toFloat height)
+
+                fovY =
+                    45 * pi / 180
+
+                fovX =
+                    2 * atan (tan (fovY / 2) * aspect)
+
+                limitingHalfFov =
+                    max 0.15 (min (fovX / 2) (fovY / 2))
+
+                distanceForSphere =
+                    radius / sin limitingHalfFov
+
+                distance =
+                    clamp 8 5000 (distanceForSphere * 1.15)
+            in
+            { currentCamera
+                | target = center
+                , distance = distance
+                , azimuth = 0.75
+                , elevation = 0.45
+            }
 
 
 {-| Shared handler for HTTP-fetched and file-uploaded LDraw text.
@@ -772,9 +1066,18 @@ finishLoading model =
 
         playbackState =
             model.playback
+
+        nextCamera =
+            case model.cameraMode of
+                CameraAutoFit ->
+                    autoFitCamera model.width model.height model.topLevelLines model.partCache model.camera
+
+                CameraManual ->
+                    model.camera
     in
     ( { model
-        | scene = Nothing
+        | camera = nextCamera
+        , scene = Nothing
         , loadPhase = FlatteningGeometry
         , gearGraph = Just graph
         , gearMeshes = gearMeshes
@@ -2090,6 +2393,25 @@ subscriptions model =
         ]
 
 
+touchesDecoder : Decode.Decoder (List TouchPoint)
+touchesDecoder =
+    Decode.field "touches" (Decode.list touchPointDecoder)
+
+
+touchPointDecoder : Decode.Decoder TouchPoint
+touchPointDecoder =
+    Decode.map3
+        (\identifier x y ->
+            { id = identifier
+            , x = x
+            , y = y
+            }
+        )
+        (Decode.field "identifier" Decode.int)
+        (Decode.field "clientX" Decode.float)
+        (Decode.field "clientY" Decode.float)
+
+
 
 -- ── View ──────────────────────────────────────────────────────────────────────
 
@@ -2140,6 +2462,14 @@ viewCanvas model =
             (Decode.map (\delta -> ( Wheel delta, True ))
                 (Decode.field "deltaY" Decode.float)
             )
+        , Html.Events.preventDefaultOn "touchstart"
+            (Decode.map (\touches -> ( TouchStart touches, True )) touchesDecoder)
+        , Html.Events.preventDefaultOn "touchmove"
+            (Decode.map (\touches -> ( TouchMove touches, True )) touchesDecoder)
+        , Html.Events.preventDefaultOn "touchend"
+            (Decode.map (\touches -> ( TouchEnd touches, True )) touchesDecoder)
+        , Html.Events.preventDefaultOn "touchcancel"
+            (Decode.map (\touches -> ( TouchEnd touches, True )) touchesDecoder)
         ]
         entities
 
@@ -2184,6 +2514,7 @@ viewDebug model =
                 )
             ]
         , div [] [ text "Drag to orbit · Scroll to zoom" ]
+        , div [] [ text "Touch: 1-finger orbit · 2-finger pan/pinch zoom" ]
         ]
 
 
@@ -2659,6 +2990,16 @@ decodeHash rawHash =
     , distance = getFloat "d"
     , time = getFloat "t"
     }
+
+
+hasExplicitHashCamera : HashState -> Bool
+hasExplicitHashCamera state =
+    state.azimuth
+        /= Nothing
+        || state.elevation
+        /= Nothing
+        || state.distance
+        /= Nothing
 
 
 encodeHash : Model -> String

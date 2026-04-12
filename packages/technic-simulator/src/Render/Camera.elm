@@ -4,6 +4,7 @@ module Render.Camera exposing
     , onMouseDown
     , onMouseMove
     , onMouseUp
+    , onPan
     , onWheel
     , projectionMatrix
     , viewMatrix
@@ -139,3 +140,66 @@ onWheel delta cam =
             clamp 0.5 500 (cam.distance * factor)
     in
     { cam | distance = newDistance }
+
+
+{-| Pan camera target in screen-space pixels.
+
+Positive `dx` means finger/mouse moved right, positive `dy` moved down.
+-}
+onPan : Float -> Float -> Camera -> Camera
+onPan dx dy cam =
+    let
+        eye =
+            position cam
+
+        forwardRaw =
+            Vec3.sub cam.target eye
+
+        forwardLen =
+            Vec3.length forwardRaw
+
+        forward =
+            if forwardLen < 1.0e-6 then
+                vec3 0 0 -1
+
+            else
+                Vec3.scale (1 / forwardLen) forwardRaw
+
+        worldUp =
+            vec3 0 1 0
+
+        rightRaw =
+            Vec3.cross forward worldUp
+
+        rightLen =
+            Vec3.length rightRaw
+
+        right =
+            if rightLen < 1.0e-6 then
+                vec3 1 0 0
+
+            else
+                Vec3.scale (1 / rightLen) rightRaw
+
+        upRaw =
+            Vec3.cross right forward
+
+        upLen =
+            Vec3.length upRaw
+
+        up =
+            if upLen < 1.0e-6 then
+                vec3 0 1 0
+
+            else
+                Vec3.scale (1 / upLen) upRaw
+
+        pixelToWorld =
+            cam.distance * 0.0025
+
+        deltaWorld =
+            Vec3.add
+                (Vec3.scale (-dx * pixelToWorld) right)
+                (Vec3.scale (dy * pixelToWorld) up)
+    in
+    { cam | target = Vec3.add cam.target deltaWorld }
