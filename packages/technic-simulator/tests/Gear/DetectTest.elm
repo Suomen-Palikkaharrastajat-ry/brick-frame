@@ -1,5 +1,8 @@
 module Gear.DetectTest exposing (suite)
 
+{-| Unit tests for gear detection and graph construction logic.
+-}
+
 import Array
 import Dict
 import Expect

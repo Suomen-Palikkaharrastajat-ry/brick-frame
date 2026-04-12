@@ -1,5 +1,8 @@
 module Gear.ComponentsTest exposing (suite)
 
+{-| Unit tests for component extraction from LDraw model hierarchies.
+-}
+
 import Dict
 import Expect
 import Gear.Components exposing (ComponentKind(..), ComponentSpec, extractComponents)

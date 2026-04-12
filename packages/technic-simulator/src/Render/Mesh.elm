@@ -1,5 +1,8 @@
 module Render.Mesh exposing (Vertex)
 
+{-| Shared mesh vertex types used by render modules.
+-}
+
 import Math.Vector3 exposing (Vec3)
 import Math.Vector4 exposing (Vec4)
 

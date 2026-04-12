@@ -1,5 +1,8 @@
 module PackageSmokeTest exposing (suite)
 
+{-| Basic smoke test to ensure the package test harness runs.
+-}
+
 import Expect
 import Test exposing (Test, describe, test)
 

@@ -1,5 +1,8 @@
 module LDraw.ParserTest exposing (suite)
 
+{-| Unit tests for line parsing and MPD splitting.
+-}
+
 import Dict
 import Expect
 import LDraw.Parser exposing (parseFile, parseLine, splitMpd)

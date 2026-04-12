@@ -1,5 +1,8 @@
 module Render.Shader exposing (Uniforms, fragmentShader, vertexShader)
 
+{-| Lambert shading GLSL programs for triangle mesh rendering.
+-}
+
 import Math.Matrix4 exposing (Mat4)
 import Math.Vector3 exposing (Vec3)
 import Math.Vector4 exposing (Vec4)

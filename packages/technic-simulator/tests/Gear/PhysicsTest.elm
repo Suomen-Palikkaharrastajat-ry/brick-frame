@@ -1,5 +1,8 @@
 module Gear.PhysicsTest exposing (suite)
 
+{-| Unit tests for gear-ratio propagation and angle sampling.
+-}
+
 import Array
 import Dict
 import Expect

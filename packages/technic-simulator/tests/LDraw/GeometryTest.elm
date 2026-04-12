@@ -1,5 +1,8 @@
 module LDraw.GeometryTest exposing (suite)
 
+{-| Unit tests for geometry flattening from parsed LDraw lines.
+-}
+
 import Dict
 import Expect
 import LDraw.Geometry exposing (flatten)

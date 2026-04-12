@@ -1,5 +1,8 @@
 module Main exposing (main)
 
+{-| Main application entrypoint for the LEGO Technic simulator.
+-}
+
 import Array
 import Browser
 import Browser.Dom

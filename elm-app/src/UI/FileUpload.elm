@@ -1,5 +1,8 @@
 module UI.FileUpload exposing (Config, view)
 
+{-| URL input and upload controls for loading LDraw models.
+-}
+
 import Html exposing (Html, button, input, text)
 import Html.Attributes as Attr
 import Html.Events
