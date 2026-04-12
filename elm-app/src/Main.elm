@@ -2956,6 +2956,7 @@ viewGearPanel model =
                             ]
                         , button
                             [ Html.Events.onClick ToggleControlsPanel
+                            , onTouchTap ToggleControlsPanel
                             , Attr.style "padding" "2px 8px"
                             , Attr.style "background" "rgba(255,255,255,0.1)"
                             , Attr.style "color" "#fff"
@@ -3067,6 +3068,7 @@ viewGearRow model graph ratios inst =
         , if not isMotor then
             button
                 [ Html.Events.onClick (SetMotorGear inst.id)
+                , onTouchTap (SetMotorGear inst.id)
                 , Attr.style "margin-top" "3px"
                 , Attr.style "padding" "2px 8px"
                 , Attr.style "background" "rgba(255,255,255,0.1)"
@@ -3112,6 +3114,7 @@ viewMotorControls model =
             ]
             [ button
                 [ Html.Events.onClick ToggleMotor
+                , onTouchTap ToggleMotor
                 , Attr.style "flex" "1"
                 , Attr.style "padding" "5px 0"
                 , Attr.style "background"
@@ -3144,6 +3147,7 @@ viewMotorControls model =
                 ]
             , button
                 [ Html.Events.onClick Stop
+                , onTouchTap Stop
                 , Attr.style "padding" "5px 8px"
                 , Attr.style "background" "rgba(255,255,255,0.15)"
                 , Attr.style "color" "#fff"
@@ -3199,6 +3203,11 @@ viewMotorControls model =
             ]
             []
         ]
+
+
+onTouchTap : msg -> Html.Attribute msg
+onTouchTap msg =
+    Html.Events.preventDefaultOn "touchstart" (Decode.succeed ( msg, True ))
 
 
 viewToolbar : Model -> Html Msg

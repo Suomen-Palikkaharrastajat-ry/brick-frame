@@ -50,6 +50,8 @@
     margin: 0;
     padding: 0;
     font-family: var(--font-sans);
+    touch-action: none;
+    overscroll-behavior: none;
   }
 }
 

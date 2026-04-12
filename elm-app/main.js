@@ -225,3 +225,13 @@ window.addEventListener('drop', (event) => {
 
   readLdrawFile(droppedFile)
 })
+
+// iOS Safari pinch-zoom gesture events are separate from Touch/Pointer events.
+// Prevent default page zoom so model controls remain responsive.
+function suppressGestureZoom(event) {
+  event.preventDefault()
+}
+
+window.addEventListener('gesturestart', suppressGestureZoom, { passive: false })
+window.addEventListener('gesturechange', suppressGestureZoom, { passive: false })
+window.addEventListener('gestureend', suppressGestureZoom, { passive: false })
