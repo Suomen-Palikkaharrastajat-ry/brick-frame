@@ -117,6 +117,7 @@ type alias Model =
     , lastFrameTime : Maybe Time.Posix
     , cameraMode : CameraMode
     , touchGesture : TouchGesture
+    , activeTouches : Dict Int TouchPoint
     }
 
 
@@ -221,6 +222,7 @@ init flags =
       , lastFrameTime = Nothing
       , cameraMode = initialCameraMode
       , touchGesture = NoTouchGesture
+      , activeTouches = Dict.empty
       }
     , Cmd.batch
         [ Browser.Dom.getViewport
@@ -263,6 +265,9 @@ type Msg
     | TouchStart (List TouchPoint)
     | TouchMove (List TouchPoint)
     | TouchEnd (List TouchPoint)
+    | PointerTouchStart TouchPoint
+    | PointerTouchMove TouchPoint
+    | PointerTouchEnd Int
     | TopLevelLoaded String (Result Http.Error String)
     | PartLoaded String (Result Http.Error String)
     | UrlInputChanged String
@@ -336,6 +341,7 @@ update msg model =
                         , clickStart = Nothing
                         , dragTravel = 0.0
                         , touchGesture = NoTouchGesture
+                        , activeTouches = Dict.empty
                     }
             in
             case clickedGear of
@@ -357,22 +363,65 @@ update msg model =
 
         TouchStart touches ->
             let
+                nextTouches =
+                    touchDictFromList touches
+
                 nextModel =
-                    beginTouchGesture touches model
+                    beginTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
             in
             ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
 
         TouchMove touches ->
             let
+                nextTouches =
+                    touchDictFromList touches
+
                 nextModel =
-                    advanceTouchGesture touches model
+                    advanceTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
             in
             ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
 
         TouchEnd touches ->
             let
+                nextTouches =
+                    touchDictFromList touches
+
                 nextModel =
-                    endTouchGesture touches model
+                    endTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
+            in
+            ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
+
+        PointerTouchStart touchPoint ->
+            let
+                nextTouches =
+                    Dict.insert touchPoint.id touchPoint model.activeTouches
+
+                nextModel =
+                    beginTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
+            in
+            ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
+
+        PointerTouchMove touchPoint ->
+            if Dict.member touchPoint.id model.activeTouches then
+                let
+                    nextTouches =
+                        Dict.insert touchPoint.id touchPoint model.activeTouches
+
+                    nextModel =
+                        advanceTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
+                in
+                ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
+
+            else
+                ( model, Cmd.none )
+
+        PointerTouchEnd touchId ->
+            let
+                nextTouches =
+                    Dict.remove touchId model.activeTouches
+
+                nextModel =
+                    endTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
             in
             ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
 
@@ -685,6 +734,7 @@ resetForLoad url m =
         , lastFrameTime = Nothing
         , cameraMode = CameraAutoFit
         , touchGesture = NoTouchGesture
+        , activeTouches = Dict.empty
     }
 
 
@@ -817,6 +867,19 @@ endTouchGesture remainingTouches model =
 findTouch : Int -> List TouchPoint -> Maybe TouchPoint
 findTouch touchId touches =
     touches |> List.filter (\p -> p.id == touchId) |> List.head
+
+
+touchDictFromList : List TouchPoint -> Dict Int TouchPoint
+touchDictFromList touches =
+    touches
+        |> List.foldl (\touch acc -> Dict.insert touch.id touch acc) Dict.empty
+
+
+touchesFromDict : Dict Int TouchPoint -> List TouchPoint
+touchesFromDict touches =
+    touches
+        |> Dict.values
+        |> List.sortBy .id
 
 
 touchDistance : TouchPoint -> TouchPoint -> Float
@@ -2581,6 +2644,41 @@ touchPointDecoder =
         (coordinateDecoder [ "clientY", "pageY", "screenY" ])
 
 
+pointerTouchPointDecoder : Decode.Decoder TouchPoint
+pointerTouchPointDecoder =
+    Decode.field "pointerType" Decode.string
+        |> Decode.andThen
+            (\pointerType ->
+                if pointerType == "touch" then
+                    Decode.map3
+                        (\pointerId x y ->
+                            { id = pointerId
+                            , x = x
+                            , y = y
+                            }
+                        )
+                        (Decode.field "pointerId" intLikeDecoder)
+                        (coordinateDecoder [ "clientX", "pageX", "screenX" ])
+                        (coordinateDecoder [ "clientY", "pageY", "screenY" ])
+
+                else
+                    Decode.fail "Non-touch pointer"
+            )
+
+
+pointerTouchIdDecoder : Decode.Decoder Int
+pointerTouchIdDecoder =
+    Decode.field "pointerType" Decode.string
+        |> Decode.andThen
+            (\pointerType ->
+                if pointerType == "touch" then
+                    Decode.field "pointerId" intLikeDecoder
+
+                else
+                    Decode.fail "Non-touch pointer"
+            )
+
+
 intLikeDecoder : Decode.Decoder Int
 intLikeDecoder =
     Decode.oneOf
@@ -2663,6 +2761,14 @@ viewCanvas model =
             (Decode.map (\touches -> ( TouchEnd touches, True )) touchesDecoder)
         , Html.Events.preventDefaultOn "touchcancel"
             (Decode.map (\touches -> ( TouchEnd touches, True )) touchesDecoder)
+        , Html.Events.preventDefaultOn "pointerdown"
+            (Decode.map (\touch -> ( PointerTouchStart touch, True )) pointerTouchPointDecoder)
+        , Html.Events.preventDefaultOn "pointermove"
+            (Decode.map (\touch -> ( PointerTouchMove touch, True )) pointerTouchPointDecoder)
+        , Html.Events.preventDefaultOn "pointerup"
+            (Decode.map (\touchId -> ( PointerTouchEnd touchId, True )) pointerTouchIdDecoder)
+        , Html.Events.preventDefaultOn "pointercancel"
+            (Decode.map (\touchId -> ( PointerTouchEnd touchId, True )) pointerTouchIdDecoder)
         ]
         entities
 
