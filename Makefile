@@ -46,15 +46,15 @@ ELM_APP_SOURCES := $(shell find elm-app/src -name '*.elm' ! -name 'Data.elm')
 ELM_PACKAGE_SOURCES := $(shell find vendor/master-builder/packages -name '*.elm' -o -name '*.css' 2>/dev/null)
 WC_SOURCES := $(shell find elm-app/web-components elm-app/runtime -name '*.js' 2>/dev/null)
 
-brick-frame-generator: $(HS_SOURCES)
+brick-data-generator: $(HS_SOURCES)
 	cabal build generator
 	cp $$(cabal list-bin generator) $@
 
 .PHONY: generate
 generate: elm-app/src/Data.elm ## Run Haskell generator to produce elm-app/src/Data.elm
 
-elm-app/src/Data.elm: brick-frame-generator
-	./brick-frame-generator
+elm-app/src/Data.elm: brick-data-generator
+	./brick-data-generator
 
 elm-app/src/.data-nix-stamp:
 	$(GENERATOR_NIX)
@@ -179,4 +179,4 @@ format: ## Auto-format Haskell and Elm source files
 .PHONY: clean
 clean: ## Remove build artifacts and generated output
 	cabal clean
-	rm -rf build brick-frame-generator .hpc elm-app/.elm-tailwind elm-app/elm-stuff elm-app/src/Data.elm elm-app/src/.data-nix-stamp build/.wc-stamp build/.wc-stamp-ci
+	rm -rf build brick-data-generator .hpc elm-app/.elm-tailwind elm-app/elm-stuff elm-app/src/Data.elm elm-app/src/.data-nix-stamp build/.wc-stamp build/.wc-stamp-ci

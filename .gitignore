@@ -15,7 +15,7 @@ elm-app/packages
 # --- Haskell build artifacts ---
 dist-newstyle/
 template-generator
-brick-frame-generator
+brick-data-generator
 
 # --- Elm / frontend build artifacts ---
 elm-app/elm-stuff/
