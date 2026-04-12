@@ -138,6 +138,7 @@ type alias ComponentRender =
 type alias ComponentMeshRender =
     { mesh : WebGL.Mesh Vertex
     , center : Vec3.Vec3
+    , rotationCenter : Vec3.Vec3
     , axis : Vec3.Vec3
     , drivingGearId : Maybe GearId
     }
@@ -1068,7 +1069,7 @@ finishLoading model =
 
         componentMeshes =
             buildComponentMeshRenders model.partCache components gearInstances
-                ++ buildCoaxialMeshRenders model.partCache coaxialPartData
+                ++ buildCoaxialMeshRenders model.partCache gearInstances coaxialPartData
 
         playbackState =
             model.playback
@@ -1625,6 +1626,7 @@ buildComponentMeshRenders cache components gears =
                         Just
                             { mesh = WebGL.triangles geom.triangles
                             , center = toYUpPoint component.worldPosition
+                            , rotationCenter = toYUpPoint component.worldPosition
                             , axis = inferComponentAxis cache component
                             , drivingGearId = componentDrivingGear cache component gears
                             }
@@ -1820,9 +1822,10 @@ with the same rotation angle as their driving gear.
 -}
 buildCoaxialMeshRenders :
     PartCache
+    -> List GearInstance
     -> List { file : String, transform : Mat4.Mat4, drivingGearId : GearId }
     -> List ComponentMeshRender
-buildCoaxialMeshRenders cache parts =
+buildCoaxialMeshRenders cache gears parts =
     List.filterMap
         (\part ->
             case Dict.get part.file cache of
@@ -1843,16 +1846,27 @@ buildCoaxialMeshRenders cache parts =
                         axisLen =
                             Vec3.length axisRaw
 
-                        axis =
+                        localAxis =
                             if axisLen < 1.0e-6 then
                                 Vec3.vec3 0 1 0
 
                             else
                                 canonicalizeAxis (Vec3.scale (1 / axisLen) axisRaw)
+
+                        ( rotationCenter, axis ) =
+                            case gearAxisInfoById part.drivingGearId gears of
+                                Just info ->
+                                    ( projectPointToLine center info.center info.axis
+                                    , info.axis
+                                    )
+
+                                Nothing ->
+                                    ( center, localAxis )
                     in
                     Just
                         { mesh = WebGL.triangles geom.triangles
                         , center = center
+                        , rotationCenter = rotationCenter
                         , axis = axis
                         , drivingGearId = Just part.drivingGearId
                         }
@@ -1879,6 +1893,55 @@ pointToLineDistance point lineOrigin lineDir =
             Vec3.sub offset projected
     in
     Vec3.length rejection
+
+
+projectPointToLine : Vec3.Vec3 -> Vec3.Vec3 -> Vec3.Vec3 -> Vec3.Vec3
+projectPointToLine point lineOrigin lineDir =
+    let
+        offset =
+            Vec3.sub point lineOrigin
+
+        projectionLen =
+            Vec3.dot offset lineDir
+    in
+    Vec3.add lineOrigin (Vec3.scale projectionLen lineDir)
+
+
+type alias GearAxisInfo =
+    { center : Vec3.Vec3
+    , axis : Vec3.Vec3
+    }
+
+
+gearAxisInfoById : GearId -> List GearInstance -> Maybe GearAxisInfo
+gearAxisInfoById targetId gears =
+    gears
+        |> List.filter (\gear -> gear.id == targetId)
+        |> List.head
+        |> Maybe.map
+            (\gear ->
+                let
+                    center =
+                        toYUpPoint gear.worldPosition
+
+                    axisEnd =
+                        toYUpPoint (Mat4.transform gear.worldMatrix (Vec3.vec3 0 0 1))
+
+                    rawAxis =
+                        Vec3.sub axisEnd center
+
+                    axisLen =
+                        Vec3.length rawAxis
+
+                    axis =
+                        if axisLen < 1.0e-6 then
+                            Vec3.vec3 0 1 0
+
+                        else
+                            canonicalizeAxis (Vec3.scale (1 / axisLen) rawAxis)
+                in
+                { center = center, axis = axis }
+            )
 
 
 inferComponentAxis : PartCache -> Components.ComponentInstance -> Vec3.Vec3
@@ -1990,7 +2053,7 @@ renderComponentEntities camera light aspect model =
                                 0.0
 
                     modelMat =
-                        rotationAround angle component.axis component.center
+                        rotationAround angle component.axis component.rotationCenter
 
                     uniforms =
                         { modelMatrix = modelMat
@@ -2398,8 +2461,8 @@ touchPointDecoder =
             }
         )
         (Decode.field "identifier" intLikeDecoder)
-        (Decode.field "clientX" floatLikeDecoder)
-        (Decode.field "clientY" floatLikeDecoder)
+        (coordinateDecoder [ "clientX", "pageX", "screenX" ])
+        (coordinateDecoder [ "clientY", "pageY", "screenY" ])
 
 
 intLikeDecoder : Decode.Decoder Int
@@ -2416,6 +2479,13 @@ floatLikeDecoder =
         [ Decode.float
         , Decode.int |> Decode.map toFloat
         ]
+
+
+coordinateDecoder : List String -> Decode.Decoder Float
+coordinateDecoder keys =
+    keys
+        |> List.map (\key -> Decode.field key floatLikeDecoder)
+        |> Decode.oneOf
 
 
 
