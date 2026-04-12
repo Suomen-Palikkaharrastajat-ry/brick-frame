@@ -2061,7 +2061,7 @@ connectorLocalPoints cache partFile =
                     (\line ->
                         case line of
                             SubFileRef subRef ->
-                                if isConnectorReference subRef.file then
+                                if isRotationalConnectorReference subRef.file then
                                     Just (Mat4.transform subRef.transform (Vec3.vec3 0 0 0))
 
                                 else
@@ -2075,8 +2075,8 @@ connectorLocalPoints cache partFile =
             []
 
 
-isConnectorReference : String -> Bool
-isConnectorReference file =
+isRotationalConnectorReference : String -> Bool
+isRotationalConnectorReference file =
     let
         lower =
             String.toLower file
@@ -2084,9 +2084,6 @@ isConnectorReference file =
     List.any
         (\needle -> String.contains needle lower)
         [ "axlehol"
-        , "peghole"
-        , "peghol"
-        , "npeghol"
         , "axleend"
         , "axle.dat"
         ]
