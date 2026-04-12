@@ -302,57 +302,69 @@ update msg model =
             ( { model | width = w, height = h }, Cmd.none )
 
         MouseDown x y ->
-            ( { model
-                | camera = Camera.onMouseDown x y model.camera
-                , clickStart = Just ( x, y )
-                , dragTravel = 0.0
-                , cameraMode = CameraManual
-              }
-            , Cmd.none
-            )
+            if touchInputActive model then
+                ( model, Cmd.none )
+
+            else
+                ( { model
+                    | camera = Camera.onMouseDown x y model.camera
+                    , clickStart = Just ( x, y )
+                    , dragTravel = 0.0
+                    , cameraMode = CameraManual
+                  }
+                , Cmd.none
+                )
 
         MouseMove x y ->
-            let
-                stepDist =
-                    case model.camera.lastMousePos of
-                        Just ( lx, ly ) ->
-                            sqrt (((x - lx) * (x - lx)) + ((y - ly) * (y - ly)))
+            if touchInputActive model then
+                ( model, Cmd.none )
 
-                        Nothing ->
-                            0.0
-            in
-            ( { model
-                | camera = Camera.onMouseMove x y model.camera
-                , dragTravel = model.dragTravel + stepDist
-                , cameraMode = CameraManual
-              }
-            , Cmd.none
-            )
+            else
+                let
+                    stepDist =
+                        case model.camera.lastMousePos of
+                            Just ( lx, ly ) ->
+                                sqrt (((x - lx) * (x - lx)) + ((y - ly) * (y - ly)))
+
+                            Nothing ->
+                                0.0
+                in
+                ( { model
+                    | camera = Camera.onMouseMove x y model.camera
+                    , dragTravel = model.dragTravel + stepDist
+                    , cameraMode = CameraManual
+                  }
+                , Cmd.none
+                )
 
         MouseUp x y ->
-            let
-                clickedGear =
-                    if model.dragTravel < 3.0 then
-                        pickGearByScreenPoint x y model
+            if touchInputActive model then
+                ( model, Cmd.none )
 
-                    else
-                        Nothing
+            else
+                let
+                    clickedGear =
+                        if model.dragTravel < 3.0 then
+                            pickGearByScreenPoint x y model
 
-                releasedModel =
-                    { model
-                        | camera = Camera.onMouseUp model.camera
-                        , clickStart = Nothing
-                        , dragTravel = 0.0
-                        , touchGesture = NoTouchGesture
-                        , activeTouches = Dict.empty
-                    }
-            in
-            case clickedGear of
-                Just gearId ->
-                    setMotorGear gearId releasedModel
+                        else
+                            Nothing
 
-                Nothing ->
-                    ( releasedModel, Ports.setUrlHash (encodeHash releasedModel) )
+                    releasedModel =
+                        { model
+                            | camera = Camera.onMouseUp model.camera
+                            , clickStart = Nothing
+                            , dragTravel = 0.0
+                            , touchGesture = NoTouchGesture
+                            , activeTouches = Dict.empty
+                        }
+                in
+                case clickedGear of
+                    Just gearId ->
+                        setMotorGear gearId releasedModel
+
+                    Nothing ->
+                        ( releasedModel, Ports.setUrlHash (encodeHash releasedModel) )
 
         Wheel delta ->
             let
@@ -886,6 +898,18 @@ touchesFromDict touches =
     touches
         |> Dict.values
         |> List.sortBy .id
+
+
+touchInputActive : Model -> Bool
+touchInputActive model =
+    not (Dict.isEmpty model.activeTouches)
+        || (case model.touchGesture of
+                NoTouchGesture ->
+                    False
+
+                _ ->
+                    True
+           )
 
 
 touchDistance : TouchPoint -> TouchPoint -> Float
