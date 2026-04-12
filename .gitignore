@@ -22,7 +22,7 @@ elm-app/elm-stuff/
 elm-app/.elm-tailwind/
 elm-app/.vite/
 elm-app/public/ldraw/
-packages/technic-simulator/elm-stuff/
+packages/bricks-simulator/elm-stuff/
 build/
 
 # --- Generated output ---
