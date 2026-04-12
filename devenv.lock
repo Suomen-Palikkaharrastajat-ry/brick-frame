@@ -1,0 +1,78 @@
+{
+  "nodes": {
+    "devenv": {
+      "locked": {
+        "dir": "src/modules",
+        "lastModified": 1775901933,
+        "narHash": "sha256-WNizsCJImFjtgQf6EfaDbukXMeZDlnGWMKWJo7xYu+Y=",
+        "owner": "cachix",
+        "repo": "devenv",
+        "rev": "ef8481b6009b3267c06d29569cd761ebb9ea3807",
+        "type": "github"
+      },
+      "original": {
+        "dir": "src/modules",
+        "owner": "cachix",
+        "repo": "devenv",
+        "type": "github"
+      }
+    },
+    "devenv-module-devcontainer": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1775203419,
+        "narHash": "sha256-lasDZlcdVDDi4SDjMw77E+8BEto3Os45HjRnuUkoJtA=",
+        "owner": "datakurre",
+        "repo": "devenv-module-devcontainer",
+        "rev": "be28f5111bc646960aec9062fd0417bbf1a14b9f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "datakurre",
+        "repo": "devenv-module-devcontainer",
+        "type": "github"
+      }
+    },
+    "devenv-module-devcontainer-nixpkgs": {
+      "locked": {
+        "lastModified": 1775917322,
+        "narHash": "sha256-Ub7TlBAITo+3o3ACOi2+HAWllTAIklFRrTcZFb5RiV8=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "bf35438a86dd805a4281c919264ebad47d657f8f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1775917322,
+        "narHash": "sha256-Ub7TlBAITo+3o3ACOi2+HAWllTAIklFRrTcZFb5RiV8=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "bf35438a86dd805a4281c919264ebad47d657f8f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "master",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "devenv": "devenv",
+        "devenv-module-devcontainer": "devenv-module-devcontainer",
+        "devenv-module-devcontainer-nixpkgs": "devenv-module-devcontainer-nixpkgs",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

@@ -1,0 +1,19 @@
+For two 8T gears (pitchRadius 16) positioned at:
+  g1: (0, 0, 0)
+  g2: (32, 0, 0)
+  
+Distance: 32 LDU
+Expected (16 + 16): 32 LDU
+Difference: 0 LDU (within tolerance 4.0)
+Result: Should mesh
+
+For an 8T (16) and 16T (24):
+  g1: (0, 0, 0)
+  g2: (40, 0, 0)
+  
+Distance: 40 LDU
+Expected (16 + 24): 40 LDU
+Difference: 0 LDU (within tolerance 4.0)
+Result: Should mesh
+
+The tests appear to test axisOk AND distance, both must be true.

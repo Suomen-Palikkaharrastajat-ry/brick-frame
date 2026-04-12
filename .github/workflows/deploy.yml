@@ -1,0 +1,133 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      LDRAW_SYNC_URL: https://library.ldraw.org/library/updates/complete.zip
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@v16
+        with:
+          name: palikkaharrastajat
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+          extraPullNames: devenv
+
+      - name: Install devenv
+        run: nix profile install "github:cachix/devenv/v2.0.6"
+
+      - name: Restore Cabal index cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cabal/packages
+          key: cabal-index-${{ runner.os }}-${{ hashFiles('cabal.project.freeze') }}
+          restore-keys: cabal-index-${{ runner.os }}-
+
+      - name: Restore Cabal store cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cabal/store
+          key: cabal-store-${{ runner.os }}-${{ hashFiles('cabal.project.freeze', 'template.cabal', 'devenv.lock', 'devenv.nix') }}
+          restore-keys: cabal-store-${{ runner.os }}-
+
+      - name: Update Cabal package index
+        run: devenv shell --profile ci -- cabal update
+
+      - name: Compute Pages base path
+        id: pages-base
+        run: |
+          repo="${GITHUB_REPOSITORY#*/}"
+          owner="${GITHUB_REPOSITORY_OWNER}"
+          if [ "$repo" = "${owner}.github.io" ]; then
+            echo "vite_public_base=/" >> "$GITHUB_OUTPUT"
+          else
+            echo "vite_public_base=/$repo/" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore LDraw library cache
+        id: ldraw-cache
+        uses: actions/cache@v4
+        with:
+          path: elm-app/public/ldraw
+          key: ldraw-${{ runner.os }}-${{ env.LDRAW_SYNC_URL }}-${{ hashFiles('scripts/sync-ldraw.sh', 'Makefile', 'ldraw-sync.lock.json') }}
+
+      - name: Sync LDraw library (cache miss)
+        if: steps.ldraw-cache.outputs.cache-hit != 'true'
+        run: devenv shell --profile ci -- make sync-ldraw
+
+      - name: Restore Elm cache
+        id: elm-cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.elm
+            elm-app/elm-stuff
+          key: elm-${{ runner.os }}-${{ hashFiles('elm-app/elm.json') }}
+          restore-keys: elm-${{ runner.os }}-
+
+      - name: Run tests
+        run: devenv shell --profile ci -- make test
+
+      - name: Build
+        env:
+          VITE_PUBLIC_BASE: ${{ steps.pages-base.outputs.vite_public_base }}
+        run: devenv shell --profile ci -- make dist-ci
+
+      - name: Save Elm cache
+        if: steps.elm-cache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.elm
+            elm-app/elm-stuff
+          key: ${{ steps.elm-cache-restore.outputs.cache-primary-key }}
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  verify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/smoke-test.sh
+        env:
+          SITE_URL: ${{ needs.deploy.outputs.page_url }}

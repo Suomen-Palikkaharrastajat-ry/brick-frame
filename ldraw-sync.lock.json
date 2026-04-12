@@ -1,0 +1,15 @@
+{
+  "source_url": "https://library.ldraw.org/library/updates/complete.zip",
+  "synced_at_utc": "2026-04-11T19:34:46Z",
+  "archive_sha256": "d6a9fe30c0d542a36feb0dfbe63c3fd2ece22acde8b39681da21748a2f9def5b",
+  "archive_last_modified": "Tue, 31 Mar 2026 04:15:16 GMT",
+  "destination": "elm-app/public/ldraw",
+  "total_files": 35862,
+  "license_summary": {
+    "cc_by_4_0": 33543,
+    "cc_by_2_0_and_4_0": 2033,
+    "cc0_1_0": 0,
+    "legacy_ccal_2_0": 2,
+    "not_redistributable": 0
+  }
+}

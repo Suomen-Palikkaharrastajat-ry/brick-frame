@@ -1,0 +1,15 @@
+THIRD-PARTY NOTICES
+===================
+
+LDraw Official Parts Library
+----------------------------
+Source: https://library.ldraw.org/
+
+This project uses files from the LDraw parts library. Licensing is declared per
+file via `0 !LICENSE ...` headers and accompanying readme/license files included
+in the synced library (for example `CAreadme.txt`).
+
+The sync pipeline enforces a defensive policy and fails if any file declares:
+`0 !LICENSE Not redistributable : see NonCAreadme.txt`.
+
+This notice is informational only and is not legal advice.

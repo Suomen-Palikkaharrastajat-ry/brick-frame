@@ -1,0 +1,43 @@
+# --- Environment / local ---
+.env
+.devcontainer.json
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+.direnv
+
+# --- Dependencies ---
+node_modules
+node_modules/
+elm-app/node_modules/
+elm-app/packages
+
+# --- Haskell build artifacts ---
+dist-newstyle/
+template-generator
+technic-generator
+
+# --- Elm / frontend build artifacts ---
+elm-app/elm-stuff/
+elm-app/.elm-tailwind/
+elm-app/.vite/
+elm-app/public/ldraw/
+packages/technic-simulator/elm-stuff/
+build/
+
+# --- Generated output ---
+elm-app/src/Data.elm
+elm-app/src/.data-nix-stamp
+
+# --- Editor & OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# --- Misc / local ---
+.claude/
+TODO.local*
+TODO.md

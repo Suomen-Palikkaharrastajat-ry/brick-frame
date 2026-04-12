@@ -1,0 +1,49 @@
+cabal-version: 2.4
+name:          technic
+version:       0.1.0.0
+synopsis:      LEGO Technic Simulator — LDraw renderer and gear train simulator
+description:   Browser-based LEGO Technic gear simulator: loads LDraw files, renders 3D models via WebGL, and simulates Technic gear train physics.
+license:       BSD-3-Clause
+maintainer:    webmaster@palikkaharrastajat.fi
+category:      Web
+build-type:    Simple
+
+-- Shared settings for all components
+common defaults
+  ghc-options:        -Wall
+  default-language:   GHC2021
+  default-extensions: OverloadedStrings
+  build-depends:      base ^>=4.18
+
+-- Shared library: data types and generation logic
+library
+  import: defaults
+  exposed-modules: Lib
+  hs-source-dirs:  src
+  build-depends:
+    , containers ^>=0.6
+    , directory  ^>=1.3
+    , filepath   ^>=1.4
+    , text       ^>=2.0
+
+-- Haskell generator: reads/fetches data and writes elm-app/src/Data.elm
+executable generator
+  import:        defaults
+  main-is:       Main.hs
+  hs-source-dirs: generator
+  ghc-options:    -Wall -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , technic
+    , directory    ^>=1.3
+    , text         ^>=2.0
+
+-- Test suite
+test-suite technic-test
+  import:         defaults
+  type:           exitcode-stdio-1.0
+  main-is:        Main.hs
+  hs-source-dirs: tests
+  build-depends:
+    , technic
+    , hspec ^>=2.11
+    , text  ^>=2.0

@@ -1,0 +1,138 @@
+module Render.Camera exposing
+    ( Camera
+    , init
+    , onMouseDown
+    , onMouseMove
+    , onMouseUp
+    , onWheel
+    , projectionMatrix
+    , viewMatrix
+    )
+
+import Math.Matrix4 as Mat4 exposing (Mat4)
+import Math.Vector3 as Vec3 exposing (Vec3, vec3)
+
+
+{-| Orbit camera state.
+
+The camera orbits around `target` at a given `distance`, with its
+direction described by `azimuth` (horizontal angle, radians) and
+`elevation` (vertical angle from XZ plane, radians).
+
+-}
+type alias Camera =
+    { azimuth : Float
+    , elevation : Float
+    , distance : Float
+    , target : Vec3
+    , dragging : Bool
+    , lastMousePos : Maybe ( Float, Float )
+    }
+
+
+{-| Initial camera: positioned above and to the side of the origin.
+-}
+init : Camera
+init =
+    { azimuth = 0.5
+    , elevation = 0.4
+    , distance = 50.0
+    , target = vec3 0 0 0
+    , dragging = False
+    , lastMousePos = Nothing
+    }
+
+
+{-| World-space position of the camera eye.
+-}
+position : Camera -> Vec3
+position cam =
+    let
+        x =
+            cam.distance * sin cam.azimuth * cos cam.elevation
+
+        y =
+            cam.distance * sin cam.elevation
+
+        z =
+            cam.distance * cos cam.azimuth * cos cam.elevation
+    in
+    Vec3.add cam.target (vec3 x y z)
+
+
+{-| View matrix: world → camera space.
+-}
+viewMatrix : Camera -> Mat4
+viewMatrix cam =
+    Mat4.makeLookAt (position cam) cam.target (vec3 0 1 0)
+
+
+{-| Perspective projection matrix.
+
+    projectionMatrix aspect near far
+
+`aspect` is width/height. `near` and `far` are clip distances in LDU.
+Field of view is fixed at 45°.
+
+-}
+projectionMatrix : Float -> Float -> Float -> Mat4
+projectionMatrix aspect near far =
+    Mat4.makePerspective 45 aspect near far
+
+
+{-| Begin a drag. Call on mousedown over the canvas.
+-}
+onMouseDown : Float -> Float -> Camera -> Camera
+onMouseDown x y cam =
+    { cam | dragging = True, lastMousePos = Just ( x, y ) }
+
+
+{-| Update camera direction during a drag. Call on global mousemove.
+-}
+onMouseMove : Float -> Float -> Camera -> Camera
+onMouseMove x y cam =
+    case ( cam.dragging, cam.lastMousePos ) of
+        ( True, Just ( lx, ly ) ) ->
+            let
+                dx =
+                    (x - lx) * 0.005
+
+                dy =
+                    (y - ly) * 0.005
+
+                newAzimuth =
+                    cam.azimuth + dx
+
+                newElevation =
+                    clamp (-pi / 2 + 0.01) (pi / 2 - 0.01) (cam.elevation - dy)
+            in
+            { cam
+                | azimuth = newAzimuth
+                , elevation = newElevation
+                , lastMousePos = Just ( x, y )
+            }
+
+        _ ->
+            cam
+
+
+{-| End a drag. Call on global mouseup.
+-}
+onMouseUp : Camera -> Camera
+onMouseUp cam =
+    { cam | dragging = False, lastMousePos = Nothing }
+
+
+{-| Zoom by scrolling. `delta` is the wheel deltaY value (positive = zoom out).
+Distance is clamped to [0.5, 500] LDU.
+-}
+onWheel : Float -> Camera -> Camera
+onWheel delta cam =
+    let
+        factor =
+            1.0 + delta * 0.001
+
+        newDistance =
+            clamp 0.5 500 (cam.distance * factor)
+    in
+    { cam | distance = newDistance }
