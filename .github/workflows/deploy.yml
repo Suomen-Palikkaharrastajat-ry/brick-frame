@@ -41,6 +41,9 @@ jobs:
       - name: Install devenv
         run: nix profile install "github:cachix/devenv/v2.0.6"
 
+      - name: Prepare Cabal cache directories
+        run: mkdir -p ~/.cabal/packages ~/.cabal/store
+
       - name: Restore Cabal index cache
         uses: actions/cache@v4
         with:
