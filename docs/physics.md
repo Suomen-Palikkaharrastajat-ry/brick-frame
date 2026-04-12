@@ -1,11 +1,11 @@
 # Physics
 
-The simulator models a Technic gear train as a directed graph and computes all
+The simulator models a Bricks gear train as a directed graph and computes all
 gear angles as a **deterministic function of time**, not as an incremental
 integrator. This makes playback scrubbing exact — seeking to any time `t` gives
 the same result regardless of how you got there.
 
-All physics logic lives in `packages/technic-simulator/src/Gear/`.
+All physics logic lives in `packages/bricks-simulator/src/Gear/`.
 
 ## Deterministic angle model
 

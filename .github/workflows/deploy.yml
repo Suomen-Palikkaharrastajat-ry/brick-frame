@@ -52,7 +52,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cabal/store
-          key: cabal-store-${{ runner.os }}-${{ hashFiles('cabal.project.freeze', 'template.cabal', 'devenv.lock', 'devenv.nix') }}
+          key: cabal-store-${{ runner.os }}-${{ hashFiles('cabal.project.freeze', 'bricks.cabal', 'devenv.lock', 'devenv.nix') }}
           restore-keys: cabal-store-${{ runner.os }}-
 
       - name: Update Cabal package index
@@ -120,6 +120,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: bash scripts/smoke-test.sh
+      - name: Smoke test (site + web components example)
+        run: bash scripts/smoke-test.sh
         env:
           SITE_URL: ${{ needs.deploy.outputs.page_url }}

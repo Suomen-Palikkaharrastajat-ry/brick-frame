@@ -1,6 +1,6 @@
 module Main exposing (main)
 
-{-| Main application entrypoint for the LEGO Technic simulator.
+{-| Main application entrypoint for the LEGO Bricks simulator.
 -}
 
 import Array
@@ -46,8 +46,10 @@ import WebGL.Settings.DepthTest as DepthTest
 type alias Flags =
     { ldrawBase : String
     , ldrawFallbackBase : String
+    , defaultModelUrl : String
     , initialHash : String
     , maxRpm : Float
+    , uiMode : String
     }
 
 
@@ -74,6 +76,11 @@ type alias PlaybackState =
 type CameraMode
     = CameraAutoFit
     | CameraManual
+
+
+type UiMode
+    = ViewerMode
+    | SimulatorMode
 
 
 type alias TouchPoint =
@@ -118,6 +125,9 @@ type alias Model =
     , activeTouches : Dict Int TouchPoint
     , controlsCollapsed : Bool
     , mousePanDragging : Bool
+    , uiMode : UiMode
+    , simulationChecked : Bool
+    , simulationAvailable : Bool
     }
 
 
@@ -152,6 +162,9 @@ type alias ComponentMeshRender =
 init : Flags -> ( Model, Cmd Msg )
 init flags =
     let
+        uiMode =
+            parseUiMode flags.uiMode
+
         fallbackBase =
             if String.trim flags.ldrawFallbackBase == "" then
                 Nothing
@@ -164,6 +177,12 @@ init flags =
 
         initialHash =
             decodeHash flags.initialHash
+
+        initialModelUrl =
+            String.trim flags.defaultModelUrl
+
+        shouldLoadInitialModel =
+            not (String.isEmpty initialModelUrl)
 
         baseCamera =
             Camera.init
@@ -184,11 +203,18 @@ init flags =
 
             else
                 CameraAutoFit
+
+        initialLoadPhase =
+            if shouldLoadInitialModel then
+                FetchingTopLevel initialModelUrl
+
+            else
+                Idle
     in
     ( { camera = initialCamera
       , width = 800
       , height = 600
-      , loadPhase = Idle
+      , loadPhase = initialLoadPhase
       , topLevelLines = []
       , partCache = embeddedPartCache
       , resolverConfig = resolver
@@ -218,13 +244,22 @@ init flags =
       , activeTouches = Dict.empty
       , controlsCollapsed = False
       , mousePanDragging = False
+      , uiMode = uiMode
+      , simulationChecked = False
+      , simulationAvailable = False
       }
-    , Cmd.batch
+    , Cmd.batch <|
         [ Browser.Dom.getViewport
             |> Task.perform
                 (\vp -> WindowResize (round vp.viewport.width) (round vp.viewport.height))
         , Ports.setUrlHash (encodeHashString initialCamera)
         ]
+            ++ (if shouldLoadInitialModel then
+                    [ fetchTopLevel initialModelUrl ]
+
+                else
+                    []
+               )
     )
 
 
@@ -296,6 +331,36 @@ type Msg
     | SetMotorSpeed Float
     | ToggleControlsPanel
     | KeyPressed String
+
+
+runtimeEventCmd : String -> List ( String, Encode.Value ) -> Cmd Msg
+runtimeEventCmd eventType fields =
+    Ports.runtimeEvent <|
+        Encode.encode 0 <|
+            Encode.object
+                (( "type", Encode.string eventType ) :: fields)
+
+
+modelLoadedEventCmd : Model -> Cmd Msg
+modelLoadedEventCmd model =
+    runtimeEventCmd "model-loaded"
+        [ ( "mode", Encode.string (uiModeToString model.uiMode) )
+        , ( "simulationAvailable", Encode.bool model.simulationAvailable )
+        ]
+
+
+modelErrorEventCmd : String -> Cmd Msg
+modelErrorEventCmd message =
+    runtimeEventCmd "model-error"
+        [ ( "message", Encode.string message ) ]
+
+
+playStateEventCmd : Bool -> Float -> Cmd Msg
+playStateEventCmd running currentTime =
+    runtimeEventCmd "play-state-changed"
+        [ ( "running", Encode.bool running )
+        , ( "time", Encode.float currentTime )
+        ]
 
 
 
@@ -469,7 +534,7 @@ update msg model =
             handleTopLevelText text model
 
         FileLoadError err ->
-            ( { model | errorMsg = Just err }, Cmd.none )
+            ( { model | errorMsg = Just err }, modelErrorEventCmd err )
 
         GeometryFlattened payload ->
             case Decode.decodeString flattenResultDecoder payload of
@@ -482,8 +547,11 @@ update msg model =
                                 , conditionalLines = result.conditionalLines
                                 }
                                 result.bfcCertified
+
+                        updatedModel =
+                            { model | scene = Just scene, loadPhase = Ready }
                     in
-                    ( { model | scene = Just scene, loadPhase = Ready }, Cmd.none )
+                    ( updatedModel, modelLoadedEventCmd updatedModel )
 
                 Err err ->
                     let
@@ -497,7 +565,7 @@ update msg model =
                                     ++ Decode.errorToString err
                                 )
                       }
-                    , Cmd.none
+                    , modelLoadedEventCmd fallback
                     )
 
         GeometryFlattenFailed err ->
@@ -506,28 +574,35 @@ update msg model =
                     buildSceneFallback model
             in
             ( { fallback | errorMsg = Just ("Geometry worker failed; used local flatten. " ++ err) }
-            , Cmd.none
+            , modelLoadedEventCmd fallback
             )
 
         DismissError ->
             ( { model | errorMsg = Nothing }, Cmd.none )
 
         TopLevelLoaded _ (Err err) ->
+            let
+                message =
+                    "Failed to load model: " ++ httpErrString err
+            in
             ( { model
-                | errorMsg = Just ("Failed to load model: " ++ httpErrString err)
+                | errorMsg = Just message
                 , loadPhase = Idle
               }
-            , Cmd.none
+            , modelErrorEventCmd message
             )
 
         TopLevelLoaded _ (Ok text) ->
             if looksLikeHtmlResponse text then
+                let
+                    message =
+                        "Top-level URL returned HTML instead of LDraw text. Run `make sync-ldraw` or use a direct LDraw URL."
+                in
                 ( { model
-                    | errorMsg =
-                        Just "Top-level URL returned HTML instead of LDraw text. Run `make sync-ldraw` or use a direct LDraw URL."
+                    | errorMsg = Just message
                     , loadPhase = Idle
                   }
-                , Cmd.none
+                , modelErrorEventCmd message
                 )
 
             else
@@ -610,7 +685,7 @@ update msg model =
                 , gearAngles = newAngles
                 , lastFrameTime = Nothing
               }
-            , Cmd.none
+            , playStateEventCmd True model.playback.currentTime
             )
 
         Pause ->
@@ -625,7 +700,7 @@ update msg model =
                 | playback = { playbackState | running = False }
                 , motor = { motorState | running = False }
               }
-            , Cmd.none
+            , playStateEventCmd False model.playback.currentTime
             )
 
         Stop ->
@@ -650,7 +725,10 @@ update msg model =
                 , gearAngles = resetAngles
                 , lastFrameTime = Nothing
               }
-            , Ports.setUrlHash (encodeHashString model.camera)
+            , Cmd.batch
+                [ Ports.setUrlHash (encodeHashString model.camera)
+                , playStateEventCmd False 0.0
+                ]
             )
 
         ToggleMotor ->
@@ -776,6 +854,8 @@ resetForLoad url m =
         , touchGesture = NoTouchGesture
         , activeTouches = Dict.empty
         , mousePanDragging = False
+        , simulationChecked = False
+        , simulationAvailable = False
     }
 
 
@@ -1128,6 +1208,8 @@ handleTopLevelText text model =
                 , clickStart = Nothing
                 , dragTravel = 0.0
                 , lastFrameTime = Nothing
+                , simulationChecked = False
+                , simulationAvailable = False
             }
     in
     if List.isEmpty pending then
@@ -1142,90 +1224,6 @@ handleTopLevelText text model =
 finishLoading : Model -> ( Model, Cmd Msg )
 finishLoading model =
     let
-        gearInstances =
-            Detect.extractGears Data.gearParts model.topLevelLines model.partCache
-
-        components =
-            topLevelComponents model.topLevelLines
-
-        drivenAxles =
-            buildDrivenAxles model.partCache components gearInstances
-
-        -- For each top-level line, compute the gear it co-rotates with (if any).
-        -- Used to both exclude those lines from the static scene and build
-        -- rotating meshes for them.
-        coaxialGearByLine =
-            List.map (\line -> topLevelCoaxialGear model.partCache drivenAxles line gearInstances) model.topLevelLines
-
-        -- Lines that belong to the static (non-rotating) scene: drop gears,
-        -- known components, and co-axial parts that will get their own
-        -- rotating meshes.
-        nonGearTopLevelLines =
-            List.map2 Tuple.pair model.topLevelLines coaxialGearByLine
-                |> List.filter
-                    (\( line, coaxial ) ->
-                        not (isTopLevelGearRef line)
-                            && not (isTopLevelComponentRef line)
-                            && coaxial
-                            == Nothing
-                    )
-                |> List.map Tuple.first
-
-        -- Non-gear, non-component top-level parts that share an axle with a
-        -- gear and should rotate with it.
-        coaxialPartData =
-            List.map2 Tuple.pair model.topLevelLines coaxialGearByLine
-                |> List.filterMap
-                    (\( line, coaxial ) ->
-                        case ( line, coaxial ) of
-                            ( SubFileRef ref, Just gearId ) ->
-                                if not (isTopLevelGearRef line) && not (isTopLevelComponentRef line) then
-                                    Just
-                                        { file = ref.file
-                                        , color = resolveRootColor ref.color
-                                        , transform = ref.transform
-                                        , drivingGearId = gearId
-                                        }
-
-                                else
-                                    Nothing
-
-                            _ ->
-                                Nothing
-                    )
-
-        gearMeshes =
-            buildGearMeshes model.partCache gearInstances
-
-        graph =
-            Detect.buildGearGraph gearInstances
-
-        -- Auto-select the first detected gear as the motor
-        firstGearId =
-            List.head gearInstances |> Maybe.map .id
-
-        defaultMotor =
-            Animate.defaultMotor
-
-        motor =
-            { defaultMotor | drivingGearId = firstGearId }
-
-        startTime =
-            max 0 model.playback.currentTime
-
-        initAngles =
-            Animate.gearAngles motor graph startTime
-
-        componentRenders =
-            buildComponentRenders model.partCache components gearInstances
-
-        componentMeshes =
-            buildComponentMeshRenders model.partCache components gearInstances
-                ++ buildCoaxialMeshRenders model.partCache gearInstances coaxialPartData
-
-        playbackState =
-            model.playback
-
         nextCamera =
             case model.cameraMode of
                 CameraAutoFit ->
@@ -1234,27 +1232,154 @@ finishLoading model =
                 CameraManual ->
                     model.camera
     in
-    ( { model
-        | camera = nextCamera
-        , scene = Nothing
-        , loadPhase = FlatteningGeometry
-        , gearGraph = Just graph
-        , gearMeshes = gearMeshes
-        , components = components
-        , componentMeshes = componentMeshes
-        , componentRenders = componentRenders
-        , motor = motor
-        , playback =
-            { playbackState
-                | running = False
-                , currentTime = startTime
-                , motorGearId = firstGearId
-                , motorSpeedRadPerSec = motor.speedRadPerSec
-            }
-        , gearAngles = initAngles
-      }
-    , requestGeometryFlatten nonGearTopLevelLines model.partCache
-    )
+    case model.uiMode of
+        ViewerMode ->
+            ( { model
+                | camera = nextCamera
+                , scene = Nothing
+                , loadPhase = FlatteningGeometry
+                , gearGraph = Nothing
+                , gearMeshes = Dict.empty
+                , components = []
+                , componentMeshes = []
+                , componentRenders = []
+                , motor = Animate.defaultMotor
+                , playback =
+                    { running = False
+                    , currentTime = 0.0
+                    , motorGearId = Nothing
+                    , motorSpeedRadPerSec = 1.0
+                    }
+                , gearAngles = Dict.empty
+                , simulationChecked = True
+                , simulationAvailable = False
+              }
+            , requestGeometryFlatten model.topLevelLines model.partCache
+            )
+
+        SimulatorMode ->
+            let
+                gearInstances =
+                    Detect.extractGears Data.gearParts model.topLevelLines model.partCache
+
+                components =
+                    topLevelComponents model.topLevelLines
+
+                drivenAxles =
+                    buildDrivenAxles model.partCache components gearInstances
+
+                -- For each top-level line, compute the gear it co-rotates with (if any).
+                -- Used to both exclude those lines from the static scene and build
+                -- rotating meshes for them.
+                coaxialGearByLine =
+                    List.map (\line -> topLevelCoaxialGear model.partCache drivenAxles line gearInstances) model.topLevelLines
+
+                -- Lines that belong to the static (non-rotating) scene: drop gears,
+                -- known components, and co-axial parts that will get their own
+                -- rotating meshes.
+                nonGearTopLevelLines =
+                    List.map2 Tuple.pair model.topLevelLines coaxialGearByLine
+                        |> List.filter
+                            (\( line, coaxial ) ->
+                                not (isTopLevelGearRef line)
+                                    && not (isTopLevelComponentRef line)
+                                    && coaxial
+                                    == Nothing
+                            )
+                        |> List.map Tuple.first
+
+                -- Non-gear, non-component top-level parts that share an axle with a
+                -- gear and should rotate with it.
+                coaxialPartData =
+                    List.map2 Tuple.pair model.topLevelLines coaxialGearByLine
+                        |> List.filterMap
+                            (\( line, coaxial ) ->
+                                case ( line, coaxial ) of
+                                    ( SubFileRef ref, Just gearId ) ->
+                                        if not (isTopLevelGearRef line) && not (isTopLevelComponentRef line) then
+                                            Just
+                                                { file = ref.file
+                                                , color = resolveRootColor ref.color
+                                                , transform = ref.transform
+                                                , drivingGearId = gearId
+                                                }
+
+                                        else
+                                            Nothing
+
+                                    _ ->
+                                        Nothing
+                            )
+
+                gearMeshes =
+                    buildGearMeshes model.partCache gearInstances
+
+                graph =
+                    Detect.buildGearGraph gearInstances
+
+                firstGearId =
+                    List.head gearInstances |> Maybe.map .id
+
+                defaultMotor =
+                    Animate.defaultMotor
+
+                motor =
+                    { defaultMotor | drivingGearId = firstGearId }
+
+                startTime =
+                    max 0 model.playback.currentTime
+
+                initAngles =
+                    Animate.gearAngles motor graph startTime
+
+                componentRenders =
+                    buildComponentRenders model.partCache components gearInstances
+
+                componentMeshes =
+                    buildComponentMeshRenders model.partCache components gearInstances
+                        ++ buildCoaxialMeshRenders model.partCache gearInstances coaxialPartData
+
+                playbackState =
+                    model.playback
+
+                simulationAvailable =
+                    not (List.isEmpty gearInstances)
+
+                simulationEvent =
+                    if simulationAvailable then
+                        runtimeEventCmd "simulation-ready"
+                            [ ( "gearCount", Encode.int (List.length gearInstances) ) ]
+
+                    else
+                        runtimeEventCmd "simulation-unavailable"
+                            [ ( "reason", Encode.string "No Bricks gear train detected" ) ]
+            in
+            ( { model
+                | camera = nextCamera
+                , scene = Nothing
+                , loadPhase = FlatteningGeometry
+                , gearGraph = Just graph
+                , gearMeshes = gearMeshes
+                , components = components
+                , componentMeshes = componentMeshes
+                , componentRenders = componentRenders
+                , motor = motor
+                , playback =
+                    { playbackState
+                        | running = False
+                        , currentTime = startTime
+                        , motorGearId = firstGearId
+                        , motorSpeedRadPerSec = motor.speedRadPerSec
+                    }
+                , gearAngles = initAngles
+                , simulationChecked = True
+                , simulationAvailable = simulationAvailable
+              }
+            , Cmd.batch
+                [ requestGeometryFlatten nonGearTopLevelLines model.partCache
+                , simulationEvent
+                ]
+            )
 
 
 fetchPending : ResolverConfig -> List String -> Cmd Msg
@@ -1282,11 +1407,16 @@ requestGeometryFlatten lines cache =
 buildSceneFallback : Model -> Model
 buildSceneFallback model =
     let
-        nonGearTopLevelLines =
-            List.filter (not << isTopLevelGearRef) model.topLevelLines
+        staticLines =
+            case model.uiMode of
+                ViewerMode ->
+                    model.topLevelLines
+
+                SimulatorMode ->
+                    List.filter (not << isTopLevelGearRef) model.topLevelLines
 
         geom =
-            Geometry.flatten nonGearTopLevelLines model.partCache 15 Mat4.identity
+            Geometry.flatten staticLines model.partCache 15 Mat4.identity
 
         scene =
             Scene.buildScene
@@ -2822,8 +2952,8 @@ coordinateDecoder keys =
 view : Model -> Html Msg
 view model =
     div
-        [ Attr.style "width" "100vw"
-        , Attr.style "height" "100vh"
+        [ Attr.style "width" "100%"
+        , Attr.style "height" "100%"
         , Attr.style "overflow" "hidden"
         , Attr.style "background" Theme.appBackground
         , Attr.style "position" "relative"
@@ -2889,6 +3019,18 @@ viewCanvas model =
 
 viewOverlay : Model -> Html Msg
 viewOverlay model =
+    let
+        modeOverlays =
+            case model.uiMode of
+                ViewerMode ->
+                    []
+
+                SimulatorMode ->
+                    [ viewDebug model
+                    , viewGearPanel model
+                    , viewToolbar model
+                    ]
+    in
     div
         [ Attr.style "position" "absolute"
         , Attr.style "top" "0"
@@ -2897,11 +3039,7 @@ viewOverlay model =
         , Attr.style "bottom" "0"
         , Attr.style "pointer-events" "none"
         ]
-        [ viewDebug model
-        , viewStatus model
-        , viewGearPanel model
-        , viewToolbar model
-        ]
+        ([ viewStatus model ] ++ modeOverlays)
 
 
 viewDebug : Model -> Html Msg
@@ -2936,105 +3074,142 @@ play/pause control, and per-gear "Set as Motor" buttons.
 -}
 viewGearPanel : Model -> Html Msg
 viewGearPanel model =
-    case model.gearGraph of
-        Nothing ->
+    case model.uiMode of
+        ViewerMode ->
             text ""
 
-        Just graph ->
-            let
-                instances =
-                    Array.toList graph.instances
-
-                axleCount =
-                    model.components
-                        |> List.filter (\c -> c.kind == Components.AxleLike)
-                        |> List.length
-
-                beamCount =
-                    model.components
-                        |> List.filter (\c -> c.kind == Components.Beam)
-                        |> List.length
-
-                ratios =
-                    case model.motor.drivingGearId of
-                        Just motorId ->
-                            Physics.propagate graph motorId 1.0
-
-                        Nothing ->
-                            Dict.empty
-            in
-            if List.isEmpty instances then
-                text ""
+        SimulatorMode ->
+            if model.simulationChecked && not model.simulationAvailable then
+                viewSimulationUnavailablePanel
 
             else
-                div
-                    [ Attr.style "position" "absolute"
-                    , Attr.style "top" "12px"
-                    , Attr.style "right" "12px"
-                    , Attr.style "background" Theme.panelBackground
-                    , Attr.style "color" Theme.textPrimary
-                    , Attr.style "font-family" "monospace"
-                    , Attr.style "font-size" "12px"
-                    , Attr.style "border-radius" "8px"
-                    , Attr.style "padding" "12px 16px"
-                    , Attr.style "width" "280px"
-                    , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-                    , Attr.style "box-shadow" "0 10px 32px color-mix(in srgb, var(--color-brand) 8%, transparent)"
-                    , Attr.style "box-sizing" "border-box"
-                    , Attr.style "overflow-x" "hidden"
-                    , Attr.style "pointer-events" "auto"
-                    , Attr.style "touch-action" "none"
-                    ]
-                    ([ div
-                        [ Attr.style "display" "flex"
-                        , Attr.style "align-items" "center"
-                        , Attr.style "justify-content" "space-between"
-                        ]
-                        [ div
-                            [ Attr.style "color" Theme.brandYellow ]
-                            [ text
-                                (String.fromInt (List.length instances)
-                                    ++ " gear"
-                                    ++ (if List.length instances == 1 then
-                                            ""
+                case model.gearGraph of
+                    Nothing ->
+                        text ""
+
+                    Just graph ->
+                        let
+                            instances =
+                                Array.toList graph.instances
+
+                            axleCount =
+                                model.components
+                                    |> List.filter (\c -> c.kind == Components.AxleLike)
+                                    |> List.length
+
+                            beamCount =
+                                model.components
+                                    |> List.filter (\c -> c.kind == Components.Beam)
+                                    |> List.length
+
+                            ratios =
+                                case model.motor.drivingGearId of
+                                    Just motorId ->
+                                        Physics.propagate graph motorId 1.0
+
+                                    Nothing ->
+                                        Dict.empty
+                        in
+                        if List.isEmpty instances then
+                            text ""
+
+                        else
+                            div
+                                [ Attr.style "position" "absolute"
+                                , Attr.style "top" "12px"
+                                , Attr.style "right" "12px"
+                                , Attr.style "background" Theme.panelBackground
+                                , Attr.style "color" Theme.textPrimary
+                                , Attr.style "font-family" "monospace"
+                                , Attr.style "font-size" "12px"
+                                , Attr.style "border-radius" "8px"
+                                , Attr.style "padding" "12px 16px"
+                                , Attr.style "width" "280px"
+                                , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+                                , Attr.style "box-shadow" "0 10px 32px color-mix(in srgb, var(--color-brand) 8%, transparent)"
+                                , Attr.style "box-sizing" "border-box"
+                                , Attr.style "overflow-x" "hidden"
+                                , Attr.style "pointer-events" "auto"
+                                , Attr.style "touch-action" "none"
+                                ]
+                                ([ div
+                                    [ Attr.style "display" "flex"
+                                    , Attr.style "align-items" "center"
+                                    , Attr.style "justify-content" "space-between"
+                                    ]
+                                    [ div
+                                        [ Attr.style "color" Theme.brandYellow ]
+                                        [ text
+                                            (String.fromInt (List.length instances)
+                                                ++ " gear"
+                                                ++ (if List.length instances == 1 then
+                                                        ""
+
+                                                    else
+                                                        "s"
+                                                   )
+                                                ++ " detected"
+                                            )
+                                        ]
+                                    , button
+                                        [ Html.Events.onClick ToggleControlsPanel
+                                        , onTouchTap ToggleControlsPanel
+                                        , Attr.style "padding" "2px 8px"
+                                        , Attr.style "background" Theme.panelSubtleBackground
+                                        , Attr.style "color" Theme.textPrimary
+                                        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+                                        , Attr.style "border-radius" "3px"
+                                        , Attr.style "cursor" "pointer"
+                                        , Attr.style "font-family" "monospace"
+                                        , Attr.style "font-size" "11px"
+                                        ]
+                                        [ text
+                                            (if model.controlsCollapsed then
+                                                "Maximize"
+
+                                             else
+                                                "Minimize"
+                                            )
+                                        ]
+                                    ]
+                                 ]
+                                    ++ (if model.controlsCollapsed then
+                                            []
 
                                         else
-                                            "s"
+                                            [ viewComponentSummary axleCount beamCount ]
+                                                ++ List.map (viewGearRow model graph ratios) instances
+                                                ++ [ viewMotorControls model ]
                                        )
-                                    ++ " detected"
                                 )
-                            ]
-                        , button
-                            [ Html.Events.onClick ToggleControlsPanel
-                            , onTouchTap ToggleControlsPanel
-                            , Attr.style "padding" "2px 8px"
-                            , Attr.style "background" Theme.panelSubtleBackground
-                            , Attr.style "color" Theme.textPrimary
-                            , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-                            , Attr.style "border-radius" "3px"
-                            , Attr.style "cursor" "pointer"
-                            , Attr.style "font-family" "monospace"
-                            , Attr.style "font-size" "11px"
-                            ]
-                            [ text
-                                (if model.controlsCollapsed then
-                                    "Maximize"
 
-                                 else
-                                    "Minimize"
-                                )
-                            ]
-                        ]
-                     ]
-                        ++ (if model.controlsCollapsed then
-                                []
 
-                            else
-                                [ viewComponentSummary axleCount beamCount ]
-                                    ++ List.map (viewGearRow model graph ratios) instances
-                                    ++ [ viewMotorControls model ]
-                           )
-                    )
+viewSimulationUnavailablePanel : Html Msg
+viewSimulationUnavailablePanel =
+    div
+        [ Attr.style "position" "absolute"
+        , Attr.style "top" "12px"
+        , Attr.style "right" "12px"
+        , Attr.style "background" Theme.panelBackground
+        , Attr.style "color" Theme.textPrimary
+        , Attr.style "font-family" "monospace"
+        , Attr.style "font-size" "12px"
+        , Attr.style "border-radius" "8px"
+        , Attr.style "padding" "12px 16px"
+        , Attr.style "width" "280px"
+        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "box-shadow" "0 10px 32px color-mix(in srgb, var(--color-brand) 8%, transparent)"
+        , Attr.style "box-sizing" "border-box"
+        , Attr.style "pointer-events" "auto"
+        ]
+        [ div [ Attr.style "color" Theme.brandYellow ] [ text "Simulation unavailable" ]
+        , div
+            [ Attr.style "margin-top" "6px"
+            , Attr.style "font-size" "11px"
+            , Attr.style "color" Theme.textMuted
+            ]
+            [ text "No Bricks gear train detected in this model." ]
+        ]
 
 
 viewGearRow : Model -> GearGraph -> Dict GearId Float -> GearInstance -> Html Msg
@@ -3392,6 +3567,26 @@ viewLoadingBox label maybePct =
 
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+parseUiMode : String -> UiMode
+parseUiMode rawMode =
+    case String.toLower (String.trim rawMode) of
+        "viewer" ->
+            ViewerMode
+
+        _ ->
+            SimulatorMode
+
+
+uiModeToString : UiMode -> String
+uiModeToString uiMode =
+    case uiMode of
+        ViewerMode ->
+            "viewer"
+
+        SimulatorMode ->
+            "simulator"
 
 
 type alias HashState =

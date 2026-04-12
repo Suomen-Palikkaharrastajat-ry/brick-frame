@@ -41,19 +41,20 @@ devenv.local.yaml:
 .PHONY: all
 all: build ## Build everything
 
-HS_SOURCES := $(shell find src generator -name '*.hs') technic.cabal $(wildcard cabal.project*)
+HS_SOURCES := $(shell find src generator -name '*.hs') bricks.cabal $(wildcard cabal.project*)
 ELM_APP_SOURCES := $(shell find elm-app/src -name '*.elm' ! -name 'Data.elm')
 ELM_PACKAGE_SOURCES := $(shell find vendor/master-builder/packages -name '*.elm' -o -name '*.css' 2>/dev/null)
+WC_SOURCES := $(shell find elm-app/web-components elm-app/runtime -name '*.js' 2>/dev/null)
 
-technic-generator: $(HS_SOURCES)
+bricks-generator: $(HS_SOURCES)
 	cabal build generator
 	cp $$(cabal list-bin generator) $@
 
 .PHONY: generate
 generate: elm-app/src/Data.elm ## Run Haskell generator to produce elm-app/src/Data.elm
 
-elm-app/src/Data.elm: technic-generator
-	./technic-generator
+elm-app/src/Data.elm: bricks-generator
+	./bricks-generator
 
 elm-app/src/.data-nix-stamp:
 	$(GENERATOR_NIX)
@@ -82,6 +83,17 @@ build/.elm-stamp-ci: elm-app/src/.data-nix-stamp elm-app/.elm-tailwind/.stamp $(
 .PHONY: elm-build
 elm-build: build/.elm-stamp ## Production build of Elm SPA → build/
 
+build/.wc-stamp: elm-app/src/Data.elm elm-app/elm.json elm-app/vite.web-components.config.mjs elm-app/src/Main.elm elm-app/src/Ports.elm elm-app/geometry-worker.js elm-app/main.css $(WC_SOURCES)
+	cd elm-app && vite build --config vite.web-components.config.mjs
+	touch $@
+
+build/.wc-stamp-ci: elm-app/src/.data-nix-stamp elm-app/elm.json elm-app/vite.web-components.config.mjs elm-app/src/Main.elm elm-app/src/Ports.elm elm-app/geometry-worker.js elm-app/main.css $(WC_SOURCES)
+	cd elm-app && vite build --config vite.web-components.config.mjs
+	touch $@
+
+.PHONY: wc-build
+wc-build: build/.wc-stamp ## Production build of Web Components bundle
+
 .PHONY: elm-test
 elm-test: elm-tailwind-gen ## Run Elm unit tests
 	cd elm-app && elm-test
@@ -108,15 +120,15 @@ elm-review-fix: ## Run elm-review with auto-fix
 dev: elm-dev ## Generate data + start Vite dev server
 
 .PHONY: build
-build: elm-build ## Generate data + production build → build/
+build: elm-build wc-build ## Generate data + production build → build/
 
 .PHONY: dist-ci
-dist-ci: build/.elm-stamp-ci ## CI build: generator (Nix binary) + Elm app → build/
+dist-ci: build/.elm-stamp-ci build/.wc-stamp-ci ## CI build: generator (Nix binary) + app + web components → build/
 
 .PHONY: watch
 watch: ## Watch Haskell sources and run Vite dev server
 	make generate
-	find src generator technic.cabal -name "*.hs" -o -name "*.cabal" | entr -s 'make generate' &
+	find src generator bricks.cabal -name "*.hs" -o -name "*.cabal" | entr -s 'make generate' &
 	cd elm-app && elm-tailwind-classes gen && vite
 
 .PHONY: sync-ldraw
@@ -139,8 +151,8 @@ test: check ## Run all tests
 	$(MAKE) test-lib
 
 .PHONY: test-lib
-test-lib: ## Run technic-simulator library unit tests
-	cd packages/technic-simulator && elm-test
+test-lib: ## Run bricks-simulator library unit tests
+	cd packages/bricks-simulator && elm-test
 
 .PHONY: repl
 repl: ## Open GHCi REPL
@@ -167,4 +179,4 @@ format: ## Auto-format Haskell and Elm source files
 .PHONY: clean
 clean: ## Remove build artifacts and generated output
 	cabal clean
-	rm -rf build technic-generator .hpc elm-app/.elm-tailwind elm-app/elm-stuff elm-app/src/Data.elm elm-app/src/.data-nix-stamp
+	rm -rf build bricks-generator .hpc elm-app/.elm-tailwind elm-app/elm-stuff elm-app/src/Data.elm elm-app/src/.data-nix-stamp build/.wc-stamp build/.wc-stamp-ci

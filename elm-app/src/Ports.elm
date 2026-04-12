@@ -5,6 +5,7 @@ port module Ports exposing
     , geometryFlattened
     , requestFileUpload
     , requestGeometryFlatten
+    , runtimeEvent
     , setUrlHash
     )
 
@@ -46,6 +47,11 @@ port geometryFlattened : (String -> msg) -> Sub msg
 {-| Receive worker flatten failure details.
 -}
 port geometryFlattenFailed : (String -> msg) -> Sub msg
+
+
+{-| Emit runtime lifecycle events as JSON strings (for wrapper integrations).
+-}
+port runtimeEvent : String -> Cmd msg
 
 
 {-| Update browser URL hash from Elm app state.

@@ -4,9 +4,9 @@ let
     let
       hpkgs = pkgs.haskell.packages.ghc96;
       npmTools = pkgs.callPackage ./pkgs/npm-tools.nix { };
-      technicPackage = hpkgs.callCabal2nix "technic" ./. { };
+      bricksPackage = hpkgs.callCabal2nix "bricks" ./. { };
       generatorCommand = pkgs.writeShellScriptBin "generator-nix" ''
-        exec ${technicPackage}/bin/generator "$@"
+        exec ${bricksPackage}/bin/generator "$@"
       '';
     in
     {
@@ -65,7 +65,7 @@ let
         ln -sfn "${npmTools}/lib/node_modules" elm-app/node_modules
 
         echo ""
-        echo "── technic dev environment ──────────────────────────"
+        echo "── bricks dev environment ──────────────────────────"
         echo "  GHC:    $(ghc --version)"
         echo "  Cabal:  $(cabal --version | head -1)"
         echo "  Elm:    $(elm --version)"

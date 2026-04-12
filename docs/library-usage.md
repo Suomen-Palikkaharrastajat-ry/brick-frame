@@ -1,10 +1,48 @@
-# Using technic-simulator in a custom Elm application
+# Using bricks-simulator in a custom Elm application
 
-`packages/technic-simulator/` is a self-contained Elm source package that
+`packages/bricks-simulator/` is a self-contained Elm source package that
 provides LDraw parsing, 3D rendering, gear detection, and gear physics as
 **pure functions**. It has no ports of its own — those live in the host
 application. The `elm-app/` demo wires everything together and serves as a
 reference implementation.
+
+## Web Components distribution
+
+The project also ships a browser-native Web Components bundle with two custom
+elements:
+
+- `<bricks-viewer>`: render model only (no simulation controls)
+- `<bricks-simulator>`: render model + Bricks simulation UI
+
+Minimal HTML usage:
+
+```html
+<script src="./bricks-web-components.iife.js"></script>
+
+<bricks-viewer src="./examples/gears.ldr"></bricks-viewer>
+<bricks-simulator src="./examples/gears.ldr"></bricks-simulator>
+```
+
+Both elements accept:
+
+- `src` (`.ldr`, `.mpd`, `.dat`, `.io`)
+- `ldraw-base`
+- `ldraw-fallback-base`
+- `max-rpm`
+
+Runtime methods are also available:
+
+- `loadFromText(text, filename?)`
+- `loadFromFile(file)`
+- `loadFromUrl(url)`
+
+Events emitted by the wrapper:
+
+- `model-loaded`
+- `model-error`
+- `play-state-changed`
+- `simulation-ready`
+- `simulation-unavailable`
 
 ## Setup
 
@@ -17,7 +55,7 @@ directory:
 {
   "source-directories": [
     "src",
-    "../packages/technic-simulator/src"
+    "../packages/bricks-simulator/src"
   ]
 }
 ```
@@ -257,19 +295,19 @@ construction and frustum culling pattern.
 | `ldrawColors` | `Dict Int { r, g, b, alpha }` | Known LDraw/LEGO color codes used by the simulator |
 | `embeddedParts` | `Dict String String` | Pre-loaded LDraw part text for core gears and their dependencies |
 | `lodParts` | `Dict String String` | Simplified (LOD) versions of embedded parts |
-| `gearParts` | `List { partFile, teeth, pitchRadius }` | Known Technic gear specs |
+| `gearParts` | `List { partFile, teeth, pitchRadius }` | Known Bricks gear specs |
 | `exampleModels` | `List { label, url }` | Sample model URLs (not exposed in demo UI) |
 
 ---
 
 ## Running tests for the package
 
-The package has its own test suite in `packages/technic-simulator/tests/`:
+The package has its own test suite in `packages/bricks-simulator/tests/`:
 
 ```sh
 make test-lib
 # or manually:
-cd packages/technic-simulator && elm-test
+cd packages/bricks-simulator && elm-test
 ```
 
 Tests cover `LDraw.Parser`, `LDraw.Geometry`, `Gear.Detect`, `Gear.Physics`,

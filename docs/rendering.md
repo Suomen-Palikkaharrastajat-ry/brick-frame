@@ -2,7 +2,7 @@
 
 The simulator renders 3D LDraw models using **WebGL** via
 [elm-explorations/webgl 1.1.3](https://package.elm-lang.org/packages/elm-explorations/webgl/latest/).
-All rendering logic lives in `packages/technic-simulator/src/Render/`.
+All rendering logic lives in `packages/bricks-simulator/src/Render/`.
 
 ## Architecture overview
 
@@ -21,7 +21,7 @@ downward). The simulator converts to the standard WebGL Y-up convention by
 negating every Y coordinate during geometry flattening. This negation is
 applied in two places:
 
-- `LDraw.Geometry.flatten` (Elm, [packages/technic-simulator/src/LDraw/Geometry.elm](../packages/technic-simulator/src/LDraw/Geometry.elm)) — for the Elm-side path.
+- `LDraw.Geometry.flatten` (Elm, [packages/bricks-simulator/src/LDraw/Geometry.elm](../packages/bricks-simulator/src/LDraw/Geometry.elm)) — for the Elm-side path.
 - `geometry-worker.js` ([elm-app/geometry-worker.js](../elm-app/geometry-worker.js)) — for the Web Worker path.
 
 All world positions stored in `GearInstance.worldPosition` and
