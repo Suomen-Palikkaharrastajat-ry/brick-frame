@@ -600,10 +600,33 @@ update msg model =
 
                 motorState =
                     model.motor
+
+                resolvedMotorGearId =
+                    resolveMotorGearId model
+
+                newMotor =
+                    { motorState
+                        | running = True
+                        , drivingGearId = resolvedMotorGearId
+                    }
+
+                newAngles =
+                    case model.gearGraph of
+                        Just graph ->
+                            Animate.gearAngles newMotor graph model.playback.currentTime
+
+                        Nothing ->
+                            Dict.empty
             in
             ( { model
-                | playback = { playbackState | running = True }
-                , motor = { motorState | running = True }
+                | playback =
+                    { playbackState
+                        | running = True
+                        , motorGearId = resolvedMotorGearId
+                    }
+                , motor = newMotor
+                , gearAngles = newAngles
+                , lastFrameTime = Nothing
               }
             , Cmd.none
             )
@@ -934,6 +957,28 @@ touchInputActive model =
                 _ ->
                     True
            )
+
+
+resolveMotorGearId : Model -> Maybe GearId
+resolveMotorGearId model =
+    case model.motor.drivingGearId of
+        Just gearId ->
+            Just gearId
+
+        Nothing ->
+            case model.playback.motorGearId of
+                Just gearId ->
+                    Just gearId
+
+                Nothing ->
+                    case model.gearGraph of
+                        Just graph ->
+                            graph.instances
+                                |> Array.get 0
+                                |> Maybe.map .id
+
+                        Nothing ->
+                            Nothing
 
 
 touchDistance : TouchPoint -> TouchPoint -> Float
