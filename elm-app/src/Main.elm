@@ -1767,22 +1767,6 @@ topLevelCoaxialGear line gears =
             let
                 pos =
                     toYUpPoint (Mat4.transform ref.transform (Vec3.vec3 0 0 0))
-
-                axisEnd =
-                    toYUpPoint (Mat4.transform ref.transform (Vec3.vec3 0 0 1))
-
-                axisRaw =
-                    Vec3.sub axisEnd pos
-
-                axisLen =
-                    Vec3.length axisRaw
-
-                axis =
-                    if axisLen < 1.0e-6 then
-                        Vec3.vec3 0 1 0
-
-                    else
-                        canonicalizeAxis (Vec3.scale (1 / axisLen) axisRaw)
             in
             gears
                 |> List.filterMap
@@ -1807,13 +1791,13 @@ topLevelCoaxialGear line gears =
                                 else
                                     Vec3.scale (1 / gearAxisLen) gearAxisRaw
 
-                            axisDot =
-                                abs (Vec3.dot axis gearAxis)
-
                             lineDist =
                                 pointToLineDistance pos gearCenter gearAxis
+
+                            axialOffset =
+                                abs (Vec3.dot (Vec3.sub pos gearCenter) gearAxis)
                         in
-                        if axisDot >= 0.94 && lineDist <= 2.5 then
+                        if lineDist <= 2.5 && axialOffset <= 120 then
                             Just ( lineDist, gear.id )
 
                         else
@@ -2413,9 +2397,25 @@ touchPointDecoder =
             , y = y
             }
         )
-        (Decode.field "identifier" Decode.int)
-        (Decode.field "clientX" Decode.float)
-        (Decode.field "clientY" Decode.float)
+        (Decode.field "identifier" intLikeDecoder)
+        (Decode.field "clientX" floatLikeDecoder)
+        (Decode.field "clientY" floatLikeDecoder)
+
+
+intLikeDecoder : Decode.Decoder Int
+intLikeDecoder =
+    Decode.oneOf
+        [ Decode.int
+        , Decode.float |> Decode.map round
+        ]
+
+
+floatLikeDecoder : Decode.Decoder Float
+floatLikeDecoder =
+    Decode.oneOf
+        [ Decode.float
+        , Decode.int |> Decode.map toFloat
+        ]
 
 
 
@@ -2459,6 +2459,7 @@ viewCanvas model =
         , Attr.style "display" "block"
         , Attr.style "width" "100%"
         , Attr.style "height" "100%"
+        , Attr.style "touch-action" "none"
         , Html.Events.on "mousedown"
             (Decode.map2 MouseDown
                 (Decode.field "clientX" Decode.float)
