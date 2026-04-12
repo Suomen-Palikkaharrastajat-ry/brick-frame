@@ -1,4 +1,4 @@
-# AGENTS.md — LEGO Technic Simulator
+# AGENTS.md — Palikkakehys
 
 Browser-based LEGO Technic gear simulator built with Elm + WebGL. Loads LDraw `.ldr`/`.mpd` files, renders 3D models, detects Technic gear trains, and simulates gear rotation physics with playback controls.
 
@@ -51,12 +51,20 @@ In-depth documentation for agents and contributors:
 ## Key Technical Facts
 
 - **LDraw format:** Text lines, types 0–5. Type 1 = sub-file ref with 4×4 transform.
+- **Studio v2 support:** Type 11 lines are parsed as type-1-compatible refs (extra Studio tokens ignored).
 - **Coordinate system:** LDraw uses right-handed Y-down; negate Y during geometry flatten.
-- **Parts CDN:** `https://raw.githubusercontent.com/gkjohnson/ldraw-parts-library/master/complete/ldraw/parts/`
+- **Part resolution:** Primary base is local synced assets (`/ldraw`, configurable via `VITE_LDRAW_BASE`) with optional remote fallback (`VITE_LDRAW_FALLBACK_BASE`).
 - **Key gear parts:** `3647.dat` (8T), `4019.dat` (16T), `3648.dat` (24T), `3649.dat` (40T)
-- **Color 16:** Inherit from parent; Color 24: edge color (render black).
+- **Color inheritance:** Color `16` and Studio `-1` inherit from parent; Color `24` is edge color (render black).
 - **Gear physics:** Pure function of time — angle = ratio × motorSpeed × t (enables free scrubbing).
 - **Msg architecture:** Flat `Msg` type in `Main.elm` only; all sub-modules are pure functions.
+
+## Current Runtime Notes
+
+- **Controls panel:** Gear/motor controls are collapsible via a `Minimize` / `Maximize` toggle in the top-right panel.
+- **Desktop camera controls:** Drag = orbit, `Shift + drag` = pan, wheel = zoom.
+- **Touch controls:** 1-finger orbit, 2-finger pan/pinch; Pointer Events fallback is implemented.
+- **Known mobile issue (unresolved):** On some iOS devices, after touch camera interaction (pan/zoom/orbit), playback buttons may toggle UI state while visible gear animation does not resume until reload. See docs/rendering.md limitations.
 
 ## Development Environment
 

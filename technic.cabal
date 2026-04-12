@@ -1,7 +1,7 @@
 cabal-version: 2.4
 name:          technic
 version:       0.1.0.0
-synopsis:      LEGO Technic Simulator — LDraw renderer and gear train simulator
+synopsis:      Palikkakehys — LDraw renderer and gear train simulator
 description:   Browser-based LEGO Technic gear simulator: loads LDraw files, renders 3D models via WebGL, and simulates Technic gear train physics.
 license:       BSD-3-Clause
 maintainer:    webmaster@palikkaharrastajat.fi

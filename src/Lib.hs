@@ -164,7 +164,7 @@ generateElmModule = do
             , ""
             , "message : String"
             , "message ="
-            , "    " <> elmString "LEGO Technic Simulator"
+            , "    " <> elmString "Palikkakehys"
             , ""
             , ""
             , "version : String"
