@@ -7,6 +7,7 @@ import Html exposing (Html, button, input, text)
 import Html.Attributes as Attr
 import Html.Events
 import Json.Decode as Decode
+import UI.Theme as Theme
 
 
 type alias Config msg =
@@ -39,19 +40,19 @@ view config =
         , Attr.style "padding" "6px 10px"
         , Attr.style "font-family" "monospace"
         , Attr.style "font-size" "12px"
-        , Attr.style "background" "rgba(255,255,255,0.1)"
-        , Attr.style "border" "1px solid rgba(255,255,255,0.25)"
+        , Attr.style "background" Theme.panelSurface
+        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
         , Attr.style "border-radius" "4px"
-        , Attr.style "color" "#fff"
+        , Attr.style "color" Theme.textPrimary
         , Attr.style "outline" "none"
         ]
         []
     , button
         [ Html.Events.onClick config.onLoadUrl
         , Attr.style "padding" "6px 14px"
-        , Attr.style "background" "#f5c518"
-        , Attr.style "color" "#1a1a2e"
-        , Attr.style "border" "none"
+        , Attr.style "background" Theme.brandYellow
+        , Attr.style "color" Theme.brand
+        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
         , Attr.style "border-radius" "4px"
         , Attr.style "font-family" "monospace"
         , Attr.style "font-size" "12px"
@@ -61,9 +62,9 @@ view config =
     , button
         [ Html.Events.onClick config.onRequestFileUpload
         , Attr.style "padding" "6px 14px"
-        , Attr.style "background" "rgba(255,255,255,0.15)"
-        , Attr.style "color" "#fff"
-        , Attr.style "border" "1px solid rgba(255,255,255,0.3)"
+        , Attr.style "background" Theme.panelSubtleBackground
+        , Attr.style "color" Theme.textPrimary
+        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
         , Attr.style "border-radius" "4px"
         , Attr.style "font-family" "monospace"
         , Attr.style "font-size" "12px"

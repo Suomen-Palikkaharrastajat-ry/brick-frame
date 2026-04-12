@@ -31,13 +31,14 @@ import Ports
 import Render.Camera as Camera exposing (Camera)
 import Render.EdgeShader as EdgeShader exposing (EdgeVertex)
 import Render.GuideShader as GuideShader
-import Render.Lighting as Lighting
 import Render.Mesh exposing (Vertex)
 import Render.Scene as Scene exposing (Scene)
 import Render.Shader as Shader
+import Render.Style as Style
 import Task
 import Time
 import UI.FileUpload as FileUpload
+import UI.Theme as Theme
 import Url
 import WebGL
 import WebGL.Settings.DepthTest as DepthTest
@@ -254,6 +255,23 @@ embeddedPartCache =
         )
         Resolve.initCache
         Data.embeddedParts
+
+
+appRenderStyle : Style.Style
+appRenderStyle =
+    let
+        baseStyle =
+            Style.defaultStyle
+    in
+    Style.clampStyle
+        { baseStyle
+            | ambientStrength = 0.58
+            , specularStrength = 0.16
+            , specularPower = 20
+            , rimStrength = 0.1
+            , rimPower = 2.4
+            , vibrance = 0.16
+        }
 
 
 
@@ -1710,19 +1728,25 @@ rotationAround angle axis pivot =
     Mat4.mul back (Mat4.mul rotate toOrigin)
 
 
-renderGearEntities : Camera -> Lighting.LightUniforms -> Float -> Model -> List WebGL.Entity
-renderGearEntities camera light aspect model =
+renderGearEntities : Camera -> Style.Style -> Float -> Model -> List WebGL.Entity
+renderGearEntities camera styleInput aspect model =
     case model.gearGraph of
         Nothing ->
             []
 
         Just graph ->
             let
+                style =
+                    Style.clampStyle styleInput
+
                 viewMat =
                     Camera.viewMatrix camera
 
                 projMat =
                     Camera.projectionMatrix aspect 0.1 2000.0
+
+                viewPos =
+                    cameraPosition camera
             in
             graph.instances
                 |> Array.toList
@@ -1746,8 +1770,14 @@ renderGearEntities camera light aspect model =
                                             { modelMatrix = modelMat
                                             , viewMatrix = viewMat
                                             , projectionMatrix = projMat
-                                            , lightDirection = light.lightDirection
-                                            , ambientStrength = light.ambientStrength
+                                            , viewPosition = viewPos
+                                            , lightDirection = style.lightDirection
+                                            , ambientStrength = style.ambientStrength
+                                            , specularStrength = style.specularStrength
+                                            , specularPower = style.specularPower
+                                            , rimStrength = style.rimStrength
+                                            , rimPower = style.rimPower
+                                            , vibrance = style.vibrance
                                             }
                                     in
                                     Just
@@ -2320,14 +2350,20 @@ inferPartLocalAxis cache partFile =
             Vec3.vec3 0 0 1
 
 
-renderComponentEntities : Camera -> Lighting.LightUniforms -> Float -> Model -> List WebGL.Entity
-renderComponentEntities camera light aspect model =
+renderComponentEntities : Camera -> Style.Style -> Float -> Model -> List WebGL.Entity
+renderComponentEntities camera styleInput aspect model =
     let
+        style =
+            Style.clampStyle styleInput
+
         viewMat =
             Camera.viewMatrix camera
 
         projMat =
             Camera.projectionMatrix aspect 0.1 2000.0
+
+        viewPos =
+            cameraPosition camera
     in
     model.componentMeshes
         |> List.filter (\c -> isSphereVisible camera aspect c.center 10.0)
@@ -2349,8 +2385,14 @@ renderComponentEntities camera light aspect model =
                         { modelMatrix = modelMat
                         , viewMatrix = viewMat
                         , projectionMatrix = projMat
-                        , lightDirection = light.lightDirection
-                        , ambientStrength = light.ambientStrength
+                        , viewPosition = viewPos
+                        , lightDirection = style.lightDirection
+                        , ambientStrength = style.ambientStrength
+                        , specularStrength = style.specularStrength
+                        , specularPower = style.specularPower
+                        , rimStrength = style.rimStrength
+                        , rimPower = style.rimPower
+                        , vibrance = style.vibrance
                         }
                 in
                 WebGL.entityWith
@@ -2819,7 +2861,7 @@ view model =
         [ Attr.style "width" "100vw"
         , Attr.style "height" "100vh"
         , Attr.style "overflow" "hidden"
-        , Attr.style "background" "#1a1a2e"
+        , Attr.style "background" Theme.appBackground
         , Attr.style "position" "relative"
         ]
         [ viewCanvas model
@@ -2836,9 +2878,9 @@ viewCanvas model =
         entities =
             case model.scene of
                 Just scene ->
-                    Scene.renderScene scene model.camera Lighting.defaultLight aspect
-                        ++ renderGearEntities model.camera Lighting.defaultLight aspect model
-                        ++ renderComponentEntities model.camera Lighting.defaultLight aspect model
+                    Scene.renderSceneWithStyle scene model.camera appRenderStyle aspect
+                        ++ renderGearEntities model.camera appRenderStyle aspect model
+                        ++ renderComponentEntities model.camera appRenderStyle aspect model
                         ++ renderComponentArrows model.camera aspect model
 
                 Nothing ->
@@ -2904,12 +2946,12 @@ viewDebug model =
         [ Attr.style "position" "absolute"
         , Attr.style "top" "12px"
         , Attr.style "left" "12px"
-        , Attr.style "color" "rgba(255,255,255,0.55)"
+        , Attr.style "color" Theme.textMuted
         , Attr.style "font-family" "monospace"
         , Attr.style "font-size" "12px"
         , Attr.style "line-height" "1.7"
         ]
-        [ div [] [ text "LEGO Technic Simulator" ]
+        [ div [] [ text "Palikkakehys" ]
         , div []
             [ text
                 ("az "
@@ -2965,13 +3007,15 @@ viewGearPanel model =
                     [ Attr.style "position" "absolute"
                     , Attr.style "top" "12px"
                     , Attr.style "right" "12px"
-                    , Attr.style "background" "rgba(0,0,0,0.65)"
-                    , Attr.style "color" "#fff"
+                    , Attr.style "background" Theme.panelBackground
+                    , Attr.style "color" Theme.textPrimary
                     , Attr.style "font-family" "monospace"
                     , Attr.style "font-size" "12px"
                     , Attr.style "border-radius" "8px"
                     , Attr.style "padding" "12px 16px"
                     , Attr.style "width" "280px"
+                    , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+                    , Attr.style "box-shadow" "0 10px 32px color-mix(in srgb, var(--color-brand) 8%, transparent)"
                     , Attr.style "box-sizing" "border-box"
                     , Attr.style "overflow-x" "hidden"
                     , Attr.style "pointer-events" "auto"
@@ -2983,7 +3027,7 @@ viewGearPanel model =
                         , Attr.style "justify-content" "space-between"
                         ]
                         [ div
-                            [ Attr.style "color" "#f5c518" ]
+                            [ Attr.style "color" Theme.brandYellow ]
                             [ text
                                 (String.fromInt (List.length instances)
                                     ++ " gear"
@@ -3000,9 +3044,9 @@ viewGearPanel model =
                             [ Html.Events.onClick ToggleControlsPanel
                             , onTouchTap ToggleControlsPanel
                             , Attr.style "padding" "2px 8px"
-                            , Attr.style "background" "rgba(255,255,255,0.1)"
-                            , Attr.style "color" "#fff"
-                            , Attr.style "border" "1px solid rgba(255,255,255,0.25)"
+                            , Attr.style "background" Theme.panelSubtleBackground
+                            , Attr.style "color" Theme.textPrimary
+                            , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
                             , Attr.style "border-radius" "3px"
                             , Attr.style "cursor" "pointer"
                             , Attr.style "font-family" "monospace"
@@ -3072,7 +3116,7 @@ viewGearRow model graph ratios inst =
         , Attr.style "border-radius" "4px"
         , Attr.style "background"
             (if isMotor then
-                "rgba(245,197,24,0.15)"
+                "color-mix(in srgb, var(--color-brand-yellow) 20%, transparent)"
 
              else
                 "transparent"
@@ -3091,7 +3135,7 @@ viewGearRow model graph ratios inst =
                 )
             ]
         , div
-            [ Attr.style "color" "rgba(255,255,255,0.5)"
+            [ Attr.style "color" Theme.textMuted
             , Attr.style "font-size" "11px"
             ]
             [ text
@@ -3103,7 +3147,7 @@ viewGearRow model graph ratios inst =
                 )
             ]
         , div
-            [ Attr.style "color" "rgba(255,255,255,0.5)"
+            [ Attr.style "color" Theme.textMuted
             , Attr.style "font-size" "11px"
             ]
             [ text connectionStr ]
@@ -3113,9 +3157,9 @@ viewGearRow model graph ratios inst =
                 , onTouchTap (SetMotorGear inst.id)
                 , Attr.style "margin-top" "3px"
                 , Attr.style "padding" "2px 8px"
-                , Attr.style "background" "rgba(255,255,255,0.1)"
-                , Attr.style "color" "#fff"
-                , Attr.style "border" "1px solid rgba(255,255,255,0.25)"
+                , Attr.style "background" Theme.panelSubtleBackground
+                , Attr.style "color" Theme.textPrimary
+                , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
                 , Attr.style "border-radius" "3px"
                 , Attr.style "cursor" "pointer"
                 , Attr.style "font-family" "monospace"
@@ -3134,11 +3178,11 @@ viewComponentSummary axleCount beamCount =
         [ Attr.style "margin-bottom" "8px"
         , Attr.style "padding" "6px"
         , Attr.style "border-radius" "4px"
-        , Attr.style "background" "rgba(255,255,255,0.06)"
-        , Attr.style "color" "rgba(255,255,255,0.8)"
+        , Attr.style "background" Theme.panelSubtleBackground
+        , Attr.style "color" Theme.textPrimary
         ]
         [ div [] [ text ("axles/pins " ++ String.fromInt axleCount) ]
-        , div [ Attr.style "font-size" "11px", Attr.style "color" "rgba(255,255,255,0.55)" ] [ text ("beams " ++ String.fromInt beamCount) ]
+        , div [ Attr.style "font-size" "11px", Attr.style "color" Theme.textMuted ] [ text ("beams " ++ String.fromInt beamCount) ]
         ]
 
 
@@ -3146,7 +3190,7 @@ viewMotorControls : Model -> Html Msg
 viewMotorControls model =
     div
         [ Attr.style "margin-top" "10px"
-        , Attr.style "border-top" "1px solid rgba(255,255,255,0.15)"
+        , Attr.style "border-top" ("1px solid " ++ Theme.borderDefault)
         , Attr.style "padding-top" "8px"
         ]
         [ div
@@ -3161,19 +3205,19 @@ viewMotorControls model =
                 , Attr.style "padding" "5px 0"
                 , Attr.style "background"
                     (if model.playback.running then
-                        "#f5c518"
+                        Theme.brandYellow
 
                      else
-                        "rgba(255,255,255,0.15)"
+                        Theme.panelSubtleBackground
                     )
                 , Attr.style "color"
                     (if model.playback.running then
-                        "#1a1a2e"
+                        Theme.brand
 
                      else
-                        "#fff"
+                        Theme.textPrimary
                     )
-                , Attr.style "border" "none"
+                , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
                 , Attr.style "border-radius" "4px"
                 , Attr.style "cursor" "pointer"
                 , Attr.style "font-family" "monospace"
@@ -3191,9 +3235,9 @@ viewMotorControls model =
                 [ Html.Events.onClick Stop
                 , onTouchTap Stop
                 , Attr.style "padding" "5px 8px"
-                , Attr.style "background" "rgba(255,255,255,0.15)"
-                , Attr.style "color" "#fff"
-                , Attr.style "border" "none"
+                , Attr.style "background" Theme.panelSubtleBackground
+                , Attr.style "color" Theme.textPrimary
+                , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
                 , Attr.style "border-radius" "4px"
                 , Attr.style "cursor" "pointer"
                 , Attr.style "font-family" "monospace"
@@ -3204,7 +3248,7 @@ viewMotorControls model =
         , div
             [ Attr.style "margin-top" "6px"
             , Attr.style "font-size" "11px"
-            , Attr.style "color" "rgba(255,255,255,0.65)"
+            , Attr.style "color" Theme.textMuted
             ]
             [ text
                 (formatTime model.playback.currentTime
@@ -3221,7 +3265,7 @@ viewMotorControls model =
             , Attr.style "display" "flex"
             , Attr.style "align-items" "center"
             , Attr.style "justify-content" "space-between"
-            , Attr.style "color" "rgba(255,255,255,0.65)"
+            , Attr.style "color" Theme.textMuted
             ]
             [ div [ Attr.style "font-size" "11px" ] [ text "RPM" ]
             , div [ Attr.style "font-size" "11px" ] [ text (String.fromInt (round (model.motor.speedRadPerSec * 60 / (2 * pi))) ++ " / ±" ++ String.fromInt (round model.maxRpm)) ]
@@ -3263,7 +3307,9 @@ viewToolbar model =
         , Attr.style "align-items" "center"
         , Attr.style "gap" "8px"
         , Attr.style "padding" "10px 16px"
-        , Attr.style "background" "rgba(0,0,0,0.6)"
+        , Attr.style "background" Theme.panelBackground
+        , Attr.style "border-top" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "box-shadow" "0 -8px 24px color-mix(in srgb, var(--color-brand) 8%, transparent)"
         , Attr.style "pointer-events" "auto"
         , Attr.style "touch-action" "none"
         ]
@@ -3285,13 +3331,15 @@ viewStatus model =
                 , Attr.style "top" "50%"
                 , Attr.style "left" "50%"
                 , Attr.style "transform" "translate(-50%, -50%)"
-                , Attr.style "color" "#ff6b6b"
+                , Attr.style "color" Theme.brandRed
                 , Attr.style "font-family" "monospace"
                 , Attr.style "font-size" "14px"
                 , Attr.style "text-align" "center"
-                , Attr.style "background" "rgba(0,0,0,0.7)"
+                , Attr.style "background" Theme.panelSurface
                 , Attr.style "padding" "16px 24px"
                 , Attr.style "border-radius" "8px"
+                , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+                , Attr.style "box-shadow" "0 16px 48px color-mix(in srgb, var(--color-brand) 12%, transparent)"
                 , Attr.style "pointer-events" "auto"
                 ]
                 [ div [] [ text err ]
@@ -3299,9 +3347,9 @@ viewStatus model =
                     [ Html.Events.onClick DismissError
                     , Attr.style "margin-top" "10px"
                     , Attr.style "padding" "4px 12px"
-                    , Attr.style "background" "rgba(255,255,255,0.1)"
-                    , Attr.style "color" "#fff"
-                    , Attr.style "border" "1px solid rgba(255,255,255,0.3)"
+                    , Attr.style "background" Theme.panelSubtleBackground
+                    , Attr.style "color" Theme.textPrimary
+                    , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
                     , Attr.style "border-radius" "4px"
                     , Attr.style "cursor" "pointer"
                     , Attr.style "font-family" "monospace"
@@ -3349,13 +3397,15 @@ viewLoadingBox label maybePct =
         , Attr.style "top" "50%"
         , Attr.style "left" "50%"
         , Attr.style "transform" "translate(-50%, -50%)"
-        , Attr.style "color" "#fff"
+        , Attr.style "color" Theme.textPrimary
         , Attr.style "font-family" "monospace"
         , Attr.style "font-size" "13px"
         , Attr.style "text-align" "center"
-        , Attr.style "background" "rgba(0,0,0,0.65)"
+        , Attr.style "background" Theme.panelSurface
         , Attr.style "padding" "20px 28px"
         , Attr.style "border-radius" "8px"
+        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "box-shadow" "0 16px 48px color-mix(in srgb, var(--color-brand) 10%, transparent)"
         , Attr.style "min-width" "260px"
         ]
         (div [] [ text label ]
@@ -3364,14 +3414,14 @@ viewLoadingBox label maybePct =
                         [ div
                             [ Attr.style "margin-top" "10px"
                             , Attr.style "height" "4px"
-                            , Attr.style "background" "rgba(255,255,255,0.15)"
+                            , Attr.style "background" Theme.panelSubtleBackground
                             , Attr.style "border-radius" "2px"
                             , Attr.style "overflow" "hidden"
                             ]
                             [ div
                                 [ Attr.style "height" "100%"
                                 , Attr.style "width" (String.fromInt pct ++ "%")
-                                , Attr.style "background" "#f5c518"
+                                , Attr.style "background" Theme.brandYellow
                                 , Attr.style "border-radius" "2px"
                                 , Attr.style "transition" "width 0.2s"
                                 ]

@@ -169,8 +169,9 @@ function extractLdrawFromStudioArchive(arrayBuffer) {
   }))
 
   const preferred = [
-    'model2.ldr',
+    'modelv2.ldr',
     'model.ldr',
+    'model2.ldr',
   ]
 
   for (const target of preferred) {

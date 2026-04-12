@@ -2,7 +2,7 @@ module Render.EdgeShader exposing (EdgeVertex, Uniforms, fragmentShader, vertexS
 
 {-| Minimal shader for LDraw edge lines (type-2 line segments).
 
-Renders all edges in a single dark colour — no lighting calculation needed.
+Renders all edges in a single uniform colour — no lighting calculation needed.
 WebGL 1.0 line width is fixed at 1 px on most hardware; accept this limitation.
 
 -}
@@ -25,6 +25,7 @@ type alias Uniforms =
     { modelMatrix : Mat4
     , viewMatrix : Mat4
     , projectionMatrix : Mat4
+    , edgeColor : Vec3
     }
 
 
@@ -49,14 +50,15 @@ vertexShader =
     |]
 
 
-{-| Edge fragment shader — fixed dark colour.
+{-| Edge fragment shader — configurable uniform colour.
 -}
 fragmentShader : Shader {} Uniforms Varyings
 fragmentShader =
     [glsl|
         precision mediump float;
+        uniform vec3 edgeColor;
 
         void main() {
-            gl_FragColor = vec4(0.08, 0.08, 0.08, 1.0);
+            gl_FragColor = vec4(clamp(edgeColor, 0.0, 1.0), 1.0);
         }
     |]

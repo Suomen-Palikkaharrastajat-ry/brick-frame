@@ -76,7 +76,11 @@ function faceNormal(p1, p2, p3) {
 }
 
 function resolveColor(parentColor, lineColor, colorTable) {
-  const code = lineColor === 16 ? parentColor : lineColor
+  // Studio exports may use -1 for current color (inherit) and -2 for edge color.
+  if (lineColor === 24 || lineColor === -2) {
+    return [0, 0, 0, 1]
+  }
+  const code = (lineColor === 16 || lineColor === -1) ? parentColor : lineColor
   const mapped = colorTable[String(code)]
   if (!mapped) return [1, 0, 1, 1]
   return [mapped.r, mapped.g, mapped.b, mapped.alpha]
@@ -92,7 +96,7 @@ function flattenLines(lines, cache, parentColor, transform, colorTable, acc) {
       case 'subfile': {
         const loaded = cache[line.file]
         if (!loaded) break
-        const childColor = line.color === 16 ? parentColor : line.color
+        const childColor = (line.color === 16 || line.color === -1) ? parentColor : line.color
         const childTransform = composeTransforms(transform, line.transform)
         flattenLines(loaded, cache, childColor, childTransform, colorTable, acc)
         break

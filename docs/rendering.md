@@ -74,7 +74,7 @@ buildScene :
 
 `Scene` holds three compiled `WebGL.Mesh` values plus the `bfcCertified` flag.
 
-Each frame, `Render.Scene.renderScene scene camera light aspect` returns
+Each frame, `Render.Scene.renderSceneWithStyle scene camera style aspect` returns
 entities in this order:
 
 1. **Triangle mesh** — depth test enabled; back-face culling enabled only when
@@ -87,49 +87,63 @@ MVP matrices are built fresh each frame from the current `Camera` state.
 
 ## Shaders
 
-### Lambert shaders (`Render.Shader`)
+### Plastic shaders (`Render.Shader`)
 
 Used for triangle geometry of both the static scene and gears.
 
-**Vertex shader** transforms position through MVP and passes the world-space
-normal and RGBA colour to the fragment stage:
+**Vertex shader** transforms position through MVP and passes world-space
+normal, world-space position, and RGBA colour to the fragment stage:
 
 ```glsl
-vNormalWorld = mat3(modelMatrix) * normal;
-gl_Position  = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+vNormalWorld   = mat3(modelMatrix) * normal;
+vPositionWorld = (modelMatrix * vec4(position, 1.0)).xyz;
 ```
 
-**Fragment shader** computes Lambert diffuse with an ambient floor:
+**Fragment shader** computes:
+- Lambert diffuse with ambient floor
+- A low-cost Blinn-Phong specular term
+- A subtle rim-light term
+- Mild vibrance boost (clamped)
 
 ```glsl
-float diffuse = max(0.0, dot(normalize(vNormalWorld), normalize(lightDirection)));
+float diffuse = max(0.0, dot(norm, lightDir));
 float light   = ambientStrength + (1.0 - ambientStrength) * diffuse;
-gl_FragColor  = vec4(vColor.rgb * light, vColor.a);
+float specular = pow(max(dot(norm, halfDir), 0.0), specularPower) * specularStrength;
+float rim = pow(1.0 - max(dot(norm, viewDir), 0.0), rimPower) * rimStrength;
 ```
 
 ### Edge shader (`Render.EdgeShader`)
 
 Used for type-2 edge lines and conditional lines. Vertices carry only
-`position`; the fragment shader outputs a fixed dark colour
-(`vec4(0.1, 0.1, 0.1, 1.0)`).
+`position`; the fragment shader outputs `edgeColor` from uniforms.
 
 ### Guide shader (`Render.GuideShader`)
 
 Used for component (axle/beam) visualisation overlays.
 
-## Lighting
+## Style And Lighting
 
-A single directional light is defined in `Render.Lighting`:
+A default style is defined in `Render.Style` and includes light, material, and
+edge parameters:
 
 ```elm
-defaultLight : LightUniforms
-defaultLight =
-    { lightDirection  = vec3 0.3 1.0 0.5   -- world space, normalised in shader
-    , ambientStrength = 0.3
+defaultStyle : Style
+defaultStyle =
+    { lightDirection = vec3 0.25 1.0 0.35
+    , ambientStrength = 0.55
+    , specularStrength = 0.14
+    , specularPower = 18
+    , rimStrength = 0.08
+    , rimPower = 2.2
+    , vibrance = 0.12
+    , edgeColor = vec3 0.18 0.19 0.2
     }
 ```
 
-There are no point lights, spotlights, shadows, or reflections.
+`Render.Scene.renderScene` remains available for compatibility and internally
+adapts `Render.Lighting.LightUniforms` via `Render.Style.fromLight`.
+
+There are still no point lights, spotlights, shadows, or reflections.
 
 ## Camera
 
@@ -146,6 +160,12 @@ Mouse drag updates `azimuth` and `elevation` at 0.005 rad/px. Scroll wheel
 scales `distance` by `1 + delta × 0.001`.
 
 Projection: `Mat4.makePerspective 45 aspect 0.1 2000.0` (FOV 45°, clip 0.1–2000 LDU).
+
+## Interaction controls
+
+- **Desktop:** drag to orbit, `Shift + drag` to pan, wheel to zoom.
+- **Touch:** 1-finger orbit, 2-finger pan + pinch zoom.
+- **Control panel:** top-right motor/gear panel is collapsible (`Minimize` / `Maximize`).
 
 ## Gear rendering
 
@@ -205,7 +225,12 @@ app currently uses full-detail meshes for all gear rendering.
 - **No smooth shading for static geometry.** Normals are per-face (computed by
   cross product per triangle). Gear meshes share the same limitation, though
   adjacent triangles from the same quad already have consistent normals.
-- **No normal maps or PBR.** Shading is Lambert diffuse only.
+- **No normal maps or PBR.** Shading uses analytic diffuse/specular/rim terms only.
 - **Co-axial rotation is top-level only.** Top-level `SubFileRef` nodes that
   share an axle with a detected gear are rendered with rotation. Parts nested
   inside sub-assemblies are still baked into the static scene and do not rotate.
+- **Known iOS interaction issue (open).** On some iOS devices, after touch
+  camera gestures (pan/zoom/orbit), playback controls can still toggle
+  play/pause UI state while visible gear animation no longer advances until a
+  reload. Touch hardening and pointer fallbacks are in place, but this device/
+  browser-specific failure mode is not fully eliminated yet.

@@ -63,6 +63,10 @@ The package delegates two operations to JavaScript via ports:
 Copy `elm-app/src/Ports.elm` and `elm-app/geometry-worker.js` into your app and
 wire them up in your JS entry point as in `elm-app/main.js`.
 
+`elm-app/main.js` also includes an in-session cache for geometry worker results
+keyed by flatten payload, so repeated loads of the same model can skip repeat
+flatten work.
+
 ---
 
 ## Module reference
@@ -76,10 +80,11 @@ wire them up in your JS entry point as in `elm-app/main.js`.
 | `LDraw.Geometry` | Flatten part tree → vertex buffers | `flatten`, `FlatGeometry` |
 | `Render.Camera` | Orbit camera | `init`, `viewMatrix`, `projectionMatrix`, `onMouseMove`, `onWheel` |
 | `Render.Mesh` | Vertex type aliases | `Vertex`, `EdgeVertex` |
-| `Render.Shader` | Lambert GLSL shaders | `vertexShader`, `fragmentShader` |
+| `Render.Shader` | Lightweight plastic GLSL shaders | `vertexShader`, `fragmentShader` |
 | `Render.EdgeShader` | Edge line GLSL shaders | `vertexShader`, `fragmentShader` |
 | `Render.Lighting` | Light uniforms | `LightUniforms`, `defaultLight` |
-| `Render.Scene` | Build and render a scene | `buildScene`, `renderScene`, `Scene` |
+| `Render.Style` | Scene/material style config | `Style`, `defaultStyle`, `clampStyle`, `fromLight` |
+| `Render.Scene` | Build and render a scene | `buildScene`, `renderScene`, `renderSceneWithStyle`, `Scene` |
 | `Gear.Types` | Core gear types | `GearSpec`, `GearInstance`, `GearGraph`, `GearId` |
 | `Gear.Detect` | Gear detection from part tree | `extractGears`, `buildGearGraph` |
 | `Gear.Physics` | Rotation propagation | `propagate`, `angleAt` |
@@ -129,6 +134,10 @@ files : Dict String String
 files = Parser.splitMpd rawText
 -- Insert all files into the part cache, then use the root file as `lines`.
 ```
+
+For BrickLink Studio `.io` files, unzip in JS and load `modelv2.ldr` first
+(fallback `model.ldr`, then `model2.ldr`), stripping UTF-8 BOM before passing
+text into Elm.
 
 ### Step 3 — Resolve sub-parts
 
@@ -213,11 +222,11 @@ gearAngles = Animate.gearAngles motor gearGraph totalTime
 ```elm
 import Render.Scene as Scene
 import Render.Camera as Camera
-import Render.Lighting as Lighting
+import Render.Style as Style
 
 -- Static scene entity list
 entities : List WebGL.Entity
-entities = Scene.renderScene scene camera Lighting.defaultLight aspect
+entities = Scene.renderSceneWithStyle scene camera Style.defaultStyle aspect
 
 -- Per-gear rotation entities (one per gear)
 gearEntities : List WebGL.Entity
@@ -245,7 +254,7 @@ construction and frustum culling pattern.
 
 | Export | Type | Description |
 |--------|------|-------------|
-| `ldrawColors` | `Dict Int { r, g, b, alpha }` | ~80 standard LDraw color codes |
+| `ldrawColors` | `Dict Int { r, g, b, alpha }` | Known LDraw/LEGO color codes used by the simulator |
 | `embeddedParts` | `Dict String String` | Pre-loaded LDraw part text for core gears and their dependencies |
 | `lodParts` | `Dict String String` | Simplified (LOD) versions of embedded parts |
 | `gearParts` | `List { partFile, teeth, pitchRadius }` | Known Technic gear specs |

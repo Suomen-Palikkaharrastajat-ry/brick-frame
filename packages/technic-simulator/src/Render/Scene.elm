@@ -1,11 +1,12 @@
-module Render.Scene exposing (Scene, buildScene, renderScene)
+module Render.Scene exposing (Scene, buildScene, renderScene, renderSceneWithStyle)
 
 {-| Scene assembly: convert flat geometry into WebGL meshes and render them.
 
+
 ## Render order
 
-1. Triangle mesh (opaque geometry, depth test enabled, optional back-face cull)
-2. Edge line mesh (flat dark lines, depth test enabled, no culling)
+1.  Triangle mesh (opaque geometry, depth test enabled, optional back-face cull)
+2.  Edge line mesh (flat dark lines, depth test enabled, no culling)
 
 Rendering triangles before lines avoids depth-fighting artefacts where edges
 would flicker through filled faces.
@@ -20,9 +21,11 @@ import Render.EdgeShader as EdgeShader exposing (EdgeVertex)
 import Render.Lighting exposing (LightUniforms)
 import Render.Mesh exposing (Vertex)
 import Render.Shader as Shader
+import Render.Style as Style
 import WebGL
 import WebGL.Settings
 import WebGL.Settings.DepthTest as DepthTest
+
 
 
 -- ── Types ─────────────────────────────────────────────────────────────────────
@@ -39,6 +42,7 @@ type alias Scene =
     , conditionalLines : List ConditionalEdge
     , bfcCertified : Bool
     }
+
 
 
 -- ── Public API ────────────────────────────────────────────────────────────────
@@ -77,7 +81,17 @@ buildScene geom bfc =
 -}
 renderScene : Scene -> Camera -> LightUniforms -> Float -> List WebGL.Entity
 renderScene scene camera light aspect =
+    renderSceneWithStyle scene camera (Style.fromLight light) aspect
+
+
+{-| Render the scene with the provided material style configuration.
+-}
+renderSceneWithStyle : Scene -> Camera -> Style.Style -> Float -> List WebGL.Entity
+renderSceneWithStyle scene camera styleInput aspect =
     let
+        style =
+            Style.clampStyle styleInput
+
         viewMat =
             Camera.viewMatrix camera
 
@@ -91,14 +105,21 @@ renderScene scene camera light aspect =
             { modelMatrix = modelMat
             , viewMatrix = viewMat
             , projectionMatrix = projMat
-            , lightDirection = light.lightDirection
-            , ambientStrength = light.ambientStrength
+            , viewPosition = cameraPosition camera
+            , lightDirection = style.lightDirection
+            , ambientStrength = style.ambientStrength
+            , specularStrength = style.specularStrength
+            , specularPower = style.specularPower
+            , rimStrength = style.rimStrength
+            , rimPower = style.rimPower
+            , vibrance = style.vibrance
             }
 
         edgeUniforms =
             { modelMatrix = modelMat
             , viewMatrix = viewMat
             , projectionMatrix = projMat
+            , edgeColor = style.edgeColor
             }
 
         bfcSettings =
@@ -152,6 +173,7 @@ renderScene scene camera light aspect =
                 Nothing ->
                     []
            )
+
 
 
 -- ── Internal ──────────────────────────────────────────────────────────────────

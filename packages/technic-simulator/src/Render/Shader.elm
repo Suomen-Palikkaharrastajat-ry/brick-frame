@@ -1,6 +1,6 @@
 module Render.Shader exposing (Uniforms, fragmentShader, vertexShader)
 
-{-| Lambert shading GLSL programs for triangle mesh rendering.
+{-| Lightweight plastic shading GLSL programs for triangle mesh rendering.
 -}
 
 import Math.Matrix4 exposing (Mat4)
@@ -16,18 +16,25 @@ type alias Uniforms =
     { modelMatrix : Mat4
     , viewMatrix : Mat4
     , projectionMatrix : Mat4
+    , viewPosition : Vec3
     , lightDirection : Vec3
     , ambientStrength : Float
+    , specularStrength : Float
+    , specularPower : Float
+    , rimStrength : Float
+    , rimPower : Float
+    , vibrance : Float
     }
 
 
 type alias Varyings =
     { vColor : Vec4
     , vNormalWorld : Vec3
+    , vPositionWorld : Vec3
     }
 
 
-{-| Lambert vertex shader.
+{-| Plastic vertex shader.
 Transforms position through MVP matrices and passes normal (in world space)
 and colour to the fragment shader.
 -}
@@ -44,18 +51,22 @@ vertexShader =
 
         varying vec4 vColor;
         varying vec3 vNormalWorld;
+        varying vec3 vPositionWorld;
 
         void main() {
-            gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+            gl_Position = projectionMatrix * viewMatrix * worldPosition;
             vColor = color;
             // Transform normal to world space (assumes uniform scale)
             vNormalWorld = mat3(modelMatrix) * normal;
+            vPositionWorld = worldPosition.xyz;
         }
     |]
 
 
-{-| Lambert fragment shader.
-Computes diffuse = max(0, dot(normal, light)) with ambient floor.
+{-| Plastic fragment shader.
+Computes diffuse + soft specular + subtle rim light, then applies a mild
+vibrance adjustment.
 -}
 fragmentShader : Shader {} Uniforms Varyings
 fragmentShader =
@@ -63,15 +74,32 @@ fragmentShader =
         precision mediump float;
 
         uniform vec3 lightDirection;
+        uniform vec3 viewPosition;
         uniform float ambientStrength;
+        uniform float specularStrength;
+        uniform float specularPower;
+        uniform float rimStrength;
+        uniform float rimPower;
+        uniform float vibrance;
 
         varying vec4 vColor;
         varying vec3 vNormalWorld;
+        varying vec3 vPositionWorld;
 
         void main() {
             vec3 norm = normalize(vNormalWorld);
-            float diffuse = max(0.0, dot(norm, normalize(lightDirection)));
+            vec3 lightDir = normalize(lightDirection);
+            vec3 viewDir = normalize(viewPosition - vPositionWorld);
+            float diffuse = max(0.0, dot(norm, lightDir));
             float light = ambientStrength + (1.0 - ambientStrength) * diffuse;
-            gl_FragColor = vec4(vColor.rgb * light, vColor.a);
+
+            vec3 halfDir = normalize(lightDir + viewDir);
+            float specular = pow(max(dot(norm, halfDir), 0.0), specularPower) * specularStrength;
+            float rim = pow(1.0 - max(dot(norm, viewDir), 0.0), rimPower) * rimStrength;
+
+            vec3 litColor = vColor.rgb * light + vec3(specular + rim);
+            float luma = dot(litColor, vec3(0.2126, 0.7152, 0.0722));
+            vec3 vivid = mix(vec3(luma), litColor, 1.0 + clamp(vibrance, -0.5, 0.5));
+            gl_FragColor = vec4(clamp(vivid, 0.0, 1.0), vColor.a);
         }
     |]
