@@ -3,10 +3,10 @@ module Lib (generateElmModule) where
 import Data.Bifunctor (second)
 import Data.Maybe (mapMaybe)
 import Data.Set (Set)
-import qualified Data.Set as Set
+import Data.Set qualified as Set
 import Data.Text (Text)
-import qualified Data.Text as Text
-import qualified Data.Text.IO as Text
+import Data.Text qualified as Text
+import Data.Text.IO qualified as Text
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 
@@ -62,7 +62,7 @@ ldrawColors =
     , LDrawColor 42 "Trans Neon Green" 0.773 0.988 0.000 0.5
     , LDrawColor 43 "Trans Light Blue" 0.537 0.851 0.988 0.5
     , LDrawColor 44 "Trans Light Purple" 0.682 0.525 0.741 0.5
-    , LDrawColor 45 "Trans Dark Pink" 0.878 0.400 0.573  0.5
+    , LDrawColor 45 "Trans Dark Pink" 0.878 0.400 0.573 0.5
     , LDrawColor 46 "Trans Yellow" 0.988 0.855 0.165 0.5
     , LDrawColor 47 "Trans White" 0.878 0.878 0.878 0.5
     , LDrawColor 57 "Trans Orange" 0.988 0.502 0.122 0.5
@@ -129,16 +129,16 @@ data GearSpec = GearSpec
 -- Pitch radii: teeth × 1.25 LDU  (module M = 1 mm = 2.5 LDU, so r = teeth × M / 2)
 knownGears :: [GearSpec]
 knownGears =
-    [ GearSpec "3647.dat" 8 10.0    -- 8T  (was 16.0)
-    , GearSpec "10928.dat" 8 10.0   -- 8T  (was 16.0)
-    , GearSpec "11955.dat" 8 10.0   -- 8T  (was 16.0)
-    , GearSpec "4019.dat" 16 20.0   -- 16T (was 24.0)
-    , GearSpec "3648.dat" 24 30.0   -- 24T (was 38.4)
-    , GearSpec "3649.dat" 40 50.0   -- 40T (was 56.0)
-    , GearSpec "4716.dat" 1 6.0     -- worm gear (empirical; unchanged)
-    , GearSpec "32198.dat" 20 25.0  -- bevel 20T (was 32.0)
-    , GearSpec "32269.dat" 20 25.0  -- double bevel 20T (was 32.0)
-    , GearSpec "3650b.dat" 24 30.0  -- crown gear (was 38.4)
+    [ GearSpec "3647.dat" 8 10.0 -- 8T  (was 16.0)
+    , GearSpec "10928.dat" 8 10.0 -- 8T  (was 16.0)
+    , GearSpec "11955.dat" 8 10.0 -- 8T  (was 16.0)
+    , GearSpec "4019.dat" 16 20.0 -- 16T (was 24.0)
+    , GearSpec "3648.dat" 24 30.0 -- 24T (was 38.4)
+    , GearSpec "3649.dat" 40 50.0 -- 40T (was 56.0)
+    , GearSpec "4716.dat" 1 6.0 -- worm gear (empirical; unchanged)
+    , GearSpec "32198.dat" 20 25.0 -- bevel 20T (was 32.0)
+    , GearSpec "32269.dat" 20 25.0 -- double bevel 20T (was 32.0)
+    , GearSpec "3650b.dat" 24 30.0 -- crown gear (was 38.4)
     ]
 
 knownExampleModels :: [(Text, Text)]
@@ -242,7 +242,6 @@ exampleModelEntry (label, url) =
         <> elmString url
         <> " }"
 
-
 embeddedPartEntry :: (Text, Text) -> Text
 embeddedPartEntry (name, content) =
     "( "
@@ -270,7 +269,6 @@ escapeChar char =
         '\t' -> "\\t"
         _ -> Text.singleton char
 
-
 embeddedRootParts :: [Text]
 embeddedRootParts =
     [ "3647.dat"
@@ -279,7 +277,6 @@ embeddedRootParts =
     , "3649.dat"
     ]
 
-
 collectEmbeddedParts :: IO [(Text, Text)]
 collectEmbeddedParts =
     go Set.empty embeddedRootParts []
@@ -287,8 +284,7 @@ collectEmbeddedParts =
     go :: Set Text -> [Text] -> [(Text, Text)] -> IO [(Text, Text)]
     go _ [] acc =
         pure (reverse acc)
-
-    go visited (name:rest) acc
+    go visited (name : rest) acc
         | Set.member name visited =
             go visited rest acc
         | otherwise = do
@@ -301,15 +297,14 @@ collectEmbeddedParts =
                     let deps = extractSubfileRefs content
                      in go nextVisited (deps ++ rest) ((name, content) : acc)
 
-
 readPartFile :: Text -> IO (Maybe Text)
 readPartFile partName = do
     let namePath = Text.unpack partName
     let candidates
             | "s/" `Text.isPrefixOf` partName =
-                [ "elm-app/public/ldraw/parts" </> namePath ]
+                ["elm-app/public/ldraw/parts" </> namePath]
             | "48/" `Text.isPrefixOf` partName =
-                [ "elm-app/public/ldraw/p" </> namePath ]
+                ["elm-app/public/ldraw/p" </> namePath]
             | otherwise =
                 [ "elm-app/public/ldraw/parts" </> namePath
                 , "elm-app/public/ldraw/p" </> namePath
@@ -321,34 +316,32 @@ readPartFile partName = do
         Nothing ->
             pure Nothing
 
-
 firstExistingFile :: [FilePath] -> IO (Maybe FilePath)
 firstExistingFile [] =
     pure Nothing
-firstExistingFile (path:rest) = do
+firstExistingFile (path : rest) = do
     exists <- doesFileExist path
-    if exists then
-        pure (Just path)
-    else
-        firstExistingFile rest
-
+    if exists
+        then
+            pure (Just path)
+        else
+            firstExistingFile rest
 
 extractSubfileRefs :: Text -> [Text]
 extractSubfileRefs content =
     mapMaybe subfileRefFromLine (Text.lines content)
 
-
 subfileRefFromLine :: Text -> Maybe Text
 subfileRefFromLine line =
     let tokens = Text.words line
      in case tokens of
-            (lineType:_) | lineType /= "1" -> Nothing
+            (lineType : _) | lineType /= "1" -> Nothing
             _ ->
-                if length tokens >= 15 then
-                    Just (normaliseName (last tokens))
-                else
-                    Nothing
-
+                if length tokens >= 15
+                    then
+                        Just (normaliseName (last tokens))
+                    else
+                        Nothing
 
 normaliseName :: Text -> Text
 normaliseName =
@@ -356,13 +349,12 @@ normaliseName =
         . Text.replace "\\" "/"
         . Text.strip
 
-
 simplifyPartText :: Text -> Text
 simplifyPartText content =
     let
-        ( _, kept ) =
+        (_, kept) =
             foldl
-                (\( geomIx, acc ) line ->
+                ( \(geomIx, acc) line ->
                     let
                         tokens =
                             Text.words line
@@ -371,49 +363,43 @@ simplifyPartText content =
                             case tokens of
                                 t : _ ->
                                     Just t
-
                                 [] ->
                                     Nothing
-                    in
-                    case maybeType of
-                        Just "0" ->
-                            ( geomIx, line : acc )
-
-                        Just "1" ->
-                            -- Keep structural sub-file references intact.
-                            ( geomIx, line : acc )
-
-                        Just "2" ->
-                            if even geomIx then
-                                ( geomIx + 1, line : acc )
-
-                            else
-                                ( geomIx + 1, acc )
-
-                        Just "3" ->
-                            if even geomIx then
-                                ( geomIx + 1, line : acc )
-
-                            else
-                                ( geomIx + 1, acc )
-
-                        Just "4" ->
-                            if even geomIx then
-                                ( geomIx + 1, line : acc )
-
-                            else
-                                ( geomIx + 1, acc )
-
-                        Just "5" ->
-                            if even geomIx then
-                                ( geomIx + 1, line : acc )
-
-                            else
-                                ( geomIx + 1, acc )
-
-                        _ ->
-                            ( geomIx, line : acc )
+                     in
+                        case maybeType of
+                            Just "0" ->
+                                (geomIx, line : acc)
+                            Just "1" ->
+                                -- Keep structural sub-file references intact.
+                                (geomIx, line : acc)
+                            Just "2" ->
+                                if even geomIx
+                                    then
+                                        (geomIx + 1, line : acc)
+                                    else
+                                        (geomIx + 1, acc)
+                            Just "3" ->
+                                if even geomIx
+                                    then
+                                        (geomIx + 1, line : acc)
+                                    else
+                                        (geomIx + 1, acc)
+                            Just "4" ->
+                                if even geomIx
+                                    then
+                                        (geomIx + 1, line : acc)
+                                    else
+                                        (geomIx + 1, acc)
+                            Just "5" ->
+                                if even geomIx
+                                    then
+                                        (geomIx + 1, line : acc)
+                                    else
+                                        (geomIx + 1, acc)
+                            _ ->
+                                (geomIx, line : acc)
                 )
-                ( 0, [] )
+                (0, [])
                 (Text.lines content)
-     in Text.unlines (reverse kept)
+     in
+        Text.unlines (reverse kept)
