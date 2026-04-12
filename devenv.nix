@@ -23,6 +23,7 @@ let
         npmTools
         pkgs.cabal-install
         pkgs.nodejs_22
+        pkgs.elmPackages.elm-review
         hpkgs.hlint
         hpkgs.fourmolu
       ];
