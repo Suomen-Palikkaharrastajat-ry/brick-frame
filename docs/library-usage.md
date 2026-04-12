@@ -23,6 +23,8 @@ Minimal HTML usage:
 <bricks-simulator src="https://kehys.palikkaharrastajat.fi/examples/gears.ldr"></bricks-simulator>
 ```
 
+The deployed build is configured with `VITE_LDRAW_BASE=https://kehys.palikkaharrastajat.fi/ldraw/`, so part fetches resolve over HTTPS instead of a filesystem-relative `/ldraw` path.
+
 Both elements accept:
 
 - `src` (`.ldr`, `.mpd`, `.dat`, `.io`)
