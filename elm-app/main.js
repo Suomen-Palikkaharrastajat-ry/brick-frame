@@ -1,5 +1,5 @@
 import './main.css'
-import { unzipSync } from 'fflate'
+import { inflateSync, unzipSync } from 'fflate'
 import { Elm } from './src/Main.elm'
 import GeometryWorker from './geometry-worker.js?worker'
 
@@ -35,6 +35,7 @@ const app = Elm.Main.init({
 const geometryWorker = new GeometryWorker()
 const geometryFlattenCache = new Map()
 const GEOMETRY_FLATTEN_CACHE_LIMIT = 8
+const STUDIO_IO_PASSWORD = 'soho0909'
 let pendingFlattenKey = null
 
 function rememberFlattenResult(cacheKey, resultText) {
@@ -156,8 +157,22 @@ function readStudioIoFile(file) {
 }
 
 function extractLdrawFromStudioArchive(arrayBuffer) {
-  const files = unzipSync(new Uint8Array(arrayBuffer))
-  const entries = Object.entries(files)
+  const zipBytes = new Uint8Array(arrayBuffer)
+  let entries
+  try {
+    entries = Object.entries(unzipSync(zipBytes))
+  } catch {
+    entries = Object.entries(unzipWithPassword(zipBytes, STUDIO_IO_PASSWORD))
+  }
+  return extractPreferredLdraw(entries)
+}
+
+function decodeLdrawBytes(bytes) {
+  const decoded = new TextDecoder('utf-8').decode(bytes)
+  return decoded.charCodeAt(0) === 0xfeff ? decoded.slice(1) : decoded
+}
+
+function extractPreferredLdraw(entries) {
   if (entries.length === 0) {
     throw new Error('Archive is empty')
   }
@@ -189,9 +204,126 @@ function extractLdrawFromStudioArchive(arrayBuffer) {
   throw new Error('No .ldr model found in archive')
 }
 
-function decodeLdrawBytes(bytes) {
-  const decoded = new TextDecoder('utf-8').decode(bytes)
-  return decoded.charCodeAt(0) === 0xfeff ? decoded.slice(1) : decoded
+function unzipWithPassword(data, password) {
+  const eocdOffset = findEocdOffset(data)
+  const entryCount = readU16LE(data, eocdOffset + 10)
+  const centralDirectoryOffset = readU32LE(data, eocdOffset + 16)
+  const files = {}
+
+  let cursor = centralDirectoryOffset
+  const nameDecoder = new TextDecoder('utf-8')
+
+  for (let i = 0; i < entryCount; i += 1) {
+    if (readU32LE(data, cursor) !== 0x02014b50) {
+      throw new Error('Invalid central directory entry')
+    }
+
+    const generalPurpose = readU16LE(data, cursor + 8)
+    const compressionMethod = readU16LE(data, cursor + 10)
+    const compressedSize = readU32LE(data, cursor + 20)
+    const fileNameLength = readU16LE(data, cursor + 28)
+    const extraLength = readU16LE(data, cursor + 30)
+    const commentLength = readU16LE(data, cursor + 32)
+    const localHeaderOffset = readU32LE(data, cursor + 42)
+
+    const nameStart = cursor + 46
+    const fileName = nameDecoder.decode(data.subarray(nameStart, nameStart + fileNameLength))
+
+    const localNameLength = readU16LE(data, localHeaderOffset + 26)
+    const localExtraLength = readU16LE(data, localHeaderOffset + 28)
+    const fileDataStart = localHeaderOffset + 30 + localNameLength + localExtraLength
+    const fileDataEnd = fileDataStart + compressedSize
+    if (fileDataEnd > data.length) {
+      throw new Error('Invalid ZIP entry bounds')
+    }
+
+    let compressedData = data.subarray(fileDataStart, fileDataEnd)
+    if ((generalPurpose & 0x1) !== 0) {
+      const decrypted = decryptZipCrypto(compressedData, password)
+      if (decrypted.length < 12) {
+        throw new Error('Encrypted ZIP header too short')
+      }
+      compressedData = decrypted.subarray(12)
+    }
+
+    let fileBytes
+    if (compressionMethod === 0) {
+      fileBytes = new Uint8Array(compressedData)
+    } else if (compressionMethod === 8) {
+      fileBytes = inflateSync(compressedData)
+    } else {
+      throw new Error(`Unsupported ZIP compression method: ${compressionMethod}`)
+    }
+
+    files[fileName] = fileBytes
+    cursor += 46 + fileNameLength + extraLength + commentLength
+  }
+
+  return files
+}
+
+function findEocdOffset(data) {
+  for (let i = data.length - 22; i >= 0; i -= 1) {
+    if (readU32LE(data, i) === 0x06054b50) {
+      return i
+    }
+  }
+  throw new Error('Invalid ZIP: EOCD not found')
+}
+
+const ZIP_CRYPTO_CRC_TABLE = (() => {
+  const table = new Uint32Array(256)
+  for (let i = 0; i < 256; i += 1) {
+    let c = i
+    for (let k = 0; k < 8; k += 1) {
+      c = (c & 1) !== 0 ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1)
+    }
+    table[i] = c >>> 0
+  }
+  return table
+})()
+
+function zipCryptoCrc32Update(crc, byte) {
+  return (ZIP_CRYPTO_CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8)) >>> 0
+}
+
+function zipCryptoUpdateKeys(keys, byteValue) {
+  keys[0] = zipCryptoCrc32Update(keys[0], byteValue)
+  keys[1] = (Math.imul((keys[1] + (keys[0] & 0xff)) >>> 0, 134775813) + 1) >>> 0
+  keys[2] = zipCryptoCrc32Update(keys[2], keys[1] >>> 24)
+}
+
+function zipCryptoDecryptByte(keys) {
+  const temp = ((keys[2] & 0xffff) | 2) >>> 0
+  return (Math.imul(temp, temp ^ 1) >>> 8) & 0xff
+}
+
+function decryptZipCrypto(data, password) {
+  const keys = new Uint32Array([0x12345678, 0x23456789, 0x34567890])
+  for (let i = 0; i < password.length; i += 1) {
+    zipCryptoUpdateKeys(keys, password.charCodeAt(i) & 0xff)
+  }
+
+  const out = new Uint8Array(data.length)
+  for (let i = 0; i < data.length; i += 1) {
+    const plainByte = data[i] ^ zipCryptoDecryptByte(keys)
+    zipCryptoUpdateKeys(keys, plainByte)
+    out[i] = plainByte
+  }
+  return out
+}
+
+function readU16LE(bytes, offset) {
+  return bytes[offset] | (bytes[offset + 1] << 8)
+}
+
+function readU32LE(bytes, offset) {
+  return (
+    (bytes[offset])
+    | (bytes[offset + 1] << 8)
+    | (bytes[offset + 2] << 16)
+    | (bytes[offset + 3] << 24)
+  ) >>> 0
 }
 
 // Elm → JS: open the file picker
