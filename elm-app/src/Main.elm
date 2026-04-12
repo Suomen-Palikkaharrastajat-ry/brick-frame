@@ -2683,11 +2683,7 @@ subscriptions model =
         , Ports.fileLoadError FileLoadError
         , Ports.geometryFlattened GeometryFlattened
         , Ports.geometryFlattenFailed GeometryFlattenFailed
-        , if model.playback.running then
-            Browser.Events.onAnimationFrame AnimationFrame
-
-          else
-            Sub.none
+        , Browser.Events.onAnimationFrame AnimationFrame
         ]
 
 
@@ -2934,6 +2930,7 @@ viewGearPanel model =
                     , Attr.style "box-sizing" "border-box"
                     , Attr.style "overflow-x" "hidden"
                     , Attr.style "pointer-events" "auto"
+                    , Attr.style "touch-action" "none"
                     ]
                     ([ div
                         [ Attr.style "display" "flex"
@@ -3223,6 +3220,7 @@ viewToolbar model =
         , Attr.style "padding" "10px 16px"
         , Attr.style "background" "rgba(0,0,0,0.6)"
         , Attr.style "pointer-events" "auto"
+        , Attr.style "touch-action" "none"
         ]
         (FileUpload.view
             { urlInput = model.urlInput
