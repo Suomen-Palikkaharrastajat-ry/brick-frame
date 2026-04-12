@@ -119,6 +119,7 @@ type alias Model =
     , touchGesture : TouchGesture
     , activeTouches : Dict Int TouchPoint
     , controlsCollapsed : Bool
+    , mousePanDragging : Bool
     }
 
 
@@ -225,6 +226,7 @@ init flags =
       , touchGesture = NoTouchGesture
       , activeTouches = Dict.empty
       , controlsCollapsed = False
+      , mousePanDragging = False
       }
     , Cmd.batch
         [ Browser.Dom.getViewport
@@ -260,7 +262,7 @@ embeddedPartCache =
 
 type Msg
     = WindowResize Int Int
-    | MouseDown Float Float
+    | MouseDown Float Float Bool
     | MouseMove Float Float
     | MouseUp Float Float
     | Wheel Float
@@ -301,7 +303,7 @@ update msg model =
         WindowResize w h ->
             ( { model | width = w, height = h }, Cmd.none )
 
-        MouseDown x y ->
+        MouseDown x y shiftHeld ->
             if touchInputActive model then
                 ( model, Cmd.none )
 
@@ -311,6 +313,7 @@ update msg model =
                     , clickStart = Just ( x, y )
                     , dragTravel = 0.0
                     , cameraMode = CameraManual
+                    , mousePanDragging = shiftHeld
                   }
                 , Cmd.none
                 )
@@ -328,9 +331,22 @@ update msg model =
 
                             Nothing ->
                                 0.0
+
+                    nextCamera =
+                        if model.mousePanDragging then
+                            case model.camera.lastMousePos of
+                                Just ( lx, ly ) ->
+                                    Camera.onPan (x - lx) (y - ly) model.camera
+                                        |> (\cam -> { cam | lastMousePos = Just ( x, y ) })
+
+                                Nothing ->
+                                    model.camera
+
+                        else
+                            Camera.onMouseMove x y model.camera
                 in
                 ( { model
-                    | camera = Camera.onMouseMove x y model.camera
+                    | camera = nextCamera
                     , dragTravel = model.dragTravel + stepDist
                     , cameraMode = CameraManual
                   }
@@ -357,6 +373,7 @@ update msg model =
                             , dragTravel = 0.0
                             , touchGesture = NoTouchGesture
                             , activeTouches = Dict.empty
+                            , mousePanDragging = False
                         }
                 in
                 case clickedGear of
@@ -753,6 +770,7 @@ resetForLoad url m =
         , cameraMode = CameraAutoFit
         , touchGesture = NoTouchGesture
         , activeTouches = Dict.empty
+        , mousePanDragging = False
     }
 
 
@@ -773,6 +791,7 @@ beginTouchGesture touches model =
                 , cameraMode = CameraManual
                 , clickStart = Nothing
                 , dragTravel = 0.0
+                , mousePanDragging = False
             }
 
         p1 :: [] ->
@@ -782,6 +801,7 @@ beginTouchGesture touches model =
                 , cameraMode = CameraManual
                 , clickStart = Nothing
                 , dragTravel = 0.0
+                , mousePanDragging = False
             }
 
         [] ->
@@ -790,6 +810,7 @@ beginTouchGesture touches model =
                 , touchGesture = NoTouchGesture
                 , clickStart = Nothing
                 , dragTravel = 0.0
+                , mousePanDragging = False
             }
 
 
@@ -854,6 +875,7 @@ endTouchGesture remainingTouches model =
                 , touchGesture = NoTouchGesture
                 , clickStart = Nothing
                 , dragTravel = 0.0
+                , mousePanDragging = False
             }
 
         [ p1 ] ->
@@ -863,6 +885,7 @@ endTouchGesture remainingTouches model =
                 , cameraMode = CameraManual
                 , clickStart = Nothing
                 , dragTravel = 0.0
+                , mousePanDragging = False
             }
 
         p1 :: p2 :: _ ->
@@ -879,6 +902,7 @@ endTouchGesture remainingTouches model =
                 , cameraMode = CameraManual
                 , clickStart = Nothing
                 , dragTravel = 0.0
+                , mousePanDragging = False
             }
 
 
@@ -2787,9 +2811,10 @@ viewCanvas model =
         , Attr.style "height" "100%"
         , Attr.style "touch-action" "none"
         , Html.Events.on "mousedown"
-            (Decode.map2 MouseDown
+            (Decode.map3 MouseDown
                 (Decode.field "clientX" Decode.float)
                 (Decode.field "clientY" Decode.float)
+                (Decode.field "shiftKey" Decode.bool)
             )
         , Html.Events.preventDefaultOn "wheel"
             (Decode.map (\delta -> ( Wheel delta, True ))
@@ -2854,7 +2879,7 @@ viewDebug model =
                     ++ String.fromInt (round model.camera.distance)
                 )
             ]
-        , div [] [ text "Drag to orbit · Scroll to zoom" ]
+        , div [] [ text "Drag to orbit · Shift+Drag to pan · Scroll to zoom" ]
         , div [] [ text "Touch: 1-finger orbit · 2-finger pan/pinch zoom" ]
         ]
 
