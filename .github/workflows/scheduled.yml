@@ -25,6 +25,9 @@ jobs:
         with:
           submodules: true
 
+      - name: Prepare vendor links
+        run: make vendor
+
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
