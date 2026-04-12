@@ -89,7 +89,7 @@ jobs:
         run: devenv shell --profile ci -- make dist-ci
 
       - name: Publish web-components bundle at site root
-        run: cp build/examples/web-components/bricks-web-components.iife.js build/brick-frame.iife.js
+        run: cp build/docs/bricks-web-components.iife.js build/brick-frame.iife.js
 
       - name: Save Elm cache
         if: steps.elm-cache-restore.outputs.cache-hit != 'true'
