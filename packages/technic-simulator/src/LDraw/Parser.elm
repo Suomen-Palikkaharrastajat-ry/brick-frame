@@ -1,4 +1,4 @@
-module LDraw.Parser exposing (parseFile, parseLine, splitMpd)
+module LDraw.Parser exposing (firstMpdFileName, parseFile, parseLine, splitMpd)
 
 {-| LDraw file format parser.
 
@@ -106,6 +106,17 @@ splitMpd text =
 
         Nothing ->
             result
+
+
+{-| Return the first embedded file name in an MPD (`0 FILE <name>`), normalised
+the same way as `splitMpd` keys.
+-}
+firstMpdFileName : String -> Maybe String
+firstMpdFileName text =
+    text
+        |> String.lines
+        |> List.filterMap parseFileName
+        |> List.head
 
 
 -- ── Internal parsers ──────────────────────────────────────────────────────────

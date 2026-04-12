@@ -178,7 +178,16 @@ seedFromMpd text cache =
                 sections
 
         mainFile =
-            Dict.keys sections |> List.head
+            case Parser.firstMpdFileName text of
+                Just first ->
+                    if Dict.member first sections then
+                        Just first
+
+                    else
+                        Dict.keys sections |> List.head
+
+                Nothing ->
+                    Dict.keys sections |> List.head
     in
     ( seeded, mainFile )
 
