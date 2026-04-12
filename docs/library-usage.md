@@ -17,10 +17,10 @@ elements:
 Minimal HTML usage:
 
 ```html
-<script src="./bricks-web-components.iife.js"></script>
+<script src="https://kehys.palikkaharrastajat.fi/brick-frame.iife.js"></script>
 
-<bricks-viewer src="./examples/gears.ldr"></bricks-viewer>
-<bricks-simulator src="./examples/gears.ldr"></bricks-simulator>
+<bricks-viewer src="https://kehys.palikkaharrastajat.fi/examples/gears.ldr"></bricks-viewer>
+<bricks-simulator src="https://kehys.palikkaharrastajat.fi/examples/gears.ldr"></bricks-simulator>
 ```
 
 Both elements accept:
