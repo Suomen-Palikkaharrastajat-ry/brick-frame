@@ -39,7 +39,6 @@ import Task
 import Time
 import UI.FileUpload as FileUpload
 import UI.Theme as Theme
-import Url
 import WebGL
 import WebGL.Settings.DepthTest as DepthTest
 
@@ -47,7 +46,6 @@ import WebGL.Settings.DepthTest as DepthTest
 type alias Flags =
     { ldrawBase : String
     , ldrawFallbackBase : String
-    , defaultModelUrl : String
     , initialHash : String
     , maxRpm : Float
     }
@@ -103,7 +101,6 @@ type alias Model =
     , partsTotal : Int
     , scene : Maybe Scene
     , errorMsg : Maybe String
-    , urlInput : String
     , gearGraph : Maybe GearGraph
     , gearMeshes : Dict GearId GearRender
     , components : List Components.ComponentInstance
@@ -168,9 +165,6 @@ init flags =
         initialHash =
             decodeHash flags.initialHash
 
-        initialUrl =
-            Maybe.withDefault flags.defaultModelUrl initialHash.url
-
         baseCamera =
             Camera.init
 
@@ -180,9 +174,6 @@ init flags =
                 , elevation = Maybe.withDefault baseCamera.elevation initialHash.elevation
                 , distance = Maybe.withDefault baseCamera.distance initialHash.distance
             }
-
-        initialTime =
-            Maybe.withDefault 0.0 initialHash.time
 
         maxRpmValue =
             max 1 flags.maxRpm
@@ -197,7 +188,7 @@ init flags =
     ( { camera = initialCamera
       , width = 800
       , height = 600
-      , loadPhase = FetchingTopLevel initialUrl
+      , loadPhase = Idle
       , topLevelLines = []
       , partCache = embeddedPartCache
       , resolverConfig = resolver
@@ -205,7 +196,6 @@ init flags =
       , partsTotal = 0
       , scene = Nothing
       , errorMsg = Nothing
-      , urlInput = initialUrl
       , gearGraph = Nothing
       , gearMeshes = Dict.empty
       , components = []
@@ -214,7 +204,7 @@ init flags =
       , motor = Animate.defaultMotor
       , playback =
             { running = False
-            , currentTime = initialTime
+            , currentTime = 0.0
             , motorGearId = Nothing
             , motorSpeedRadPerSec = 1.0
             }
@@ -233,8 +223,7 @@ init flags =
         [ Browser.Dom.getViewport
             |> Task.perform
                 (\vp -> WindowResize (round vp.viewport.width) (round vp.viewport.height))
-        , fetchTopLevel initialUrl
-        , Ports.setUrlHash (encodeHashString initialUrl initialCamera initialTime)
+        , Ports.setUrlHash (encodeHashString initialCamera)
         ]
     )
 
@@ -292,8 +281,6 @@ type Msg
     | PointerTouchEnd Int
     | TopLevelLoaded String (Result Http.Error String)
     | PartLoaded String (Result Http.Error String)
-    | UrlInputChanged String
-    | LoadUrl
     | RequestFileUpload
     | FileContentReceived String
     | FileLoadError String
@@ -474,29 +461,6 @@ update msg model =
                     endTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
             in
             ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
-
-        UrlInputChanged s ->
-            ( { model | urlInput = s }, Cmd.none )
-
-        LoadUrl ->
-            let
-                url =
-                    String.trim model.urlInput
-            in
-            if String.isEmpty url then
-                ( model, Cmd.none )
-
-            else
-                let
-                    nextModel =
-                        resetForLoad url model
-                in
-                ( nextModel
-                , Cmd.batch
-                    [ fetchTopLevel url
-                    , Ports.setUrlHash (encodeHash nextModel)
-                    ]
-                )
 
         RequestFileUpload ->
             ( model, Ports.requestFileUpload () )
@@ -686,7 +650,7 @@ update msg model =
                 , gearAngles = resetAngles
                 , lastFrameTime = Nothing
               }
-            , Ports.setUrlHash (encodeHashString model.urlInput model.camera 0.0)
+            , Ports.setUrlHash (encodeHashString model.camera)
             )
 
         ToggleMotor ->
@@ -3297,28 +3261,19 @@ onTouchTap msg =
 
 
 viewToolbar : Model -> Html Msg
-viewToolbar model =
+viewToolbar _ =
     div
         [ Attr.style "position" "absolute"
-        , Attr.style "bottom" "0"
-        , Attr.style "left" "0"
-        , Attr.style "right" "0"
+        , Attr.style "bottom" "16px"
+        , Attr.style "right" "16px"
         , Attr.style "display" "flex"
         , Attr.style "align-items" "center"
         , Attr.style "gap" "8px"
-        , Attr.style "padding" "10px 16px"
-        , Attr.style "background" Theme.panelBackground
-        , Attr.style "border-top" ("1px solid " ++ Theme.borderDefault)
-        , Attr.style "box-shadow" "0 -8px 24px color-mix(in srgb, var(--color-brand) 8%, transparent)"
         , Attr.style "pointer-events" "auto"
         , Attr.style "touch-action" "none"
         ]
         (FileUpload.view
-            { urlInput = model.urlInput
-            , onUrlInput = UrlInputChanged
-            , onLoadUrl = LoadUrl
-            , onRequestFileUpload = RequestFileUpload
-            }
+            { onRequestFileUpload = RequestFileUpload }
         )
 
 
@@ -3440,11 +3395,9 @@ viewLoadingBox label maybePct =
 
 
 type alias HashState =
-    { url : Maybe String
-    , azimuth : Maybe Float
+    { azimuth : Maybe Float
     , elevation : Maybe Float
     , distance : Maybe Float
-    , time : Maybe Float
     }
 
 
@@ -3473,18 +3426,12 @@ decodeHash rawHash =
                     )
                 |> Dict.fromList
 
-        getDecoded key =
-            Dict.get key entries
-                |> Maybe.andThen Url.percentDecode
-
         getFloat key =
-            getDecoded key |> Maybe.andThen String.toFloat
+            Dict.get key entries |> Maybe.andThen String.toFloat
     in
-    { url = getDecoded "u"
-    , azimuth = getFloat "az"
+    { azimuth = getFloat "az"
     , elevation = getFloat "el"
     , distance = getFloat "d"
-    , time = getFloat "t"
     }
 
 
@@ -3500,21 +3447,17 @@ hasExplicitHashCamera state =
 
 encodeHash : Model -> String
 encodeHash model =
-    encodeHashString model.urlInput model.camera model.playback.currentTime
+    encodeHashString model.camera
 
 
-encodeHashString : String -> Camera -> Float -> String
-encodeHashString url camera timeValue =
-    "u="
-        ++ Url.percentEncode url
-        ++ "&az="
+encodeHashString : Camera -> String
+encodeHashString camera =
+    "az="
         ++ String.fromFloat camera.azimuth
         ++ "&el="
         ++ String.fromFloat camera.elevation
         ++ "&d="
         ++ String.fromFloat camera.distance
-        ++ "&t="
-        ++ String.fromFloat timeValue
 
 
 {-| Wrap angle to [−180, 180) degrees for display.

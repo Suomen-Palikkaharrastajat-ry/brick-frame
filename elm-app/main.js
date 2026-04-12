@@ -13,7 +13,6 @@ function pathFromBase(relativePath) {
 const defaultLdrawBase = pathFromBase('ldraw')
 const defaultFallbackBase = ''
 const defaultMaxRpm = 50
-const defaultModelUrl = pathFromBase('examples/gears.ldr')
 
 const ldrawBase = import.meta.env.VITE_LDRAW_BASE ?? defaultLdrawBase
 const ldrawFallbackBase =
@@ -26,7 +25,6 @@ const app = Elm.Main.init({
   flags: {
     ldrawBase,
     ldrawFallbackBase,
-    defaultModelUrl,
     initialHash: window.location.hash ?? '',
     maxRpm,
   },
