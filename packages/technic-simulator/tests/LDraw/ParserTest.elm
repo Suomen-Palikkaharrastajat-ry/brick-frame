@@ -109,6 +109,28 @@ suite =
 
                         _ ->
                             Expect.fail "Expected SubFileRef"
+            , test "type 11 (Studio v2) sub-file ref parses like type 1" <|
+                \_ ->
+                    let
+                        result =
+                            parseLine "11 226 1 False 0 0 -72 -10 1 0 0 0 1 0 0 0 1 3702.dat"
+                    in
+                    case result of
+                        Just (SubFileRef ref) ->
+                            Expect.all
+                                [ \r -> Expect.equal 226 r.color
+                                , \r -> Expect.equal "3702.dat" r.file
+                                , \r ->
+                                    let
+                                        p =
+                                            Mat4.transform r.transform (vec3 0 0 0)
+                                    in
+                                    Expect.equal (vec3 0 -72 -10) p
+                                ]
+                                ref
+
+                        _ ->
+                            Expect.fail "Expected SubFileRef"
             , test "type 1 parts prefix is stripped" <|
                 \_ ->
                     let

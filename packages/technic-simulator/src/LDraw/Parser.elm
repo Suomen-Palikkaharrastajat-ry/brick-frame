@@ -45,6 +45,9 @@ parseLine raw =
                 "1" ->
                     parseSubFileRef rest
 
+                "11" ->
+                    parseSubFileRefV2 rest
+
                 "2" ->
                     parseLineSegment rest
 
@@ -158,6 +161,17 @@ parseSubFileRef tokens =
                 (String.toFloat y)
                 (String.toFloat z)
                 (floatList [ a, b, d, e, f, g, h, i, j ])
+
+        _ ->
+            Nothing
+
+
+parseSubFileRefV2 : List String -> Maybe LDrawLine
+parseSubFileRefV2 tokens =
+    -- Studio v2 type 11: color uid hiddenFlag step x y z a..i file
+    case tokens of
+        color :: _ :: _ :: _ :: rest ->
+            parseSubFileRef (color :: rest)
 
         _ ->
             Nothing

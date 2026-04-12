@@ -34,7 +34,7 @@ resolveColor :
     -> Int
     -> { r : Float, g : Float, b : Float, alpha : Float }
 resolveColor parentColor thisColor =
-    if thisColor == 16 then
+    if thisColor == 16 || thisColor == -1 then
         lookupColor parentColor
 
     else if thisColor == 24 then

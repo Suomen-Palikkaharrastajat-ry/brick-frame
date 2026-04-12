@@ -22,7 +22,7 @@ view config =
     [ input
         [ Attr.type_ "text"
         , Attr.value config.urlInput
-        , Attr.placeholder "LDraw URL (.ldr / .mpd / .dat)"
+        , Attr.placeholder "LDraw / Studio URL (.ldr / .mpd / .io)"
         , Html.Events.onInput config.onUrlInput
         , Html.Events.on "keydown"
             (Decode.field "key" Decode.string

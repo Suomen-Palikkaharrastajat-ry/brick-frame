@@ -1,4 +1,5 @@
 import './main.css'
+import { unzipSync } from 'fflate'
 import { Elm } from './src/Main.elm'
 import GeometryWorker from './geometry-worker.js?worker'
 
@@ -66,11 +67,11 @@ app.ports.setUrlHash.subscribe((hash) => {
 // Hidden file input — created once, reused for every upload request.
 const fileInput = document.createElement('input')
 fileInput.type = 'file'
-fileInput.accept = '.ldr,.mpd,.dat'
+fileInput.accept = '.ldr,.mpd,.dat,.io'
 fileInput.style.display = 'none'
 document.body.appendChild(fileInput)
 
-const allowedExtensions = new Set(['.ldr', '.mpd', '.dat'])
+const allowedExtensions = new Set(['.ldr', '.mpd', '.dat', '.io'])
 
 function hasAllowedExtension(filename) {
   const lower = filename.toLowerCase()
@@ -86,8 +87,14 @@ function readLdrawFile(file) {
 
   if (!hasAllowedExtension(file.name)) {
     reportLoadError(
-      `Unsupported file type "${file.name}". Please use .ldr, .mpd, or .dat.`,
+      `Unsupported file type "${file.name}". Please use .ldr, .mpd, .dat, or .io.`,
     )
+    return
+  }
+
+  const lowerName = file.name.toLowerCase()
+  if (lowerName.endsWith('.io')) {
+    readStudioIoFile(file)
     return
   }
 
@@ -99,6 +106,65 @@ function readLdrawFile(file) {
     reportLoadError(`Failed to read "${file.name}".`)
   }
   reader.readAsText(file)
+}
+
+function readStudioIoFile(file) {
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    try {
+      const arrayBuffer = e.target?.result
+      if (!(arrayBuffer instanceof ArrayBuffer)) {
+        throw new Error('Invalid .io file payload')
+      }
+      const text = extractLdrawFromStudioArchive(arrayBuffer)
+      app.ports.fileContentReceived.send(text)
+    } catch (error) {
+      const details = error instanceof Error ? error.message : String(error)
+      reportLoadError(`Failed to read "${file.name}" as BrickLink Studio .io: ${details}`)
+    }
+  }
+  reader.onerror = () => {
+    reportLoadError(`Failed to read "${file.name}".`)
+  }
+  reader.readAsArrayBuffer(file)
+}
+
+function extractLdrawFromStudioArchive(arrayBuffer) {
+  const files = unzipSync(new Uint8Array(arrayBuffer))
+  const entries = Object.entries(files)
+  if (entries.length === 0) {
+    throw new Error('Archive is empty')
+  }
+
+  const normalizedEntries = entries.map(([name, bytes]) => ({
+    name,
+    normalized: String(name).replaceAll('\\', '/').toLowerCase(),
+    bytes,
+  }))
+
+  const preferred = [
+    'model2.ldr',
+    'model.ldr',
+  ]
+
+  for (const target of preferred) {
+    const found = normalizedEntries.find((entry) => entry.normalized.endsWith(target))
+    if (found) {
+      return decodeLdrawBytes(found.bytes)
+    }
+  }
+
+  const anyLdr = normalizedEntries.find((entry) => entry.normalized.endsWith('.ldr'))
+  if (anyLdr) {
+    return decodeLdrawBytes(anyLdr.bytes)
+  }
+
+  throw new Error('No .ldr model found in archive')
+}
+
+function decodeLdrawBytes(bytes) {
+  const decoded = new TextDecoder('utf-8').decode(bytes)
+  return decoded.charCodeAt(0) === 0xfeff ? decoded.slice(1) : decoded
 }
 
 // Elm → JS: open the file picker
@@ -127,7 +193,7 @@ window.addEventListener('drop', (event) => {
 
   const droppedFile = event.dataTransfer?.files?.[0]
   if (!droppedFile) {
-    reportLoadError('Drop a .ldr, .mpd, or .dat file to load a model.')
+    reportLoadError('Drop a .ldr, .mpd, .dat, or .io file to load a model.')
     return
   }
 

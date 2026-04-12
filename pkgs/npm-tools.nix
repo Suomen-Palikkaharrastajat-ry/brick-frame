@@ -19,7 +19,7 @@ let
   npmDeps = pkgs.fetchNpmDeps {
     name = "template-npm-deps";
     src = patchedSrc;
-    hash = "sha256-asOGD7Y7kaM5Si4QsIas1H/Rp4XwftMjlvarSaBbLfM=";
+    hash = "sha256-LKW7ipJ4jMNTi4jHJuuiVd8bkjvkQgBw1z9v0UmUDIo=";
   };
 in
 pkgs.stdenv.mkDerivation {
