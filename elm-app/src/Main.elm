@@ -265,12 +265,12 @@ appRenderStyle =
     in
     Style.clampStyle
         { baseStyle
-            | ambientStrength = 0.58
-            , specularStrength = 0.16
-            , specularPower = 20
-            , rimStrength = 0.1
-            , rimPower = 2.4
-            , vibrance = 0.16
+            | ambientStrength = 0.57
+            , specularStrength = 0.0
+            , specularPower = 18
+            , rimStrength = 0.0
+            , rimPower = 2.2
+            , vibrance = 0.08
         }
 
 

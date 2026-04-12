@@ -93,13 +93,23 @@ fragmentShader =
             float diffuse = max(0.0, dot(norm, lightDir));
             float light = ambientStrength + (1.0 - ambientStrength) * diffuse;
 
-            vec3 halfDir = normalize(lightDir + viewDir);
-            float specular = pow(max(dot(norm, halfDir), 0.0), specularPower) * specularStrength;
-            float rim = pow(1.0 - max(dot(norm, viewDir), 0.0), rimPower) * rimStrength;
+            float specular = 0.0;
+            if (specularStrength > 0.0001) {
+                vec3 halfDir = normalize(lightDir + viewDir);
+                specular = pow(max(dot(norm, halfDir), 0.0), specularPower) * specularStrength;
+            }
+
+            float rim = 0.0;
+            if (rimStrength > 0.0001) {
+                rim = pow(1.0 - max(dot(norm, viewDir), 0.0), rimPower) * rimStrength;
+            }
 
             vec3 litColor = vColor.rgb * light + vec3(specular + rim);
-            float luma = dot(litColor, vec3(0.2126, 0.7152, 0.0722));
-            vec3 vivid = mix(vec3(luma), litColor, 1.0 + clamp(vibrance, -0.5, 0.5));
-            gl_FragColor = vec4(clamp(vivid, 0.0, 1.0), vColor.a);
+            if (abs(vibrance) > 0.0001) {
+                float luma = dot(litColor, vec3(0.2126, 0.7152, 0.0722));
+                litColor = mix(vec3(luma), litColor, 1.0 + clamp(vibrance, -0.5, 0.5));
+            }
+
+            gl_FragColor = vec4(clamp(litColor, 0.0, 1.0), vColor.a);
         }
     |]
