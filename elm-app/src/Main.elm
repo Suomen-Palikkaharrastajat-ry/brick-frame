@@ -1011,7 +1011,7 @@ finishLoading model =
         -- Used to both exclude those lines from the static scene and build
         -- rotating meshes for them.
         coaxialGearByLine =
-            List.map (\line -> topLevelCoaxialGear drivenAxles line gearInstances) model.topLevelLines
+            List.map (\line -> topLevelCoaxialGear model.partCache drivenAxles line gearInstances) model.topLevelLines
 
         -- Lines that belong to the static (non-rotating) scene: drop gears,
         -- known components, and co-axial parts that will get their own
@@ -1765,30 +1765,34 @@ Used in `finishLoading` to decide which non-gear, non-component parts should
 rotate with a gear rather than being baked into the static scene.
 
 -}
-topLevelCoaxialGear : List DrivenAxle -> LDrawLine -> List GearInstance -> Maybe GearId
-topLevelCoaxialGear drivenAxles line gears =
+topLevelCoaxialGear : PartCache -> List DrivenAxle -> LDrawLine -> List GearInstance -> Maybe GearId
+topLevelCoaxialGear cache drivenAxles line gears =
     case line of
         SubFileRef ref ->
             let
                 pos =
                     toYUpPoint (Mat4.transform ref.transform (Vec3.vec3 0 0 0))
 
+                connectorPoints =
+                    connectorLocalPoints cache ref.file
+                        |> List.map (\local -> toYUpPoint (Mat4.transform ref.transform local))
+
+                samplePoints =
+                    pos :: connectorPoints
+
                 axleMatch =
                     drivenAxles
                         |> List.filterMap
                             (\axle ->
-                                let
-                                    lineDist =
-                                        pointToLineDistance pos axle.center axle.axis
+                                bestLineMatchForPoints samplePoints axle.center axle.axis
+                                    |> Maybe.andThen
+                                        (\( lineDist, axialOffset ) ->
+                                            if lineDist <= 6 && axialOffset <= 240 then
+                                                Just ( lineDist, axialOffset, axle.drivingGearId )
 
-                                    axialOffset =
-                                        abs (Vec3.dot (Vec3.sub pos axle.center) axle.axis)
-                                in
-                                if lineDist <= 6 && axialOffset <= 240 then
-                                    Just ( lineDist, axialOffset, axle.drivingGearId )
-
-                                else
-                                    Nothing
+                                            else
+                                                Nothing
+                                        )
                             )
                         |> List.sortBy (\( lineDist, axialOffset, _ ) -> ( lineDist, axialOffset ))
                         |> List.head
@@ -1817,18 +1821,16 @@ topLevelCoaxialGear drivenAxles line gears =
 
                                         else
                                             Vec3.scale (1 / gearAxisLen) gearAxisRaw
-
-                                    lineDist =
-                                        pointToLineDistance pos gearCenter gearAxis
-
-                                    axialOffset =
-                                        abs (Vec3.dot (Vec3.sub pos gearCenter) gearAxis)
                                 in
-                                if lineDist <= 2.5 && axialOffset <= 120 then
-                                    Just ( lineDist, axialOffset, gear.id )
+                                bestLineMatchForPoints samplePoints gearCenter gearAxis
+                                    |> Maybe.andThen
+                                        (\( lineDist, axialOffset ) ->
+                                            if lineDist <= 2.5 && axialOffset <= 120 then
+                                                Just ( lineDist, axialOffset, gear.id )
 
-                                else
-                                    Nothing
+                                            else
+                                                Nothing
+                                        )
                             )
                         |> List.sortBy (\( lineDist, axialOffset, _ ) -> ( lineDist, axialOffset ))
                         |> List.head
@@ -1843,6 +1845,24 @@ topLevelCoaxialGear drivenAxles line gears =
 
         _ ->
             Nothing
+
+
+bestLineMatchForPoints : List Vec3.Vec3 -> Vec3.Vec3 -> Vec3.Vec3 -> Maybe ( Float, Float )
+bestLineMatchForPoints points lineOrigin lineDir =
+    points
+        |> List.map
+            (\point ->
+                let
+                    lineDist =
+                        pointToLineDistance point lineOrigin lineDir
+
+                    axialOffset =
+                        abs (Vec3.dot (Vec3.sub point lineOrigin) lineDir)
+                in
+                ( lineDist, axialOffset )
+            )
+        |> List.sortBy (\( lineDist, axialOffset ) -> ( lineDist, axialOffset ))
+        |> List.head
 
 
 {-| Build rotating `ComponentMeshRender` entries for parts that are co-axial
@@ -1967,6 +1987,46 @@ buildDrivenAxles cache components gears =
                             }
                         )
             )
+
+
+connectorLocalPoints : PartCache -> String -> List Vec3.Vec3
+connectorLocalPoints cache partFile =
+    case Dict.get partFile cache of
+        Just (Loaded lines) ->
+            lines
+                |> List.filterMap
+                    (\line ->
+                        case line of
+                            SubFileRef subRef ->
+                                if isConnectorReference subRef.file then
+                                    Just (Mat4.transform subRef.transform (Vec3.vec3 0 0 0))
+
+                                else
+                                    Nothing
+
+                            _ ->
+                                Nothing
+                    )
+
+        _ ->
+            []
+
+
+isConnectorReference : String -> Bool
+isConnectorReference file =
+    let
+        lower =
+            String.toLower file
+    in
+    List.any
+        (\needle -> String.contains needle lower)
+        [ "axlehol"
+        , "peghole"
+        , "peghol"
+        , "npeghol"
+        , "axleend"
+        , "axle.dat"
+        ]
 
 
 gearAxisInfoById : GearId -> List GearInstance -> Maybe GearAxisInfo
