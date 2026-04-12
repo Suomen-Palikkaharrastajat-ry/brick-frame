@@ -50,17 +50,6 @@ jobs:
           key: elm-${{ runner.os }}-${{ hashFiles('elm-app/elm.json') }}
           restore-keys: elm-${{ runner.os }}-
 
-      - name: Compute Pages base path
-        id: pages-base
-        run: |
-          repo="${GITHUB_REPOSITORY#*/}"
-          owner="${GITHUB_REPOSITORY_OWNER}"
-          if [ "$repo" = "${owner}.github.io" ]; then
-            echo "vite_public_base=/" >> "$GITHUB_OUTPUT"
-          else
-            echo "vite_public_base=/$repo/" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Restore LDraw library cache
         id: ldraw-cache
         uses: actions/cache@v4
@@ -74,7 +63,7 @@ jobs:
 
       - name: Build
         env:
-          VITE_PUBLIC_BASE: ${{ steps.pages-base.outputs.vite_public_base }}
+          VITE_PUBLIC_BASE: /
         run: devenv shell --profile ci -- make dist-ci
 
       - uses: actions/configure-pages@v5
