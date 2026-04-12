@@ -33,24 +33,50 @@ const app = Elm.Main.init({
 })
 
 const geometryWorker = new GeometryWorker()
+const geometryFlattenCache = new Map()
+const GEOMETRY_FLATTEN_CACHE_LIMIT = 8
+let pendingFlattenKey = null
+
+function rememberFlattenResult(cacheKey, resultText) {
+  geometryFlattenCache.set(cacheKey, resultText)
+  if (geometryFlattenCache.size > GEOMETRY_FLATTEN_CACHE_LIMIT) {
+    const oldestKey = geometryFlattenCache.keys().next().value
+    if (oldestKey !== undefined) {
+      geometryFlattenCache.delete(oldestKey)
+    }
+  }
+}
 
 geometryWorker.addEventListener('message', (event) => {
   const text = String(event.data ?? '')
   try {
     const parsed = JSON.parse(text)
     if (parsed.ok) {
+      if (typeof pendingFlattenKey === 'string') {
+        rememberFlattenResult(pendingFlattenKey, text)
+      }
+      pendingFlattenKey = null
       app.ports.geometryFlattened.send(text)
     } else {
+      pendingFlattenKey = null
       app.ports.geometryFlattenFailed.send(
         parsed.error ?? 'Geometry worker failed',
       )
     }
   } catch {
+    pendingFlattenKey = null
     app.ports.geometryFlattenFailed.send('Invalid geometry worker response')
   }
 })
 
 app.ports.requestGeometryFlatten.subscribe((payload) => {
+  const cacheHit = geometryFlattenCache.get(payload)
+  if (cacheHit) {
+    app.ports.geometryFlattened.send(cacheHit)
+    return
+  }
+
+  pendingFlattenKey = payload
   geometryWorker.postMessage(payload)
 })
 
