@@ -109,6 +109,37 @@ suite =
 
                         _ ->
                             Expect.fail "Expected SubFileRef"
+            , test "type 1 parts prefix is stripped" <|
+                \_ ->
+                    let
+                        result =
+                            parseLine "1 16 0 0 0 1 0 0 0 1 0 0 0 1 parts/3001.dat"
+                    in
+                    case result of
+                        Just (SubFileRef ref) ->
+                            Expect.equal "3001.dat" ref.file
+
+                        _ ->
+                            Expect.fail "Expected SubFileRef"
+            , test "type 1 primitive prefixes keep resolver hints" <|
+                \_ ->
+                    let
+                        lowRes =
+                            parseLine "1 16 0 0 0 1 0 0 0 1 0 0 0 1 p/1-4ring3.dat"
+
+                        hiRes =
+                            parseLine "1 16 0 0 0 1 0 0 0 1 0 0 0 1 p/48/stud.dat"
+                    in
+                    case ( lowRes, hiRes ) of
+                        ( Just (SubFileRef lowRef), Just (SubFileRef hiRef) ) ->
+                            Expect.all
+                                [ \_ -> Expect.equal "1-4ring3.dat" lowRef.file
+                                , \_ -> Expect.equal "48/stud.dat" hiRef.file
+                                ]
+                                ()
+
+                        _ ->
+                            Expect.fail "Expected both SubFileRefs"
             , test "type 2 line segment" <|
                 \_ ->
                     let

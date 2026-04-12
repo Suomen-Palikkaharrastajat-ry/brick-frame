@@ -282,3 +282,34 @@ normaliseName raw =
         |> String.toLower
         |> String.replace "\\" "/"
         |> String.trim
+        |> stripLeadingSegments
+
+
+stripLeadingSegments : String -> String
+stripLeadingSegments value =
+    if String.startsWith "./" value then
+        stripLeadingSegments (String.dropLeft 2 value)
+
+    else if String.startsWith "/" value then
+        stripLeadingSegments (String.dropLeft 1 value)
+
+    else if String.startsWith "ldraw/" value then
+        stripLeadingSegments (String.dropLeft 6 value)
+
+    else if String.startsWith "parts/s/" value then
+        "s/" ++ String.dropLeft 8 value
+
+    else if String.startsWith "parts/" value then
+        String.dropLeft 6 value
+
+    else if String.startsWith "p/48/" value then
+        "48/" ++ String.dropLeft 5 value
+
+    else if String.startsWith "p/" value then
+        String.dropLeft 2 value
+
+    else if String.startsWith "models/" value then
+        String.dropLeft 7 value
+
+    else
+        value

@@ -6,6 +6,7 @@ module LDraw.Resolve exposing
     , fetchPart
     , fetchPartPrimitive
     , initCache
+    , markLoading
     , pendingParts
     , resolverConfig
     , seedFromMpd
@@ -82,6 +83,22 @@ type alias ResolverConfig =
 initCache : PartCache
 initCache =
     Dict.empty
+
+
+{-| Mark names as in-flight (`Loading`) so they are not re-queued.
+-}
+markLoading : List String -> PartCache -> PartCache
+markLoading names cache =
+    List.foldl
+        (\name acc ->
+            if Dict.member name acc then
+                acc
+
+            else
+                Dict.insert name Loading acc
+        )
+        cache
+        names
 
 
 {-| Runtime default resolution strategy:
@@ -219,14 +236,20 @@ partCandidateUrls : ResolverConfig -> String -> List String
 partCandidateUrls config name =
     let
         relativePaths =
-            if String.startsWith "s/" name then
+            if String.startsWith "parts/" name || String.startsWith "p/" name then
+                [ name ]
+
+            else if String.startsWith "s/" name then
                 [ "parts/" ++ name ]
 
-            else if String.startsWith "48/" name then
+            else if String.startsWith "48/" name || String.startsWith "8/" name then
                 [ "p/" ++ name ]
 
+            else if isLikelyPrimitiveName name then
+                [ "p/" ++ name, "parts/" ++ name, "parts/s/" ++ name ]
+
             else
-                [ "parts/" ++ name, "p/" ++ name ]
+                [ "parts/" ++ name, "parts/s/" ++ name, "p/" ++ name ]
     in
     allBases config
         |> List.concatMap
@@ -234,6 +257,41 @@ partCandidateUrls config name =
                 relativePaths
                     |> List.map (\path -> joinBase base path)
             )
+
+
+isLikelyPrimitiveName : String -> Bool
+isLikelyPrimitiveName name =
+    String.contains "-" name
+        || startsWithDigit name
+        || List.any
+            (\prefix -> String.startsWith prefix name)
+            [ "stud"
+            , "ring"
+            , "edge"
+            , "cyli"
+            , "cylo"
+            , "cyl"
+            , "disc"
+            , "ndis"
+            , "rin"
+            , "con"
+            , "chrd"
+            , "tang"
+            , "box"
+            , "tooth"
+            , "connect"
+            , "peghole"
+            ]
+
+
+startsWithDigit : String -> Bool
+startsWithDigit value =
+    case String.uncons value of
+        Just ( first, _ ) ->
+            first >= '0' && first <= '9'
+
+        Nothing ->
+            False
 
 
 primitiveCandidateUrls : ResolverConfig -> String -> List String

@@ -638,9 +638,12 @@ handlePartResult name result model =
         newTotal =
             max model.partsTotal (newLoaded + List.length allPending)
 
+        cacheWithLoading =
+            Resolve.markLoading allPending newCache
+
         updatedModel =
             { model
-                | partCache = newCache
+                | partCache = cacheWithLoading
                 , partsLoaded = newLoaded
                 , partsTotal = newTotal
             }
@@ -952,10 +955,13 @@ handleTopLevelText text model =
         pending =
             Resolve.pendingParts lines seededCache
 
+        cacheWithLoading =
+            Resolve.markLoading pending seededCache
+
         loadingModel =
             { model
                 | topLevelLines = lines
-                , partCache = seededCache
+                , partCache = cacheWithLoading
                 , loadPhase = ResolvingParts
                 , partsTotal = List.length pending
                 , partsLoaded = 0
