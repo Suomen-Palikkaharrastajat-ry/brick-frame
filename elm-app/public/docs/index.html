@@ -191,6 +191,36 @@
       color: var(--muted);
     }
 
+    .field-help {
+      margin: 0;
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    .file-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .file-row input[type="file"] {
+      flex: 1 1 260px;
+      min-width: 220px;
+    }
+
+    .ghost-btn {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--text);
+      padding: 6px 10px;
+      font: inherit;
+      font-size: 0.82rem;
+      cursor: pointer;
+    }
+
     .field input,
     .field select,
     textarea {
@@ -449,6 +479,14 @@ ${snippet}
                   <label>Model src</label>
                   <input data-key="src" type="url" placeholder="default model when empty" />
                 </div>
+                <div class="field full">
+                  <label>Local model file (.ldr, .mpd, .dat, .io)</label>
+                  <div class="file-row">
+                    <input data-local-file-input type="file" accept=".ldr,.mpd,.dat,.io" />
+                    <button type="button" class="ghost-btn" data-clear-local-file>Clear local file</button>
+                  </div>
+                  <p class="field-help" data-local-file-status>No local file selected. When selected, local file is used only for this preview.</p>
+                </div>
                 <div class="field">
                   <label>Show controls</label>
                   <input data-key="controls" type="checkbox" />
@@ -491,7 +529,12 @@ ${snippet}
       const textArea = container.querySelector('textarea')
       const status = container.querySelector('.copy-status')
       const inputs = container.querySelectorAll('[data-key]')
+      const localFileInput = container.querySelector('[data-local-file-input]')
+      const clearLocalFileButton = container.querySelector('[data-clear-local-file]')
+      const localFileStatus = container.querySelector('[data-local-file-status]')
       let previewObjectUrl = null
+      let localModelUrl = null
+      let localFileName = ''
 
       function setPreviewHtml(html, preferBlobUrl) {
         if (previewObjectUrl) {
@@ -508,6 +551,36 @@ ${snippet}
         }
       }
 
+      function updateLocalFileStatus() {
+        if (!localFileStatus) {
+          return
+        }
+
+        localFileStatus.textContent = localModelUrl
+          ? `Using local file: ${localFileName}. This file is not included in generated HTML.`
+          : 'No local file selected. When selected, local file is used only for this preview.'
+      }
+
+      function clearLocalModel() {
+        if (localModelUrl) {
+          URL.revokeObjectURL(localModelUrl)
+        }
+        localModelUrl = null
+        localFileName = ''
+        updateLocalFileStatus()
+      }
+
+      function previewSnippetFromState() {
+        if (!localModelUrl) {
+          return buildSnippet(state)
+        }
+
+        return buildSnippet({
+          ...state,
+          src: localModelUrl,
+        })
+      }
+
       function syncFormFromState() {
         inputs.forEach((input) => {
           const key = input.dataset.key
@@ -520,9 +593,9 @@ ${snippet}
       }
 
       function renderFromState() {
-        const snippet = buildSnippet(state)
-        textArea.value = snippet
-        setPreviewHtml(buildPreviewDocument(snippet, mode), usesModuleScript(state.bundleUrl))
+        textArea.value = buildSnippet(state)
+        const previewSnippet = previewSnippetFromState()
+        setPreviewHtml(buildPreviewDocument(previewSnippet, mode), usesModuleScript(state.bundleUrl))
       }
 
       function renderFromRaw() {
@@ -596,6 +669,33 @@ ${snippet}
         }, 1600)
       })
 
+      localFileInput.addEventListener('change', () => {
+        const nextFile = localFileInput.files && localFileInput.files.length > 0
+          ? localFileInput.files[0]
+          : null
+
+        clearLocalModel()
+
+        if (nextFile) {
+          localFileName = nextFile.name || 'local-file'
+          localModelUrl = URL.createObjectURL(nextFile)
+        }
+
+        updateLocalFileStatus()
+        renderFromState()
+      })
+
+      clearLocalFileButton.addEventListener('click', () => {
+        localFileInput.value = ''
+        clearLocalModel()
+        renderFromState()
+      })
+
+      window.addEventListener('beforeunload', () => {
+        clearLocalModel()
+      })
+
+      updateLocalFileStatus()
       syncFormFromState()
       renderFromState()
     }
