@@ -787,51 +787,60 @@ update msg model =
 
 handlePartResult : String -> Result Http.Error String -> Model -> ( Model, Cmd Msg )
 handlePartResult name result model =
-    let
-        newCache =
-            Resolve.updateCache name result Parser.parseFile model.partCache
-
-        newLines =
-            case result of
-                Ok text ->
-                    Parser.parseFile text
-
-                Err _ ->
-                    []
-
-        additionalPending =
-            Resolve.pendingParts newLines newCache
-
-        allPending =
-            Resolve.pendingParts model.topLevelLines newCache
-                ++ additionalPending
-                |> List.filter (\n -> not (Dict.member n newCache))
-                |> deduplicate
-
-        newLoaded =
-            model.partsLoaded + 1
-
-        newTotal =
-            max model.partsTotal (newLoaded + List.length allPending)
-
-        cacheWithLoading =
-            Resolve.markLoading allPending newCache
-
-        updatedModel =
-            { model
-                | partCache = cacheWithLoading
-                , partsLoaded = newLoaded
-                , partsTotal = newTotal
-            }
-    in
-    if List.isEmpty allPending && not (hasLoadingParts updatedModel.partCache) then
-        finishLoading updatedModel
-
-    else if List.isEmpty allPending then
-        ( updatedModel, Cmd.none )
+    if model.loadPhase /= ResolvingParts then
+        ( { model
+            | partCache =
+                Resolve.updateCache name result Parser.parseFile model.partCache
+          }
+        , Cmd.none
+        )
 
     else
-        ( updatedModel, fetchPending model.resolverConfig allPending )
+        let
+            newCache =
+                Resolve.updateCache name result Parser.parseFile model.partCache
+
+            newLines =
+                case result of
+                    Ok text ->
+                        Parser.parseFile text
+
+                    Err _ ->
+                        []
+
+            additionalPending =
+                Resolve.pendingParts newLines newCache
+
+            allPending =
+                Resolve.pendingParts model.topLevelLines newCache
+                    ++ additionalPending
+                    |> List.filter (\n -> not (Dict.member n newCache))
+                    |> deduplicate
+
+            newLoaded =
+                model.partsLoaded + 1
+
+            newTotal =
+                max model.partsTotal (newLoaded + List.length allPending)
+
+            cacheWithLoading =
+                Resolve.markLoading allPending newCache
+
+            updatedModel =
+                { model
+                    | partCache = cacheWithLoading
+                    , partsLoaded = newLoaded
+                    , partsTotal = newTotal
+                }
+        in
+        if List.isEmpty allPending && not (hasLoadingParts updatedModel.partCache) then
+            finishLoading updatedModel
+
+        else if List.isEmpty allPending then
+            ( updatedModel, Cmd.none )
+
+        else
+            ( updatedModel, fetchPending model.resolverConfig allPending )
 
 
 {-| Reset model fields that depend on the loaded file, keeping the part cache.
