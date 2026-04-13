@@ -824,8 +824,11 @@ handlePartResult name result model =
                 , partsTotal = newTotal
             }
     in
-    if List.isEmpty allPending then
+    if List.isEmpty allPending && not (hasLoadingParts updatedModel.partCache) then
         finishLoading updatedModel
+
+    else if List.isEmpty allPending then
+        ( updatedModel, Cmd.none )
 
     else
         ( updatedModel, fetchPending model.resolverConfig allPending )
@@ -1450,6 +1453,21 @@ deduplicate =
         ( [], [] )
         >> Tuple.second
         >> List.reverse
+
+
+hasLoadingParts : PartCache -> Bool
+hasLoadingParts cache =
+    cache
+        |> Dict.values
+        |> List.any
+            (\status ->
+                case status of
+                    Loading ->
+                        True
+
+                    _ ->
+                        False
+            )
 
 
 isTopLevelGearRef : LDrawLine -> Bool
