@@ -12,6 +12,7 @@ initBricksRuntime({
   defaultModel: defaults.defaultModelUrl,
   initialHash: window.location.hash ?? '',
   syncUrlHash: true,
+  useWindowResize: true,
   dragDropTarget: window,
   suppressGestureTarget: window,
 })

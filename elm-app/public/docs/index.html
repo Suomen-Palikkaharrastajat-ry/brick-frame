@@ -3,98 +3,512 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Palikkakehys Web Components</title>
+  <title>Palikkakehys Web Components Playground</title>
   <style>
+    :root {
+      --bg: #f5f7fa;
+      --card: #ffffff;
+      --border: #d9e0e7;
+      --text: #0d2233;
+      --muted: #4a6175;
+      --accent: #0f6cab;
+      --accent-soft: #e8f2fb;
+      --shadow: 0 18px 36px rgba(7, 27, 44, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
     body {
       margin: 0;
-      font-family: system-ui, sans-serif;
-      background: #f9fafb;
-      color: #05131d;
       padding: 20px;
+      background: linear-gradient(180deg, #f7fafc 0%, #eef3f8 100%);
+      color: var(--text);
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
     }
 
-    h1 {
-      margin-top: 0;
-      font-size: 1.25rem;
-    }
-
-    h2 {
-      margin: 8px 0 12px;
-      font-size: 1rem;
-    }
-
-    p {
-      margin: 8px 0;
-      line-height: 1.45;
-    }
-
-    .stack {
+    main {
+      max-width: 1400px;
+      margin: 0 auto;
       display: flex;
       flex-direction: column;
       gap: 16px;
-      margin-top: 18px;
     }
 
-    .card {
-      background: white;
-      border: 1px solid #e5e7eb;
-      border-radius: 10px;
-      padding: 12px;
-      box-shadow: 0 8px 24px rgba(5, 19, 29, 0.08);
-    }
-
-    pre {
-      margin: 10px 0 0;
-      padding: 10px;
-      overflow-x: auto;
-      border-radius: 8px;
-      background: #f3f4f6;
-      border: 1px solid #e5e7eb;
-      font-size: 12px;
-      line-height: 1.4;
-    }
-
-    bricks-viewer,
-    bricks-simulator {
-      display: block;
-      width: 100%;
-      height: 480px;
-      border-radius: 8px;
+    .intro,
+    .playground {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: var(--card);
+      box-shadow: var(--shadow);
       overflow: hidden;
-      border: 1px solid #e5e7eb;
+    }
+
+    .intro {
+      padding: 16px;
+    }
+
+    .intro h1 {
+      margin: 0 0 8px;
+      font-size: 1.35rem;
+    }
+
+    .intro p {
+      margin: 6px 0;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .playground-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      background: #fbfdff;
+    }
+
+    .playground-header h2 {
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    .playground-header span {
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .playground-grid {
+      display: grid;
+      grid-template-columns: 1.15fr 1fr;
+      gap: 0;
+      min-height: 560px;
+    }
+
+    .preview-pane,
+    .editor-pane {
+      padding: 12px;
+    }
+
+    .preview-pane {
+      border-right: 1px solid var(--border);
+      background: #f8fbfe;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .preview-label,
+    .editor-label {
+      margin: 0;
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .preview-frame {
+      width: 100%;
+      height: 100%;
+      min-height: 500px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .editor-pane {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+    }
+
+    .tab-btn,
+    .copy-btn {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--text);
+      padding: 6px 10px;
+      font: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+
+    .tab-btn.active {
+      background: var(--accent-soft);
+      border-color: #bfd7ec;
+      color: #0a4874;
+      font-weight: 600;
+    }
+
+    .editor-controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .copy-status {
+      color: var(--muted);
+      font-size: 0.8rem;
+      min-height: 1em;
+    }
+
+    .panel {
+      display: none;
+    }
+
+    .panel.active {
+      display: block;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .field.full {
+      grid-column: 1 / -1;
+    }
+
+    .field label {
+      font-size: 0.79rem;
+      color: var(--muted);
+    }
+
+    .field input,
+    .field select,
+    textarea {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      font: inherit;
+      font-size: 0.88rem;
+      color: var(--text);
+      background: #fff;
+      width: 100%;
+    }
+
+    textarea {
+      min-height: 420px;
+      resize: vertical;
+      font-family: "IBM Plex Mono", "Consolas", monospace;
+      line-height: 1.4;
+      white-space: pre;
+    }
+
+    @media (max-width: 1080px) {
+      .playground-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .preview-pane {
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .preview-frame {
+        min-height: 460px;
+      }
+
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
 <body>
-  <h1>Palikkakehys Web Components Demo</h1>
-  <p>Plain HTML + built bundle only.</p>
-
-  <section class="card">
-    <h2>Usage</h2>
-    <p>
-      Load the bundle from:
-      <code>https://kehys.palikkaharrastajat.fi/brick-frame.iife.js</code>
-    </p>
-    <p>Minimal HTML:</p>
-    <pre>&lt;script src="https://kehys.palikkaharrastajat.fi/brick-frame.iife.js"&gt;&lt;/script&gt;
-
-&lt;bricks-viewer src="https://kehys.palikkaharrastajat.fi/examples/gears.ldr"&gt;&lt;/bricks-viewer&gt;
-
-&lt;bricks-simulator src="https://kehys.palikkaharrastajat.fi/examples/gears.ldr"&gt;&lt;/bricks-simulator&gt;</pre>
-  </section>
-
-  <div class="stack">
-    <section class="card">
-      <h2>Viewer</h2>
-      <bricks-viewer src="../examples/gears.ldr"></bricks-viewer>
+  <main>
+    <section class="intro">
+      <h1>Palikkakehys Web Components Playground</h1>
+      <p>Interactive builder for embedding <code>&lt;bricks-viewer&gt;</code> and <code>&lt;bricks-simulator&gt;</code>.</p>
+      <p>Edit settings in the form or raw HTML, then copy a ready-to-use snippet.</p>
     </section>
 
-    <section class="card">
-      <h2>Simulator</h2>
-      <bricks-simulator src="../examples/gears.ldr"></bricks-simulator>
-    </section>
-  </div>
+    <section class="playground" data-playground="viewer"></section>
+    <section class="playground" data-playground="simulator"></section>
+  </main>
 
-  <script src="https://kehys.palikkaharrastajat.fi/brick-frame.iife.js"></script>
+  <script>
+    const DEFAULT_BUNDLE_URL = 'https://kehys.palikkaharrastajat.fi/brick-frame.iife.js'
+    const DEFAULT_MODEL_URL = 'https://kehys.palikkaharrastajat.fi/examples/gears.ldr'
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+    }
+
+    function buildSnippet(state) {
+      const tagName = state.mode === 'viewer' ? 'bricks-viewer' : 'bricks-simulator'
+      const attrs = []
+      const optional = {
+        src: state.src,
+        'ldraw-base': state.ldrawBase,
+        'ldraw-fallback-base': state.ldrawFallbackBase,
+        'max-rpm': state.maxRpm,
+        'worker-mode': state.workerMode,
+        'worker-url': state.workerUrl,
+        'camera-azimuth': state.cameraAzimuth,
+        'camera-elevation': state.cameraElevation,
+        'camera-distance': state.cameraDistance,
+      }
+
+      Object.entries(optional).forEach(([key, value]) => {
+        const normalized = String(value ?? '').trim()
+        if (normalized) {
+          attrs.push(`${key}="${escapeHtml(normalized)}"`)
+        }
+      })
+
+      const elementLine = attrs.length > 0
+        ? `<${tagName} ${attrs.join(' ')}></${tagName}>`
+        : `<${tagName}></${tagName}>`
+
+      return `<script src="${escapeHtml(state.bundleUrl)}"></script>\n\n${elementLine}`
+    }
+
+    function buildPreviewDocument(snippet) {
+      return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background: #f7fbff;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+    }
+    body {
+      padding: 14px;
+      box-sizing: border-box;
+    }
+    bricks-viewer, bricks-simulator {
+      display: block;
+      width: 100%;
+      height: min(74vh, 520px);
+      border: 1px solid #d9e0e7;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+${snippet}
+</body>
+</html>`
+    }
+
+    function parseSnippet(snippet, mode) {
+      const parser = new DOMParser()
+      const doc = parser.parseFromString(`<body>${snippet}</body>`, 'text/html')
+      const tagName = mode === 'viewer' ? 'bricks-viewer' : 'bricks-simulator'
+      const element = doc.querySelector(tagName)
+      const script = doc.querySelector('script[src]')
+      if (!element) {
+        return null
+      }
+
+      const get = (name) => element.getAttribute(name) ?? ''
+
+      return {
+        bundleUrl: script?.getAttribute('src') ?? DEFAULT_BUNDLE_URL,
+        src: get('src'),
+        ldrawBase: get('ldraw-base'),
+        ldrawFallbackBase: get('ldraw-fallback-base'),
+        maxRpm: get('max-rpm'),
+        workerMode: get('worker-mode'),
+        workerUrl: get('worker-url'),
+        cameraAzimuth: get('camera-azimuth'),
+        cameraElevation: get('camera-elevation'),
+        cameraDistance: get('camera-distance'),
+      }
+    }
+
+    function createPlayground(mode) {
+      const container = document.querySelector(`[data-playground="${mode}"]`)
+      const modeTitle = mode === 'viewer' ? 'Viewer' : 'Simulator'
+
+      const state = {
+        mode,
+        bundleUrl: DEFAULT_BUNDLE_URL,
+        src: DEFAULT_MODEL_URL,
+        ldrawBase: '',
+        ldrawFallbackBase: '',
+        maxRpm: '',
+        workerMode: 'auto',
+        workerUrl: '',
+        cameraAzimuth: '',
+        cameraElevation: '',
+        cameraDistance: '',
+      }
+
+      container.innerHTML = `
+        <div class="playground-header">
+          <h2>${modeTitle} Playground</h2>
+          <span>${mode === 'viewer' ? '<bricks-viewer>' : '<bricks-simulator>'}</span>
+        </div>
+        <div class="playground-grid">
+          <div class="preview-pane">
+            <p class="preview-label">Live Preview</p>
+            <iframe class="preview-frame" title="${modeTitle} preview"></iframe>
+          </div>
+          <div class="editor-pane">
+            <div class="editor-controls">
+              <div class="tabs">
+                <button type="button" class="tab-btn active" data-tab="form">Form</button>
+                <button type="button" class="tab-btn" data-tab="raw">Raw HTML</button>
+              </div>
+              <button type="button" class="copy-btn">Copy Snippet</button>
+            </div>
+            <p class="copy-status" aria-live="polite"></p>
+            <section class="panel panel-form active">
+              <p class="editor-label">Configuration</p>
+              <div class="form-grid">
+                <div class="field full">
+                  <label>Bundle URL</label>
+                  <input data-key="bundleUrl" type="url" />
+                </div>
+                <div class="field full">
+                  <label>Model src</label>
+                  <input data-key="src" type="url" />
+                </div>
+                <div class="field">
+                  <label>LDraw base</label>
+                  <input data-key="ldrawBase" type="url" placeholder="optional" />
+                </div>
+                <div class="field">
+                  <label>LDraw fallback base</label>
+                  <input data-key="ldrawFallbackBase" type="url" placeholder="optional" />
+                </div>
+                <div class="field">
+                  <label>Max RPM</label>
+                  <input data-key="maxRpm" type="number" step="1" min="1" placeholder="optional" />
+                </div>
+                <div class="field">
+                  <label>Worker mode</label>
+                  <select data-key="workerMode">
+                    <option value="">(default auto)</option>
+                    <option value="auto">auto</option>
+                    <option value="inline">inline</option>
+                    <option value="external">external</option>
+                    <option value="off">off</option>
+                  </select>
+                </div>
+                <div class="field full">
+                  <label>Worker URL</label>
+                  <input data-key="workerUrl" type="url" placeholder="required for external mode" />
+                </div>
+                <div class="field">
+                  <label>Camera azimuth (deg)</label>
+                  <input data-key="cameraAzimuth" type="number" step="1" placeholder="optional" />
+                </div>
+                <div class="field">
+                  <label>Camera elevation (deg)</label>
+                  <input data-key="cameraElevation" type="number" step="1" placeholder="optional" />
+                </div>
+                <div class="field">
+                  <label>Camera distance</label>
+                  <input data-key="cameraDistance" type="number" step="1" min="1" placeholder="optional" />
+                </div>
+              </div>
+            </section>
+            <section class="panel panel-raw">
+              <p class="editor-label">Generated Embed HTML</p>
+              <textarea spellcheck="false"></textarea>
+            </section>
+          </div>
+        </div>
+      `
+
+      const iframe = container.querySelector('.preview-frame')
+      const textArea = container.querySelector('textarea')
+      const status = container.querySelector('.copy-status')
+      const inputs = container.querySelectorAll('[data-key]')
+
+      function syncFormFromState() {
+        inputs.forEach((input) => {
+          const key = input.dataset.key
+          input.value = state[key] ?? ''
+        })
+      }
+
+      function renderFromState() {
+        const snippet = buildSnippet(state)
+        textArea.value = snippet
+        iframe.srcdoc = buildPreviewDocument(snippet)
+      }
+
+      function renderFromRaw() {
+        const raw = String(textArea.value ?? '')
+        iframe.srcdoc = buildPreviewDocument(raw)
+        const parsed = parseSnippet(raw, mode)
+        if (parsed) {
+          Object.assign(state, parsed)
+          syncFormFromState()
+        }
+      }
+
+      inputs.forEach((input) => {
+        input.addEventListener('input', () => {
+          const key = input.dataset.key
+          state[key] = input.value
+          renderFromState()
+        })
+      })
+
+      textArea.addEventListener('input', renderFromRaw)
+
+      container.querySelectorAll('.tab-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          container.querySelectorAll('.tab-btn').forEach((candidate) => {
+            candidate.classList.toggle('active', candidate === btn)
+          })
+          const selected = btn.dataset.tab
+          container.querySelector('.panel-form').classList.toggle('active', selected === 'form')
+          container.querySelector('.panel-raw').classList.toggle('active', selected === 'raw')
+        })
+      })
+
+      container.querySelector('.copy-btn').addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(textArea.value)
+          status.textContent = 'Snippet copied.'
+        } catch {
+          status.textContent = 'Clipboard unavailable. Select and copy manually.'
+        }
+        setTimeout(() => {
+          status.textContent = ''
+        }, 1600)
+      })
+
+      syncFormFromState()
+      renderFromState()
+    }
+
+    createPlayground('viewer')
+    createPlayground('simulator')
+  </script>
 </body>
 </html>

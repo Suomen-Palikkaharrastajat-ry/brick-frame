@@ -7,6 +7,7 @@ port module Ports exposing
     , requestGeometryFlatten
     , runtimeEvent
     , setUrlHash
+    , viewportResized
     )
 
 {-| JavaScript interop for file upload and URL hash state.
@@ -52,6 +53,11 @@ port geometryFlattenFailed : (String -> msg) -> Sub msg
 {-| Emit runtime lifecycle events as JSON strings (for wrapper integrations).
 -}
 port runtimeEvent : String -> Cmd msg
+
+
+{-| Receive viewport dimensions from host runtime (used by Web Components).
+-}
+port viewportResized : ({ width : Int, height : Int } -> msg) -> Sub msg
 
 
 {-| Update browser URL hash from Elm app state.

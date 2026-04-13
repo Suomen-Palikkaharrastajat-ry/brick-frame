@@ -41,7 +41,17 @@ input[type="range"] {
 
 class BaseBricksElement extends HTMLElement {
   static get observedAttributes() {
-    return ['src', 'ldraw-base', 'ldraw-fallback-base', 'max-rpm']
+    return [
+      'src',
+      'ldraw-base',
+      'ldraw-fallback-base',
+      'max-rpm',
+      'worker-mode',
+      'worker-url',
+      'camera-azimuth',
+      'camera-elevation',
+      'camera-distance',
+    ]
   }
 
   constructor(mode) {
@@ -57,6 +67,7 @@ class BaseBricksElement extends HTMLElement {
 
   connectedCallback() {
     this.ensureSizing()
+    const initialHash = this.cameraHashFromAttributes()
 
     this.runtime = initBricksRuntime({
       node: this.mount,
@@ -65,8 +76,11 @@ class BaseBricksElement extends HTMLElement {
       ldrawBase: this.getAttribute('ldraw-base') ?? undefined,
       ldrawFallbackBase: this.getAttribute('ldraw-fallback-base') ?? undefined,
       maxRpm: this.getAttribute('max-rpm') ?? undefined,
-      initialHash: '',
+      workerMode: this.getAttribute('worker-mode') ?? undefined,
+      workerUrl: this.getAttribute('worker-url') ?? undefined,
+      initialHash,
       syncUrlHash: false,
+      useWindowResize: false,
       dragDropTarget: this,
       suppressGestureTarget: this,
       runtimeEventHandler: (eventPayload) => this.forwardRuntimeEvent(eventPayload),
@@ -91,7 +105,49 @@ class BaseBricksElement extends HTMLElement {
       if (src) {
         this.runtime.loadFromUrl(src)
       }
+      return
     }
+
+    if (
+      name === 'worker-mode'
+      || name === 'worker-url'
+      || name === 'camera-azimuth'
+      || name === 'camera-elevation'
+      || name === 'camera-distance'
+    ) {
+      this.runtimeReady = false
+      this.runtime?.destroy()
+      this.runtime = null
+      this.connectedCallback()
+    }
+  }
+
+  cameraHashFromAttributes() {
+    const maybeAzimuthDeg = this.parseOptionalNumericAttribute('camera-azimuth')
+    const maybeElevationDeg = this.parseOptionalNumericAttribute('camera-elevation')
+    const maybeDistance = this.parseOptionalNumericAttribute('camera-distance')
+
+    const params = []
+    if (Number.isFinite(maybeAzimuthDeg)) {
+      params.push(`az=${String((maybeAzimuthDeg * Math.PI) / 180)}`)
+    }
+    if (Number.isFinite(maybeElevationDeg)) {
+      params.push(`el=${String((maybeElevationDeg * Math.PI) / 180)}`)
+    }
+    if (Number.isFinite(maybeDistance)) {
+      params.push(`d=${String(maybeDistance)}`)
+    }
+
+    return params.join('&')
+  }
+
+  parseOptionalNumericAttribute(name) {
+    const raw = this.getAttribute(name)
+    if (raw == null || String(raw).trim() === '') {
+      return null
+    }
+    const parsed = Number(raw)
+    return Number.isFinite(parsed) ? parsed : null
   }
 
   ensureSizing() {

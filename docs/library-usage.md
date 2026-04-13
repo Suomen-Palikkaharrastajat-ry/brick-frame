@@ -31,12 +31,57 @@ Both elements accept:
 - `ldraw-base`
 - `ldraw-fallback-base`
 - `max-rpm`
+- `worker-mode` (`auto`, `inline`, `external`, `off`)
+- `worker-url` (used when `worker-mode="external"`)
+- `camera-azimuth` (degrees)
+- `camera-elevation` (degrees)
+- `camera-distance` (float)
 
 Runtime methods are also available:
 
 - `loadFromText(text, filename?)`
 - `loadFromFile(file)`
 - `loadFromUrl(url)`
+
+Interactive configuration playground:
+
+- `/docs/index.html` contains a live embed playground for both Viewer and
+  Simulator (form editor + raw HTML + iframe preview).
+
+### Embedding on another domain
+
+Web Components are designed to work when your site origin differs from the
+bundle origin:
+
+```html
+<script src="https://kehys.palikkaharrastajat.fi/brick-frame.iife.js"></script>
+<bricks-simulator src="https://kehys.palikkaharrastajat.fi/examples/gears.ldr"></bricks-simulator>
+```
+
+By default (`worker-mode="auto"`), geometry flattening uses an inline worker
+so the component does not depend on same-origin worker chunk URLs. If worker
+startup fails, runtime falls back to main-thread flattening automatically.
+
+Advanced worker controls:
+
+```html
+<bricks-viewer
+  src="https://kehys.palikkaharrastajat.fi/examples/gears.ldr"
+  worker-mode="external"
+  worker-url="https://cdn.example.org/geometry-worker.js"
+></bricks-viewer>
+```
+
+- `worker-mode="off"` disables workers entirely.
+- `worker-mode="inline"` forces blob/inline worker usage.
+- `worker-mode="external"` uses `worker-url` (or the bundle default worker
+  chunk when `worker-url` is omitted).
+
+`file://` pages are best-effort only; for reliable local use, serve your HTML
+over `http://localhost` (for example `python3 -m http.server`).
+
+Camera attributes are optional. `camera-azimuth` and `camera-elevation` are in
+degrees and are converted internally to the runtime camera hash values.
 
 Events emitted by the wrapper:
 

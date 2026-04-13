@@ -1,6 +1,7 @@
 import { unzipSync } from 'fflate'
 import { Elm } from '../src/Main.elm'
 import GeometryWorker from '../geometry-worker.js?worker'
+import geometryWorkerSource from '../geometry-worker.js?raw'
 
 function pathFromBase(relativePath) {
   const rawBase = String(import.meta.env.BASE_URL ?? '/')
@@ -13,11 +14,25 @@ const defaultLdrawBase = pathFromBase('ldraw')
 const defaultFallbackBase = ''
 const defaultMaxRpm = 50
 const defaultModelUrl = pathFromBase('examples/gears.ldr')
+const defaultWorkerMode = 'auto'
+const defaultWorkerUrl = ''
 const allowedExtensions = new Set(['.ldr', '.mpd', '.dat', '.io'])
+const allowedWorkerModes = new Set(['auto', 'inline', 'external', 'off'])
 const GEOMETRY_FLATTEN_CACHE_LIMIT = 8
+const RESIZE_POLL_INTERVAL_MS = 250
 
 function normalizeMode(rawMode) {
   return String(rawMode ?? '').toLowerCase() === 'viewer' ? 'viewer' : 'simulator'
+}
+
+function normalizeWorkerMode(rawMode) {
+  const normalized = String(rawMode ?? '').trim().toLowerCase()
+  return allowedWorkerModes.has(normalized) ? normalized : defaultWorkerMode
+}
+
+function normalizeWorkerUrl(rawUrl) {
+  const normalized = String(rawUrl ?? '').trim()
+  return normalized || defaultWorkerUrl
 }
 
 function hasAllowedExtension(filename) {
@@ -143,6 +158,219 @@ function createFileReader({ reportLoadError, pushFileText }) {
   return { readLdrawFile, loadFromUrl }
 }
 
+function identityTransform() {
+  return {
+    o: [0, 0, 0],
+    x: [1, 0, 0],
+    y: [0, 1, 0],
+    z: [0, 0, 1],
+  }
+}
+
+function add(a, b) {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+function sub(a, b) {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+function scale(v, s) {
+  return [v[0] * s, v[1] * s, v[2] * s]
+}
+
+function cross(a, b) {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ]
+}
+
+function dot(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+function length(v) {
+  return Math.sqrt(dot(v, v))
+}
+
+function normalizeSafe(v) {
+  const len = length(v)
+  if (len < 1e-8) return [0, 1, 0]
+  return [v[0] / len, v[1] / len, v[2] / len]
+}
+
+function applyTransform(t, p) {
+  return add(
+    t.o,
+    add(
+      add(scale(t.x, p[0]), scale(t.y, p[1])),
+      scale(t.z, p[2]),
+    ),
+  )
+}
+
+function applyDirection(t, v) {
+  return add(
+    add(scale(t.x, v[0]), scale(t.y, v[1])),
+    scale(t.z, v[2]),
+  )
+}
+
+function composeTransforms(parent, local) {
+  return {
+    o: applyTransform(parent, local.o),
+    x: applyDirection(parent, local.x),
+    y: applyDirection(parent, local.y),
+    z: applyDirection(parent, local.z),
+  }
+}
+
+function toYUp(p) {
+  return [p[0], -p[1], p[2]]
+}
+
+function faceNormal(p1, p2, p3) {
+  return normalizeSafe(cross(sub(p2, p1), sub(p3, p1)))
+}
+
+function resolveColor(parentColor, lineColor, colorTable) {
+  if (lineColor === 24 || lineColor === -2) {
+    return [0, 0, 0, 1]
+  }
+  const code = (lineColor === 16 || lineColor === -1) ? parentColor : lineColor
+  const mapped = colorTable[String(code)]
+  if (!mapped) return [1, 0, 1, 1]
+  return [mapped.r, mapped.g, mapped.b, mapped.alpha]
+}
+
+function hasBfcCertify(lines) {
+  return lines.some((line) => line.k === 'comment' && line.text.includes('BFC CERTIFY CCW'))
+}
+
+function flattenLines(lines, cache, parentColor, transform, colorTable, acc) {
+  for (const line of lines) {
+    switch (line.k) {
+      case 'subfile': {
+        const loaded = cache[line.file]
+        if (!loaded) break
+        const childColor = (line.color === 16 || line.color === -1) ? parentColor : line.color
+        const childTransform = composeTransforms(transform, line.transform)
+        flattenLines(loaded, cache, childColor, childTransform, colorTable, acc)
+        break
+      }
+      case 'tri': {
+        const p1 = toYUp(applyTransform(transform, line.p1))
+        const p2 = toYUp(applyTransform(transform, line.p2))
+        const p3 = toYUp(applyTransform(transform, line.p3))
+        const normal = faceNormal(p1, p2, p3)
+        const color = resolveColor(parentColor, line.color, colorTable)
+        acc.triangles.push([
+          { position: p1, normal, color },
+          { position: p2, normal, color },
+          { position: p3, normal, color },
+        ])
+        break
+      }
+      case 'quad': {
+        const p1 = toYUp(applyTransform(transform, line.p1))
+        const p2 = toYUp(applyTransform(transform, line.p2))
+        const p3 = toYUp(applyTransform(transform, line.p3))
+        const p4 = toYUp(applyTransform(transform, line.p4))
+        const color = resolveColor(parentColor, line.color, colorTable)
+        const n1 = faceNormal(p1, p2, p3)
+        const n2 = faceNormal(p1, p3, p4)
+        acc.triangles.push([
+          { position: p1, normal: n1, color },
+          { position: p2, normal: n1, color },
+          { position: p3, normal: n1, color },
+        ])
+        acc.triangles.push([
+          { position: p1, normal: n2, color },
+          { position: p3, normal: n2, color },
+          { position: p4, normal: n2, color },
+        ])
+        break
+      }
+      case 'line': {
+        const p1 = toYUp(applyTransform(transform, line.p1))
+        const p2 = toYUp(applyTransform(transform, line.p2))
+        acc.lines.push([p1, p2])
+        break
+      }
+      case 'cond': {
+        const p1 = toYUp(applyTransform(transform, line.p1))
+        const p2 = toYUp(applyTransform(transform, line.p2))
+        const c1 = toYUp(applyTransform(transform, line.c1))
+        const c2 = toYUp(applyTransform(transform, line.c2))
+        acc.conditionalLines.push({ p1, p2, c1, c2 })
+        break
+      }
+      default:
+        break
+    }
+  }
+}
+
+function flattenGeometryPayload(payloadText) {
+  const payload = JSON.parse(String(payloadText ?? '{}'))
+  const lines = payload.lines ?? []
+  const cache = payload.cache ?? {}
+  const parentColor = payload.parentColor ?? 15
+  const colorTable = payload.colorTable ?? {}
+
+  const acc = { triangles: [], lines: [], conditionalLines: [] }
+  flattenLines(lines, cache, parentColor, identityTransform(), colorTable, acc)
+
+  return {
+    ok: true,
+    bfcCertified: hasBfcCertify(lines),
+    triangles: acc.triangles,
+    lines: acc.lines,
+    conditionalLines: acc.conditionalLines,
+  }
+}
+
+function flattenGeometryPayloadSafe(payloadText) {
+  try {
+    return flattenGeometryPayload(payloadText)
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
+function createInlineGeometryWorker() {
+  if (typeof Worker === 'undefined') {
+    throw new Error('Web Worker is not available in this browser')
+  }
+  if (typeof Blob === 'undefined') {
+    throw new Error('Blob is not available in this browser')
+  }
+  if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+    throw new Error('URL.createObjectURL is not available in this browser')
+  }
+
+  const workerBlob = new Blob([geometryWorkerSource], { type: 'text/javascript' })
+  const objectUrl = URL.createObjectURL(workerBlob)
+  const worker = new Worker(objectUrl)
+  return { worker, objectUrl }
+}
+
+function createExternalGeometryWorker(workerUrl) {
+  if (workerUrl) {
+    if (typeof Worker === 'undefined') {
+      throw new Error('Web Worker is not available in this browser')
+    }
+    return { worker: new Worker(workerUrl), objectUrl: null }
+  }
+
+  return { worker: new GeometryWorker(), objectUrl: null }
+}
+
 export function initBricksRuntime(options) {
   const {
     node,
@@ -153,6 +381,9 @@ export function initBricksRuntime(options) {
     defaultModel = defaultModelUrl,
     initialHash = typeof window !== 'undefined' ? window.location.hash ?? '' : '',
     syncUrlHash = true,
+    useWindowResize = true,
+    workerMode = defaultWorkerMode,
+    workerUrl = defaultWorkerUrl,
     runtimeEventHandler = null,
     dragDropTarget = typeof window !== 'undefined' ? window : null,
     suppressGestureTarget = typeof window !== 'undefined' ? window : null,
@@ -175,13 +406,21 @@ export function initBricksRuntime(options) {
       initialHash,
       maxRpm: sanitizedMaxRpm,
       uiMode: normalizeMode(mode),
+      useWindowResize: Boolean(useWindowResize),
     },
   })
 
   const cleanups = []
-  const geometryWorker = new GeometryWorker()
   const geometryFlattenCache = new Map()
+  const requestedWorkerMode = normalizeWorkerMode(workerMode)
+  const configuredWorkerUrl = normalizeWorkerUrl(workerUrl)
+  let activeWorkerMode = 'off'
+  let geometryWorker = null
+  let geometryWorkerObjectUrl = null
   let pendingFlattenKey = null
+  let pendingFlattenPayload = null
+  let lastViewportWidth = null
+  let lastViewportHeight = null
 
   function rememberFlattenResult(cacheKey, resultText) {
     geometryFlattenCache.set(cacheKey, resultText)
@@ -203,10 +442,40 @@ export function initBricksRuntime(options) {
     })
   }
 
+  function emitViewportSize(widthRaw, heightRaw) {
+    if (!app.ports.viewportResized) {
+      return
+    }
+    const width = Math.max(1, Math.round(Number(widthRaw) || 0))
+    const height = Math.max(1, Math.round(Number(heightRaw) || 0))
+    if (width === lastViewportWidth && height === lastViewportHeight) {
+      return
+    }
+    lastViewportWidth = width
+    lastViewportHeight = height
+    app.ports.viewportResized.send({ width, height })
+  }
+
+  function measureAndEmitViewportSize() {
+    const rect = node.getBoundingClientRect?.()
+    if (rect) {
+      emitViewportSize(rect.width, rect.height)
+    }
+  }
+
   function sendRuntimeEvent(eventType, detail = {}) {
     if (typeof runtimeEventHandler === 'function') {
       runtimeEventHandler({ type: eventType, ...detail })
     }
+  }
+
+  function sendRuntimeWarning(code, message, detail = {}) {
+    sendRuntimeEvent('runtime-warning', {
+      code,
+      message,
+      workerMode: activeWorkerMode,
+      ...detail,
+    })
   }
 
   function pushFileText(text) {
@@ -219,6 +488,129 @@ export function initBricksRuntime(options) {
     sendRuntimeEvent('model-error', { message: normalized })
   }
 
+  function terminateGeometryWorker() {
+    if (geometryWorker) {
+      geometryWorker.terminate()
+      geometryWorker = null
+    }
+
+    if (geometryWorkerObjectUrl) {
+      URL.revokeObjectURL(geometryWorkerObjectUrl)
+      geometryWorkerObjectUrl = null
+    }
+  }
+
+  function handleGeometryResult(cacheKey, resultText) {
+    try {
+      const parsed = JSON.parse(resultText)
+      if (parsed.ok) {
+        if (typeof cacheKey === 'string') {
+          rememberFlattenResult(cacheKey, resultText)
+        }
+        app.ports.geometryFlattened.send(resultText)
+      } else {
+        app.ports.geometryFlattenFailed.send(parsed.error ?? 'Geometry worker failed')
+      }
+    } catch {
+      app.ports.geometryFlattenFailed.send('Invalid geometry worker response')
+    }
+  }
+
+  function runGeometryFlattenOnMainThread(payload, cacheKey) {
+    const resultText = JSON.stringify(flattenGeometryPayloadSafe(payload))
+    handleGeometryResult(cacheKey, resultText)
+  }
+
+  function fallbackWorkerToOff(reason, error, rerunPayload, rerunCacheKey) {
+    terminateGeometryWorker()
+    const previousMode = activeWorkerMode
+    activeWorkerMode = 'off'
+    pendingFlattenKey = null
+    pendingFlattenPayload = null
+
+    sendRuntimeWarning(
+      'geometry-worker-fallback',
+      `Geometry worker disabled (${reason}); using main-thread geometry flattening.`,
+      {
+        requestedWorkerMode,
+        previousWorkerMode: previousMode,
+        error: error instanceof Error ? error.message : String(error ?? ''),
+      },
+    )
+
+    if (typeof rerunPayload === 'string') {
+      runGeometryFlattenOnMainThread(rerunPayload, rerunCacheKey)
+    }
+  }
+
+  function attachGeometryWorkerListeners(worker) {
+    addEventListener(worker, 'message', (event) => {
+      const cacheKey = pendingFlattenKey
+      pendingFlattenKey = null
+      pendingFlattenPayload = null
+      handleGeometryResult(cacheKey, String(event.data ?? ''))
+    })
+
+    addEventListener(worker, 'error', (event) => {
+      fallbackWorkerToOff(
+        'worker runtime error',
+        event?.error ?? event?.message ?? event,
+        pendingFlattenPayload,
+        pendingFlattenKey,
+      )
+    })
+  }
+
+  function tryActivateWorker(candidateMode) {
+    try {
+      if (candidateMode === 'inline') {
+        const inline = createInlineGeometryWorker()
+        geometryWorker = inline.worker
+        geometryWorkerObjectUrl = inline.objectUrl
+        activeWorkerMode = 'inline'
+        attachGeometryWorkerListeners(geometryWorker)
+        return true
+      }
+
+      if (candidateMode === 'external') {
+        const external = createExternalGeometryWorker(configuredWorkerUrl)
+        geometryWorker = external.worker
+        geometryWorkerObjectUrl = external.objectUrl
+        activeWorkerMode = 'external'
+        attachGeometryWorkerListeners(geometryWorker)
+        return true
+      }
+    } catch (error) {
+      terminateGeometryWorker()
+      sendRuntimeWarning(
+        'geometry-worker-init-failed',
+        `Failed to initialize ${candidateMode} geometry worker.`,
+        {
+          requestedWorkerMode,
+          attemptedWorkerMode: candidateMode,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      )
+      return false
+    }
+
+    return false
+  }
+
+  if (requestedWorkerMode === 'off') {
+    activeWorkerMode = 'off'
+  } else if (requestedWorkerMode === 'inline') {
+    if (!tryActivateWorker('inline')) {
+      activeWorkerMode = 'off'
+    }
+  } else if (requestedWorkerMode === 'external') {
+    if (!tryActivateWorker('external')) {
+      activeWorkerMode = 'off'
+    }
+  } else if (!tryActivateWorker('inline')) {
+    activeWorkerMode = 'off'
+  }
+
   const { readLdrawFile, loadFromUrl } = createFileReader({ reportLoadError, pushFileText })
 
   function loadFromText(text) {
@@ -229,35 +621,27 @@ export function initBricksRuntime(options) {
     readLdrawFile(file)
   }
 
-  geometryWorker.addEventListener('message', (event) => {
-    const text = String(event.data ?? '')
-    try {
-      const parsed = JSON.parse(text)
-      if (parsed.ok) {
-        if (typeof pendingFlattenKey === 'string') {
-          rememberFlattenResult(pendingFlattenKey, text)
-        }
-        pendingFlattenKey = null
-        app.ports.geometryFlattened.send(text)
-      } else {
-        pendingFlattenKey = null
-        app.ports.geometryFlattenFailed.send(parsed.error ?? 'Geometry worker failed')
-      }
-    } catch {
-      pendingFlattenKey = null
-      app.ports.geometryFlattenFailed.send('Invalid geometry worker response')
-    }
-  })
-
   app.ports.requestGeometryFlatten.subscribe((payload) => {
-    const cacheHit = geometryFlattenCache.get(payload)
+    const payloadText = String(payload ?? '')
+    const cacheHit = geometryFlattenCache.get(payloadText)
     if (cacheHit) {
       app.ports.geometryFlattened.send(cacheHit)
       return
     }
 
-    pendingFlattenKey = payload
-    geometryWorker.postMessage(payload)
+    if (!geometryWorker || activeWorkerMode === 'off') {
+      runGeometryFlattenOnMainThread(payloadText, payloadText)
+      return
+    }
+
+    pendingFlattenKey = payloadText
+    pendingFlattenPayload = payloadText
+
+    try {
+      geometryWorker.postMessage(payloadText)
+    } catch (error) {
+      fallbackWorkerToOff('postMessage failed', error, payloadText, payloadText)
+    }
   })
 
   if (syncUrlHash && typeof window !== 'undefined') {
@@ -335,8 +719,38 @@ export function initBricksRuntime(options) {
     addEventListener(suppressGestureTarget, 'gestureend', suppressGestureZoom, { passive: false })
   }
 
+  const ownerWindow = ownerDocument?.defaultView ?? (typeof window !== 'undefined' ? window : null)
+  let hasResizeObserver = false
+
+  if (typeof ResizeObserver !== 'undefined') {
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries.find((candidate) => candidate.target === node) ?? entries[0]
+      if (!entry) {
+        return
+      }
+      emitViewportSize(entry.contentRect.width, entry.contentRect.height)
+    })
+    resizeObserver.observe(node)
+    cleanups.push(() => resizeObserver.disconnect())
+    hasResizeObserver = true
+  }
+
+  if (ownerWindow) {
+    addEventListener(ownerWindow, 'resize', measureAndEmitViewportSize)
+    addEventListener(ownerWindow, 'orientationchange', measureAndEmitViewportSize)
+  }
+
+  if (!hasResizeObserver && ownerWindow?.setInterval && ownerWindow?.clearInterval) {
+    const resizePollId = ownerWindow.setInterval(measureAndEmitViewportSize, RESIZE_POLL_INTERVAL_MS)
+    cleanups.push(() => {
+      ownerWindow.clearInterval(resizePollId)
+    })
+  }
+
+  measureAndEmitViewportSize()
+
   function destroy() {
-    geometryWorker.terminate()
+    terminateGeometryWorker()
     while (cleanups.length > 0) {
       const cleanup = cleanups.pop()
       cleanup()

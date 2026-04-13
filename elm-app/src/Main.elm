@@ -50,6 +50,7 @@ type alias Flags =
     , initialHash : String
     , maxRpm : Float
     , uiMode : String
+    , useWindowResize : Bool
     }
 
 
@@ -128,6 +129,7 @@ type alias Model =
     , uiMode : UiMode
     , simulationChecked : Bool
     , simulationAvailable : Bool
+    , useWindowResize : Bool
     }
 
 
@@ -247,13 +249,19 @@ init flags =
       , uiMode = uiMode
       , simulationChecked = False
       , simulationAvailable = False
+      , useWindowResize = flags.useWindowResize
       }
     , Cmd.batch <|
-        [ Browser.Dom.getViewport
-            |> Task.perform
-                (\vp -> WindowResize (round vp.viewport.width) (round vp.viewport.height))
-        , Ports.setUrlHash (encodeHashString initialCamera)
-        ]
+        (if flags.useWindowResize then
+            [ Browser.Dom.getViewport
+                |> Task.perform
+                    (\vp -> WindowResize (round vp.viewport.width) (round vp.viewport.height))
+            ]
+
+         else
+            []
+        )
+            ++ [ Ports.setUrlHash (encodeHashString initialCamera) ]
             ++ (if shouldLoadInitialModel then
                     [ fetchTopLevel initialModelUrl ]
 
@@ -2859,7 +2867,12 @@ subscriptions model =
                 (Decode.field "clientY" Decode.float)
             )
         , Browser.Events.onKeyDown (Decode.map KeyPressed (Decode.field "key" Decode.string))
-        , Browser.Events.onResize WindowResize
+        , if model.useWindowResize then
+            Browser.Events.onResize WindowResize
+
+          else
+            Sub.none
+        , Ports.viewportResized (\size -> WindowResize size.width size.height)
         , Ports.fileContentReceived FileContentReceived
         , Ports.fileLoadError FileLoadError
         , Ports.geometryFlattened GeometryFlattened
