@@ -282,7 +282,7 @@
         ? `<${tagName} ${attrs.join(' ')}></${tagName}>`
         : `<${tagName}></${tagName}>`
 
-      return `<script src="${escapeHtml(state.bundleUrl)}"></script>\n\n${elementLine}`
+      return `<script src="${escapeHtml(state.bundleUrl)}"><\/script>\n\n${elementLine}`
     }
 
     function buildPreviewDocument(snippet) {
