@@ -131,6 +131,12 @@ watch: ## Watch Haskell sources and run Vite dev server
 	find src generator brick-frame.cabal -name "*.hs" -o -name "*.cabal" | entr -s 'make generate' &
 	cd elm-app && elm-tailwind-classes gen && vite
 
+.PHONY: watch-docs
+watch-docs: ## Start Vite for web-components docs playground watch mode
+	$(MAKE) generate
+	@echo "Open http://localhost:5173/docs/index.watch.html"
+	cd elm-app && vite
+
 .PHONY: sync-ldraw
 sync-ldraw: ## Sync official LDraw library into local assets + write manifest
 	LDRAW_SYNC_URL="$(LDRAW_SYNC_URL)" \

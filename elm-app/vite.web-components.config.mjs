@@ -14,9 +14,9 @@ export default defineConfig(({ mode }) => {
       emptyOutDir: false,
       lib: {
         entry: 'web-components/index.js',
-        name: 'BricksWebComponents',
+        name: 'BricksViewer',
         formats: ['es', 'iife'],
-        fileName: (format) => `bricks-web-components.${format === 'es' ? 'esm' : 'iife'}.js`,
+        fileName: (format) => `bricks-viewer.${format === 'es' ? 'esm' : 'iife'}.js`,
       },
       rollupOptions: {
         output: {

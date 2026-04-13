@@ -382,6 +382,9 @@ export function initBricksRuntime(options) {
     initialHash = typeof window !== 'undefined' ? window.location.hash ?? '' : '',
     syncUrlHash = true,
     useWindowResize = true,
+    controlsEnabled = false,
+    initialMotorIndex = -1,
+    initialRpm = 0,
     workerMode = defaultWorkerMode,
     workerUrl = defaultWorkerUrl,
     runtimeEventHandler = null,
@@ -396,6 +399,10 @@ export function initBricksRuntime(options) {
 
   const maxRpmRaw = Number(maxRpm)
   const sanitizedMaxRpm = Number.isFinite(maxRpmRaw) && maxRpmRaw >= 1 ? maxRpmRaw : defaultMaxRpm
+  const parsedMotorIndex = Number(initialMotorIndex)
+  const sanitizedMotorIndex = Number.isFinite(parsedMotorIndex) ? Math.max(-1, Math.trunc(parsedMotorIndex)) : -1
+  const parsedInitialRpm = Number(initialRpm)
+  const sanitizedInitialRpm = Number.isFinite(parsedInitialRpm) ? parsedInitialRpm : 0
 
   const app = Elm.Main.init({
     node,
@@ -406,6 +413,9 @@ export function initBricksRuntime(options) {
       initialHash,
       maxRpm: sanitizedMaxRpm,
       uiMode: normalizeMode(mode),
+      controlsEnabled: Boolean(controlsEnabled),
+      initialMotorIndex: sanitizedMotorIndex,
+      initialRpm: sanitizedInitialRpm,
       useWindowResize: Boolean(useWindowResize),
     },
   })

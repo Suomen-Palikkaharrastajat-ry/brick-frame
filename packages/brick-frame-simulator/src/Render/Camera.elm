@@ -105,10 +105,10 @@ onMouseMove x y cam =
                     (y - ly) * 0.005
 
                 newAzimuth =
-                    cam.azimuth + dx
+                    cam.azimuth - dx
 
                 newElevation =
-                    clamp (-pi / 2 + 0.01) (pi / 2 - 0.01) (cam.elevation - dy)
+                    clamp (-pi / 2 + 0.01) (pi / 2 - 0.01) (cam.elevation + dy)
             in
             { cam
                 | azimuth = newAzimuth

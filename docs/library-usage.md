@@ -8,34 +8,38 @@ reference implementation.
 
 ## Web Components distribution
 
-The project also ships a browser-native Web Components bundle with two custom
-elements:
+The project also ships a browser-native Web Components bundle with a custom
+element:
 
-- `<bricks-viewer>`: render model only (no simulation controls)
-- `<bricks-simulator>`: render model + simulation UI
+- `<bricks-viewer>`: render model with optional controller overlay and gear animation support when available
 
 Minimal HTML usage:
 
 ```html
-<script src="https://kehys.palikkaharrastajat.fi/brick-frame.iife.js"></script>
+<script src="https://kehys.palikkaharrastajat.fi/bricks-viewer.iife.js"></script>
 
 <bricks-viewer src="https://kehys.palikkaharrastajat.fi/examples/gears.ldr"></bricks-viewer>
-<bricks-simulator src="https://kehys.palikkaharrastajat.fi/examples/gears.ldr"></bricks-simulator>
 ```
 
 The deployed build is configured with `VITE_LDRAW_BASE=https://kehys.palikkaharrastajat.fi/ldraw/`, so part fetches resolve over HTTPS instead of a filesystem-relative `/ldraw` path.
 
-Both elements accept:
+The viewer element accepts:
 
 - `src` (`.ldr`, `.mpd`, `.dat`, `.io`)
+- `controls` (presence boolean)
 - `ldraw-base`
 - `ldraw-fallback-base`
 - `max-rpm`
+- `motor-index` (advanced)
+- `rpm` (advanced)
 - `worker-mode` (`auto`, `inline`, `external`, `off`)
 - `worker-url` (used when `worker-mode="external"`)
 - `camera-azimuth` (degrees)
 - `camera-elevation` (degrees)
 - `camera-distance` (float)
+- `camera-target-x`
+- `camera-target-y`
+- `camera-target-z`
 
 Runtime methods are also available:
 
@@ -54,8 +58,8 @@ Web Components are designed to work when your site origin differs from the
 bundle origin:
 
 ```html
-<script src="https://kehys.palikkaharrastajat.fi/brick-frame.iife.js"></script>
-<bricks-simulator src="https://kehys.palikkaharrastajat.fi/examples/gears.ldr"></bricks-simulator>
+<script src="https://kehys.palikkaharrastajat.fi/bricks-viewer.iife.js"></script>
+<bricks-viewer src="https://kehys.palikkaharrastajat.fi/examples/gears.ldr"></bricks-viewer>
 ```
 
 By default (`worker-mode="auto"`), geometry flattening uses an inline worker
@@ -90,6 +94,7 @@ Events emitted by the wrapper:
 - `play-state-changed`
 - `simulation-ready`
 - `simulation-unavailable`
+- `camera-changed`
 
 ## Setup
 

@@ -9,6 +9,7 @@ import Browser.Dom
 import Browser.Events
 import Data
 import Dict exposing (Dict)
+import FeatherIcons
 import Gear.Animate as Animate exposing (MotorState)
 import Gear.Components as Components
 import Gear.Detect as Detect
@@ -50,6 +51,9 @@ type alias Flags =
     , initialHash : String
     , maxRpm : Float
     , uiMode : String
+    , controlsEnabled : Bool
+    , initialMotorIndex : Int
+    , initialRpm : Float
     , useWindowResize : Bool
     }
 
@@ -97,6 +101,11 @@ type TouchGesture
     | PinchGesture Int Int Float Float Float
 
 
+type HeldControl
+    = NoHeldControl
+    | HoldRotate Float Float
+
+
 type alias Model =
     { camera : Camera
     , width : Int
@@ -129,6 +138,12 @@ type alias Model =
     , uiMode : UiMode
     , simulationChecked : Bool
     , simulationAvailable : Bool
+    , loadingProgressPct : Float
+    , loadingProgressTick : Maybe Time.Posix
+    , viewerControlsEnabled : Bool
+    , requestedMotorIndex : Maybe Int
+    , heldControl : HeldControl
+    , heldControlTick : Maybe Time.Posix
     , useWindowResize : Bool
     }
 
@@ -194,10 +209,21 @@ init flags =
                 | azimuth = Maybe.withDefault baseCamera.azimuth initialHash.azimuth
                 , elevation = Maybe.withDefault baseCamera.elevation initialHash.elevation
                 , distance = Maybe.withDefault baseCamera.distance initialHash.distance
+                , target =
+                    Vec3.vec3
+                        (Maybe.withDefault (Vec3.getX baseCamera.target) initialHash.targetX)
+                        (Maybe.withDefault (Vec3.getY baseCamera.target) initialHash.targetY)
+                        (Maybe.withDefault (Vec3.getZ baseCamera.target) initialHash.targetZ)
             }
 
         maxRpmValue =
             max 1 flags.maxRpm
+
+        initialMotorRpm =
+            clamp -maxRpmValue maxRpmValue flags.initialRpm
+
+        defaultMotor =
+            Animate.defaultMotor
 
         initialCameraMode =
             if hasExplicitHashCamera initialHash then
@@ -229,12 +255,12 @@ init flags =
       , components = []
       , componentMeshes = []
       , componentRenders = []
-      , motor = Animate.defaultMotor
+      , motor = { defaultMotor | speedRadPerSec = initialMotorRpm * 2 * pi / 60 }
       , playback =
             { running = False
             , currentTime = 0.0
             , motorGearId = Nothing
-            , motorSpeedRadPerSec = 1.0
+            , motorSpeedRadPerSec = initialMotorRpm * 2 * pi / 60
             }
       , maxRpm = maxRpmValue
       , gearAngles = Dict.empty
@@ -249,6 +275,17 @@ init flags =
       , uiMode = uiMode
       , simulationChecked = False
       , simulationAvailable = False
+      , loadingProgressPct = 0.0
+      , loadingProgressTick = Nothing
+      , viewerControlsEnabled = flags.controlsEnabled
+      , requestedMotorIndex =
+            if flags.initialMotorIndex < 0 then
+                Nothing
+
+            else
+                Just flags.initialMotorIndex
+      , heldControl = NoHeldControl
+      , heldControlTick = Nothing
       , useWindowResize = flags.useWindowResize
       }
     , Cmd.batch <|
@@ -337,6 +374,9 @@ type Msg
     | ToggleMotor
     | SetMotorGear GearId
     | SetMotorSpeed Float
+    | RotateCameraBy Float Float
+    | StartHoldRotate Float Float
+    | EndHoldRotate
     | ToggleControlsPanel
     | KeyPressed String
 
@@ -369,6 +409,38 @@ playStateEventCmd running currentTime =
         [ ( "running", Encode.bool running )
         , ( "time", Encode.float currentTime )
         ]
+
+
+cameraChangedEventCmd : Camera -> Cmd Msg
+cameraChangedEventCmd camera =
+    runtimeEventCmd "camera-changed"
+        [ ( "azimuth", Encode.float camera.azimuth )
+        , ( "elevation", Encode.float camera.elevation )
+        , ( "azimuthDeg", Encode.float (camera.azimuth * 180 / pi) )
+        , ( "elevationDeg", Encode.float (camera.elevation * 180 / pi) )
+        , ( "distance", Encode.float camera.distance )
+        , ( "targetX", Encode.float (Vec3.getX camera.target) )
+        , ( "targetY", Encode.float (Vec3.getY camera.target) )
+        , ( "targetZ", Encode.float (Vec3.getZ camera.target) )
+        ]
+
+
+cameraChangedIfNeededCmd : Camera -> Camera -> Cmd Msg
+cameraChangedIfNeededCmd before after =
+    if before.azimuth /= after.azimuth || before.elevation /= after.elevation || before.distance /= after.distance || Vec3.getX before.target /= Vec3.getX after.target || Vec3.getY before.target /= Vec3.getY after.target || Vec3.getZ before.target /= Vec3.getZ after.target then
+        cameraChangedEventCmd after
+
+    else
+        Cmd.none
+
+
+partsProgressPct : Int -> Int -> Float
+partsProgressPct loaded total =
+    if total <= 0 then
+        90
+
+    else
+        clamp 0 90 (toFloat loaded / toFloat total * 90)
 
 
 
@@ -422,13 +494,16 @@ update msg model =
 
                         else
                             Camera.onMouseMove x y model.camera
+
+                    nextModel =
+                        { model
+                            | camera = nextCamera
+                            , dragTravel = model.dragTravel + stepDist
+                            , cameraMode = CameraManual
+                        }
                 in
-                ( { model
-                    | camera = nextCamera
-                    , dragTravel = model.dragTravel + stepDist
-                    , cameraMode = CameraManual
-                  }
-                , Cmd.none
+                ( nextModel
+                , cameraChangedIfNeededCmd model.camera nextModel.camera
                 )
 
         MouseUp x y ->
@@ -469,7 +544,12 @@ update msg model =
                         , cameraMode = CameraManual
                     }
             in
-            ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
+            ( nextModel
+            , Cmd.batch
+                [ Ports.setUrlHash (encodeHash nextModel)
+                , cameraChangedIfNeededCmd model.camera nextModel.camera
+                ]
+            )
 
         TouchStart touches ->
             let
@@ -479,7 +559,12 @@ update msg model =
                 nextModel =
                     beginTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
             in
-            ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
+            ( nextModel
+            , Cmd.batch
+                [ Ports.setUrlHash (encodeHash nextModel)
+                , cameraChangedIfNeededCmd model.camera nextModel.camera
+                ]
+            )
 
         TouchMove touches ->
             let
@@ -489,7 +574,12 @@ update msg model =
                 nextModel =
                     advanceTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
             in
-            ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
+            ( nextModel
+            , Cmd.batch
+                [ Ports.setUrlHash (encodeHash nextModel)
+                , cameraChangedIfNeededCmd model.camera nextModel.camera
+                ]
+            )
 
         TouchEnd touches ->
             let
@@ -499,7 +589,12 @@ update msg model =
                 nextModel =
                     endTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
             in
-            ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
+            ( nextModel
+            , Cmd.batch
+                [ Ports.setUrlHash (encodeHash nextModel)
+                , cameraChangedIfNeededCmd model.camera nextModel.camera
+                ]
+            )
 
         PointerTouchStart touchPoint ->
             let
@@ -509,7 +604,12 @@ update msg model =
                 nextModel =
                     beginTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
             in
-            ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
+            ( nextModel
+            , Cmd.batch
+                [ Ports.setUrlHash (encodeHash nextModel)
+                , cameraChangedIfNeededCmd model.camera nextModel.camera
+                ]
+            )
 
         PointerTouchMove touchPoint ->
             if Dict.member touchPoint.id model.activeTouches then
@@ -520,7 +620,12 @@ update msg model =
                     nextModel =
                         advanceTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
                 in
-                ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
+                ( nextModel
+                , Cmd.batch
+                    [ Ports.setUrlHash (encodeHash nextModel)
+                    , cameraChangedIfNeededCmd model.camera nextModel.camera
+                    ]
+                )
 
             else
                 ( model, Cmd.none )
@@ -533,7 +638,12 @@ update msg model =
                 nextModel =
                     endTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
             in
-            ( nextModel, Ports.setUrlHash (encodeHash nextModel) )
+            ( nextModel
+            , Cmd.batch
+                [ Ports.setUrlHash (encodeHash nextModel)
+                , cameraChangedIfNeededCmd model.camera nextModel.camera
+                ]
+            )
 
         RequestFileUpload ->
             ( model, Ports.requestFileUpload () )
@@ -542,7 +652,7 @@ update msg model =
             handleTopLevelText text model
 
         FileLoadError err ->
-            ( { model | errorMsg = Just err }, modelErrorEventCmd err )
+            ( { model | errorMsg = Just err, loadingProgressPct = 0, loadingProgressTick = Nothing }, modelErrorEventCmd err )
 
         GeometryFlattened payload ->
             case Decode.decodeString flattenResultDecoder payload of
@@ -557,7 +667,12 @@ update msg model =
                                 result.bfcCertified
 
                         updatedModel =
-                            { model | scene = Just scene, loadPhase = Ready }
+                            { model
+                                | scene = Just scene
+                                , loadPhase = Ready
+                                , loadingProgressPct = 100
+                                , loadingProgressTick = Nothing
+                            }
                     in
                     ( updatedModel, modelLoadedEventCmd updatedModel )
 
@@ -596,6 +711,8 @@ update msg model =
             ( { model
                 | errorMsg = Just message
                 , loadPhase = Idle
+                , loadingProgressPct = 0
+                , loadingProgressTick = Nothing
               }
             , modelErrorEventCmd message
             )
@@ -609,6 +726,8 @@ update msg model =
                 ( { model
                     | errorMsg = Just message
                     , loadPhase = Idle
+                    , loadingProgressPct = 0
+                    , loadingProgressTick = Nothing
                   }
                 , modelErrorEventCmd message
                 )
@@ -620,10 +739,38 @@ update msg model =
             handlePartResult name result model
 
         AnimationFrame now ->
-            if model.playback.running then
+            let
+                ( progressModel, progressCmd ) =
+                    if model.loadPhase == FlatteningGeometry then
+                        let
+                            dtSeconds =
+                                case model.loadingProgressTick of
+                                    Just prev ->
+                                        max 0 (toFloat (Time.posixToMillis now - Time.posixToMillis prev) / 1000.0)
+
+                                    Nothing ->
+                                        0.016
+
+                            nextPct =
+                                min 99.5 (max 90 model.loadingProgressPct + (dtSeconds * 4))
+                        in
+                        ( { model
+                            | loadingProgressPct = nextPct
+                            , loadingProgressTick = Just now
+                          }
+                        , Cmd.none
+                        )
+
+                    else
+                        ( { model | loadingProgressTick = Nothing }, Cmd.none )
+
+                ( heldModel, heldCmd ) =
+                    applyHeldControl now progressModel
+            in
+            if heldModel.playback.running then
                 let
                     dtSeconds =
-                        case model.lastFrameTime of
+                        case heldModel.lastFrameTime of
                             Just prev ->
                                 toFloat (Time.posixToMillis now - Time.posixToMillis prev) / 1000.0
 
@@ -631,20 +778,20 @@ update msg model =
                                 0.0
 
                     newTime =
-                        model.playback.currentTime + dtSeconds
+                        heldModel.playback.currentTime + dtSeconds
 
                     newAngles =
-                        case model.gearGraph of
+                        case heldModel.gearGraph of
                             Just graph ->
-                                Animate.gearAngles model.motor graph newTime
+                                Animate.gearAngles heldModel.motor graph newTime
 
                             Nothing ->
                                 Dict.empty
 
                     playbackState =
-                        model.playback
+                        heldModel.playback
                 in
-                ( { model
+                ( { heldModel
                     | playback =
                         { playbackState
                             | currentTime = newTime
@@ -652,11 +799,11 @@ update msg model =
                     , gearAngles = newAngles
                     , lastFrameTime = Just now
                   }
-                , Cmd.none
+                , Cmd.batch [ progressCmd, heldCmd ]
                 )
 
             else
-                ( { model | lastFrameTime = Nothing }, Cmd.none )
+                ( { heldModel | lastFrameTime = Nothing }, Cmd.batch [ progressCmd, heldCmd ] )
 
         Play ->
             let
@@ -770,6 +917,43 @@ update msg model =
             , Cmd.none
             )
 
+        RotateCameraBy azimuthDelta elevationDelta ->
+            let
+                baseCamera =
+                    model.camera
+
+                nextCamera =
+                    { baseCamera
+                        | azimuth = baseCamera.azimuth + azimuthDelta
+                        , elevation = clamp (-pi / 2 + 0.01) (pi / 2 - 0.01) (baseCamera.elevation + elevationDelta)
+                    }
+
+                nextModel =
+                    { model | camera = nextCamera, cameraMode = CameraManual }
+            in
+            ( nextModel
+            , Cmd.batch
+                [ Ports.setUrlHash (encodeHash nextModel)
+                , cameraChangedIfNeededCmd model.camera nextModel.camera
+                ]
+            )
+
+        StartHoldRotate azimuthStep elevationStep ->
+            ( { model
+                | heldControl = HoldRotate azimuthStep elevationStep
+                , heldControlTick = Nothing
+              }
+            , Cmd.none
+            )
+
+        EndHoldRotate ->
+            ( { model
+                | heldControl = NoHeldControl
+                , heldControlTick = Nothing
+              }
+            , Cmd.none
+            )
+
         ToggleControlsPanel ->
             ( { model | controlsCollapsed = not model.controlsCollapsed }, Cmd.none )
 
@@ -783,6 +967,55 @@ update msg model =
 
                 _ ->
                     ( model, Cmd.none )
+
+
+applyHeldControl : Time.Posix -> Model -> ( Model, Cmd Msg )
+applyHeldControl now model =
+    case model.heldControl of
+        HoldRotate azimuthStep elevationStep ->
+            let
+                dtSeconds =
+                    case model.heldControlTick of
+                        Just prev ->
+                            max 0 (toFloat (Time.posixToMillis now - Time.posixToMillis prev) / 1000.0)
+
+                        Nothing ->
+                            0.016
+
+                speedFactor =
+                    6.0
+            in
+            if dtSeconds <= 0 then
+                ( { model | heldControlTick = Just now }, Cmd.none )
+
+            else
+                let
+                    baseCamera =
+                        model.camera
+
+                    nextCamera =
+                        { baseCamera
+                            | azimuth = baseCamera.azimuth + (azimuthStep * speedFactor * dtSeconds)
+                            , elevation =
+                                clamp (-pi / 2 + 0.01) (pi / 2 - 0.01) (baseCamera.elevation + (elevationStep * speedFactor * dtSeconds))
+                        }
+
+                    nextModel =
+                        { model
+                            | camera = nextCamera
+                            , cameraMode = CameraManual
+                            , heldControlTick = Just now
+                        }
+                in
+                ( nextModel
+                , Cmd.batch
+                    [ Ports.setUrlHash (encodeHash nextModel)
+                    , cameraChangedIfNeededCmd model.camera nextModel.camera
+                    ]
+                )
+
+        NoHeldControl ->
+            ( { model | heldControlTick = Nothing }, Cmd.none )
 
 
 handlePartResult : String -> Result Http.Error String -> Model -> ( Model, Cmd Msg )
@@ -831,6 +1064,7 @@ handlePartResult name result model =
                     | partCache = cacheWithLoading
                     , partsLoaded = newLoaded
                     , partsTotal = newTotal
+                    , loadingProgressPct = partsProgressPct newLoaded newTotal
                 }
         in
         if List.isEmpty allPending && not (hasLoadingParts updatedModel.partCache) then
@@ -876,6 +1110,10 @@ resetForLoad url m =
         , mousePanDragging = False
         , simulationChecked = False
         , simulationAvailable = False
+        , loadingProgressPct = 0.0
+        , loadingProgressTick = Nothing
+        , heldControl = NoHeldControl
+        , heldControlTick = Nothing
     }
 
 
@@ -1230,6 +1468,10 @@ handleTopLevelText text model =
                 , lastFrameTime = Nothing
                 , simulationChecked = False
                 , simulationAvailable = False
+                , loadingProgressPct = partsProgressPct 0 (List.length pending)
+                , loadingProgressTick = Nothing
+                , heldControl = NoHeldControl
+                , heldControlTick = Nothing
             }
     in
     if List.isEmpty pending then
@@ -1251,155 +1493,139 @@ finishLoading model =
 
                 CameraManual ->
                     model.camera
+
+        gearInstances =
+            Detect.extractGears Data.gearParts model.topLevelLines model.partCache
+
+        components =
+            topLevelComponents model.topLevelLines
+
+        drivenAxles =
+            buildDrivenAxles model.partCache components gearInstances
+
+        coaxialGearByLine =
+            List.map (\line -> topLevelCoaxialGear model.partCache drivenAxles line gearInstances) model.topLevelLines
+
+        nonGearTopLevelLines =
+            List.map2 Tuple.pair model.topLevelLines coaxialGearByLine
+                |> List.filter
+                    (\( line, coaxial ) ->
+                        not (isTopLevelGearRef line)
+                            && not (isTopLevelComponentRef line)
+                            && coaxial
+                            == Nothing
+                    )
+                |> List.map Tuple.first
+
+        coaxialPartData =
+            List.map2 Tuple.pair model.topLevelLines coaxialGearByLine
+                |> List.filterMap
+                    (\( line, coaxial ) ->
+                        case ( line, coaxial ) of
+                            ( SubFileRef ref, Just gearId ) ->
+                                if not (isTopLevelGearRef line) && not (isTopLevelComponentRef line) then
+                                    Just
+                                        { file = ref.file
+                                        , color = resolveRootColor ref.color
+                                        , transform = ref.transform
+                                        , drivingGearId = gearId
+                                        }
+
+                                else
+                                    Nothing
+
+                            _ ->
+                                Nothing
+                    )
+
+        gearMeshes =
+            buildGearMeshes model.partCache gearInstances
+
+        graph =
+            Detect.buildGearGraph gearInstances
+
+        firstGearId =
+            List.head gearInstances |> Maybe.map .id
+
+        selectedMotorGearId =
+            case model.requestedMotorIndex of
+                Just idx ->
+                    case gearInstances |> List.drop idx |> List.head |> Maybe.map .id of
+                        Just gid ->
+                            Just gid
+
+                        Nothing ->
+                            firstGearId
+
+                Nothing ->
+                    firstGearId
+
+        playbackState =
+            model.playback
+
+        baseMotor =
+            model.motor
+
+        motor =
+            { baseMotor
+                | drivingGearId = selectedMotorGearId
+                , running = False
+            }
+
+        startTime =
+            max 0 model.playback.currentTime
+
+        initAngles =
+            Animate.gearAngles motor graph startTime
+
+        componentRenders =
+            buildComponentRenders model.partCache components gearInstances
+
+        componentMeshes =
+            buildComponentMeshRenders model.partCache components gearInstances
+                ++ buildCoaxialMeshRenders model.partCache gearInstances coaxialPartData
+
+        simulationAvailable =
+            not (List.isEmpty gearInstances)
+
+        simulationEvent =
+            if simulationAvailable then
+                runtimeEventCmd "simulation-ready"
+                    [ ( "gearCount", Encode.int (List.length gearInstances) ) ]
+
+            else
+                runtimeEventCmd "simulation-unavailable"
+                    [ ( "reason", Encode.string "No supported gear train detected" ) ]
     in
-    case model.uiMode of
-        ViewerMode ->
-            ( { model
-                | camera = nextCamera
-                , scene = Nothing
-                , loadPhase = FlatteningGeometry
-                , gearGraph = Nothing
-                , gearMeshes = Dict.empty
-                , components = []
-                , componentMeshes = []
-                , componentRenders = []
-                , motor = Animate.defaultMotor
-                , playback =
-                    { running = False
-                    , currentTime = 0.0
-                    , motorGearId = Nothing
-                    , motorSpeedRadPerSec = 1.0
-                    }
-                , gearAngles = Dict.empty
-                , simulationChecked = True
-                , simulationAvailable = False
-              }
-            , requestGeometryFlatten model.topLevelLines model.partCache
-            )
-
-        SimulatorMode ->
-            let
-                gearInstances =
-                    Detect.extractGears Data.gearParts model.topLevelLines model.partCache
-
-                components =
-                    topLevelComponents model.topLevelLines
-
-                drivenAxles =
-                    buildDrivenAxles model.partCache components gearInstances
-
-                -- For each top-level line, compute the gear it co-rotates with (if any).
-                -- Used to both exclude those lines from the static scene and build
-                -- rotating meshes for them.
-                coaxialGearByLine =
-                    List.map (\line -> topLevelCoaxialGear model.partCache drivenAxles line gearInstances) model.topLevelLines
-
-                -- Lines that belong to the static (non-rotating) scene: drop gears,
-                -- known components, and co-axial parts that will get their own
-                -- rotating meshes.
-                nonGearTopLevelLines =
-                    List.map2 Tuple.pair model.topLevelLines coaxialGearByLine
-                        |> List.filter
-                            (\( line, coaxial ) ->
-                                not (isTopLevelGearRef line)
-                                    && not (isTopLevelComponentRef line)
-                                    && coaxial
-                                    == Nothing
-                            )
-                        |> List.map Tuple.first
-
-                -- Non-gear, non-component top-level parts that share an axle with a
-                -- gear and should rotate with it.
-                coaxialPartData =
-                    List.map2 Tuple.pair model.topLevelLines coaxialGearByLine
-                        |> List.filterMap
-                            (\( line, coaxial ) ->
-                                case ( line, coaxial ) of
-                                    ( SubFileRef ref, Just gearId ) ->
-                                        if not (isTopLevelGearRef line) && not (isTopLevelComponentRef line) then
-                                            Just
-                                                { file = ref.file
-                                                , color = resolveRootColor ref.color
-                                                , transform = ref.transform
-                                                , drivingGearId = gearId
-                                                }
-
-                                        else
-                                            Nothing
-
-                                    _ ->
-                                        Nothing
-                            )
-
-                gearMeshes =
-                    buildGearMeshes model.partCache gearInstances
-
-                graph =
-                    Detect.buildGearGraph gearInstances
-
-                firstGearId =
-                    List.head gearInstances |> Maybe.map .id
-
-                defaultMotor =
-                    Animate.defaultMotor
-
-                motor =
-                    { defaultMotor | drivingGearId = firstGearId }
-
-                startTime =
-                    max 0 model.playback.currentTime
-
-                initAngles =
-                    Animate.gearAngles motor graph startTime
-
-                componentRenders =
-                    buildComponentRenders model.partCache components gearInstances
-
-                componentMeshes =
-                    buildComponentMeshRenders model.partCache components gearInstances
-                        ++ buildCoaxialMeshRenders model.partCache gearInstances coaxialPartData
-
-                playbackState =
-                    model.playback
-
-                simulationAvailable =
-                    not (List.isEmpty gearInstances)
-
-                simulationEvent =
-                    if simulationAvailable then
-                        runtimeEventCmd "simulation-ready"
-                            [ ( "gearCount", Encode.int (List.length gearInstances) ) ]
-
-                    else
-                        runtimeEventCmd "simulation-unavailable"
-                            [ ( "reason", Encode.string "No supported gear train detected" ) ]
-            in
-            ( { model
-                | camera = nextCamera
-                , scene = Nothing
-                , loadPhase = FlatteningGeometry
-                , gearGraph = Just graph
-                , gearMeshes = gearMeshes
-                , components = components
-                , componentMeshes = componentMeshes
-                , componentRenders = componentRenders
-                , motor = motor
-                , playback =
-                    { playbackState
-                        | running = False
-                        , currentTime = startTime
-                        , motorGearId = firstGearId
-                        , motorSpeedRadPerSec = motor.speedRadPerSec
-                    }
-                , gearAngles = initAngles
-                , simulationChecked = True
-                , simulationAvailable = simulationAvailable
-              }
-            , Cmd.batch
-                [ requestGeometryFlatten nonGearTopLevelLines model.partCache
-                , simulationEvent
-                ]
-            )
+    ( { model
+        | camera = nextCamera
+        , scene = Nothing
+        , loadPhase = FlatteningGeometry
+        , gearGraph = Just graph
+        , gearMeshes = gearMeshes
+        , components = components
+        , componentMeshes = componentMeshes
+        , componentRenders = componentRenders
+        , motor = motor
+        , playback =
+            { playbackState
+                | running = False
+                , currentTime = startTime
+                , motorGearId = selectedMotorGearId
+                , motorSpeedRadPerSec = motor.speedRadPerSec
+            }
+        , gearAngles = initAngles
+        , simulationChecked = True
+        , simulationAvailable = simulationAvailable
+        , loadingProgressPct = 90
+        , loadingProgressTick = Nothing
+      }
+    , Cmd.batch
+        [ requestGeometryFlatten nonGearTopLevelLines model.partCache
+        , simulationEvent
+        , cameraChangedIfNeededCmd model.camera nextCamera
+        ]
+    )
 
 
 fetchPending : ResolverConfig -> List String -> Cmd Msg
@@ -1428,12 +1654,7 @@ buildSceneFallback : Model -> Model
 buildSceneFallback model =
     let
         staticLines =
-            case model.uiMode of
-                ViewerMode ->
-                    model.topLevelLines
-
-                SimulatorMode ->
-                    List.filter (not << isTopLevelGearRef) model.topLevelLines
+            List.filter (not << isTopLevelGearRef) model.topLevelLines
 
         geom =
             Geometry.flatten staticLines model.partCache 15 Mat4.identity
@@ -1446,7 +1667,12 @@ buildSceneFallback model =
                 }
                 geom.bfcCertified
     in
-    { model | scene = Just scene, loadPhase = Ready }
+    { model
+        | scene = Just scene
+        , loadPhase = Ready
+        , loadingProgressPct = 100
+        , loadingProgressTick = Nothing
+    }
 
 
 deduplicate : List String -> List String
@@ -3063,7 +3289,11 @@ viewOverlay model =
         modeOverlays =
             case model.uiMode of
                 ViewerMode ->
-                    []
+                    if model.viewerControlsEnabled then
+                        [ viewViewerControls model ]
+
+                    else
+                        []
 
                 SimulatorMode ->
                     [ viewDebug model
@@ -3475,6 +3705,141 @@ onTouchTap msg =
     Html.Events.preventDefaultOn "touchstart" (Decode.succeed ( msg, True ))
 
 
+viewViewerControls : Model -> Html Msg
+viewViewerControls model =
+    let
+        step =
+            0.08
+    in
+    div
+        [ Attr.style "position" "absolute"
+        , Attr.style "right" "12px"
+        , Attr.style "bottom" "12px"
+        , Attr.style "display" "grid"
+        , Attr.style "grid-template-columns" "repeat(3, 36px)"
+        , Attr.style "grid-template-rows" "repeat(3, 32px)"
+        , Attr.style "gap" "4px"
+        , Attr.style "pointer-events" "auto"
+        , Attr.style "touch-action" "none"
+        , Attr.style "padding" "8px"
+        , Attr.style "background" Theme.panelBackground
+        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "border-radius" "8px"
+        , Attr.style "box-shadow" "0 10px 32px color-mix(in srgb, var(--color-brand) 8%, transparent)"
+        ]
+        [ div [] []
+        , viewerRotateButton (featherIcon "chevron-up") (StartHoldRotate 0 -step)
+        , div [] []
+        , viewerRotateButton (featherIcon "chevron-left") (StartHoldRotate step 0)
+        , if model.simulationAvailable then
+            viewerCenterPlayButton model
+
+          else
+            div [] []
+        , viewerRotateButton (featherIcon "chevron-right") (StartHoldRotate -step 0)
+        , div [] []
+        , viewerRotateButton (featherIcon "chevron-down") (StartHoldRotate 0 step)
+        , div [] []
+        ]
+
+
+viewerRotateButton : Html Msg -> Msg -> Html Msg
+viewerRotateButton icon msg =
+    button
+        [ Html.Events.on "pointerdown" (Decode.succeed msg)
+        , Html.Events.on "pointerup" (Decode.succeed EndHoldRotate)
+        , Html.Events.on "pointercancel" (Decode.succeed EndHoldRotate)
+        , Html.Events.on "pointerleave" (Decode.succeed EndHoldRotate)
+        , Html.Events.on "mouseup" (Decode.succeed EndHoldRotate)
+        , Html.Events.preventDefaultOn "touchstart" (Decode.succeed ( msg, True ))
+        , Html.Events.preventDefaultOn "touchend" (Decode.succeed ( EndHoldRotate, True ))
+        , Html.Events.preventDefaultOn "touchcancel" (Decode.succeed ( EndHoldRotate, True ))
+        , Attr.style "width" "36px"
+        , Attr.style "height" "32px"
+        , Attr.style "padding" "0"
+        , Attr.style "background" Theme.panelSubtleBackground
+        , Attr.style "color" Theme.textPrimary
+        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "border-radius" "4px"
+        , Attr.style "cursor" "pointer"
+        , Attr.style "font-family" "monospace"
+        , Attr.style "font-size" "12px"
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "center"
+        ]
+        [ icon ]
+
+
+viewerCenterPlayButton : Model -> Html Msg
+viewerCenterPlayButton model =
+    button
+        [ Html.Events.onClick ToggleMotor
+        , onTouchTap ToggleMotor
+        , Attr.style "width" "36px"
+        , Attr.style "height" "32px"
+        , Attr.style "padding" "0"
+        , Attr.style "background"
+            (if model.playback.running then
+                Theme.brandYellow
+
+             else
+                Theme.panelSubtleBackground
+            )
+        , Attr.style "color"
+            (if model.playback.running then
+                Theme.brand
+
+             else
+                Theme.textPrimary
+            )
+        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "border-radius" "4px"
+        , Attr.style "cursor" "pointer"
+        , Attr.style "font-family" "monospace"
+        , Attr.style "font-size" "12px"
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "center"
+        ]
+        [ featherIcon
+            (if model.playback.running then
+                "pause"
+
+             else
+                "play"
+            )
+        ]
+
+
+featherIcon : String -> Html Msg
+featherIcon name =
+    let
+        icon =
+            case name of
+                "chevron-up" ->
+                    FeatherIcons.chevronUp
+
+                "chevron-down" ->
+                    FeatherIcons.chevronDown
+
+                "chevron-left" ->
+                    FeatherIcons.chevronLeft
+
+                "chevron-right" ->
+                    FeatherIcons.chevronRight
+
+                "pause" ->
+                    FeatherIcons.pause
+
+                _ ->
+                    FeatherIcons.play
+    in
+    icon
+        |> FeatherIcons.withSize 14
+        |> FeatherIcons.toHtml [ Attr.attribute "aria-hidden" "true" ]
+
+
 viewToolbar : Model -> Html Msg
 viewToolbar _ =
     div
@@ -3540,24 +3905,18 @@ viewStatus model =
                     viewLoadingBox "Fetching model…" Nothing
 
                 ResolvingParts ->
-                    let
-                        pct =
-                            if model.partsTotal == 0 then
-                                0
-
-                            else
-                                round (toFloat model.partsLoaded / toFloat model.partsTotal * 100)
-                    in
                     viewLoadingBox
-                        ("Loading parts… "
+                        ("Preparing model… "
                             ++ String.fromInt model.partsLoaded
                             ++ " / "
                             ++ String.fromInt model.partsTotal
                         )
-                        (Just pct)
+                        (Just (round model.loadingProgressPct))
 
                 FlatteningGeometry ->
-                    viewLoadingBox "Flattening geometry…" Nothing
+                    viewLoadingBox
+                        "Preparing model… finalizing geometry"
+                        (Just (round model.loadingProgressPct))
 
 
 viewLoadingBox : String -> Maybe Int -> Html Msg
@@ -3633,6 +3992,9 @@ type alias HashState =
     { azimuth : Maybe Float
     , elevation : Maybe Float
     , distance : Maybe Float
+    , targetX : Maybe Float
+    , targetY : Maybe Float
+    , targetZ : Maybe Float
     }
 
 
@@ -3667,6 +4029,9 @@ decodeHash rawHash =
     { azimuth = getFloat "az"
     , elevation = getFloat "el"
     , distance = getFloat "d"
+    , targetX = getFloat "tx"
+    , targetY = getFloat "ty"
+    , targetZ = getFloat "tz"
     }
 
 
@@ -3677,6 +4042,12 @@ hasExplicitHashCamera state =
         || state.elevation
         /= Nothing
         || state.distance
+        /= Nothing
+        || state.targetX
+        /= Nothing
+        || state.targetY
+        /= Nothing
+        || state.targetZ
         /= Nothing
 
 
@@ -3693,6 +4064,12 @@ encodeHashString camera =
         ++ String.fromFloat camera.elevation
         ++ "&d="
         ++ String.fromFloat camera.distance
+        ++ "&tx="
+        ++ String.fromFloat (Vec3.getX camera.target)
+        ++ "&ty="
+        ++ String.fromFloat (Vec3.getY camera.target)
+        ++ "&tz="
+        ++ String.fromFloat (Vec3.getZ camera.target)
 
 
 {-| Wrap angle to [−180, 180) degrees for display.

@@ -43,14 +43,20 @@ class BaseBricksElement extends HTMLElement {
   static get observedAttributes() {
     return [
       'src',
+      'controls',
       'ldraw-base',
       'ldraw-fallback-base',
       'max-rpm',
+      'motor-index',
+      'rpm',
       'worker-mode',
       'worker-url',
       'camera-azimuth',
       'camera-elevation',
       'camera-distance',
+      'camera-target-x',
+      'camera-target-y',
+      'camera-target-z',
     ]
   }
 
@@ -72,10 +78,13 @@ class BaseBricksElement extends HTMLElement {
     this.runtime = initBricksRuntime({
       node: this.mount,
       mode: this.mode,
-      defaultModel: this.getAttribute('src') ?? '',
+      defaultModel: this.getAttribute('src') ?? undefined,
+      controlsEnabled: this.hasAttribute('controls'),
       ldrawBase: this.getAttribute('ldraw-base') ?? undefined,
       ldrawFallbackBase: this.getAttribute('ldraw-fallback-base') ?? undefined,
       maxRpm: this.getAttribute('max-rpm') ?? undefined,
+      initialMotorIndex: this.getAttribute('motor-index') ?? undefined,
+      initialRpm: this.getAttribute('rpm') ?? undefined,
       workerMode: this.getAttribute('worker-mode') ?? undefined,
       workerUrl: this.getAttribute('worker-url') ?? undefined,
       initialHash,
@@ -111,9 +120,15 @@ class BaseBricksElement extends HTMLElement {
     if (
       name === 'worker-mode'
       || name === 'worker-url'
+      || name === 'controls'
+      || name === 'motor-index'
+      || name === 'rpm'
       || name === 'camera-azimuth'
       || name === 'camera-elevation'
       || name === 'camera-distance'
+      || name === 'camera-target-x'
+      || name === 'camera-target-y'
+      || name === 'camera-target-z'
     ) {
       this.runtimeReady = false
       this.runtime?.destroy()
@@ -126,6 +141,9 @@ class BaseBricksElement extends HTMLElement {
     const maybeAzimuthDeg = this.parseOptionalNumericAttribute('camera-azimuth')
     const maybeElevationDeg = this.parseOptionalNumericAttribute('camera-elevation')
     const maybeDistance = this.parseOptionalNumericAttribute('camera-distance')
+    const maybeTargetX = this.parseOptionalNumericAttribute('camera-target-x')
+    const maybeTargetY = this.parseOptionalNumericAttribute('camera-target-y')
+    const maybeTargetZ = this.parseOptionalNumericAttribute('camera-target-z')
 
     const params = []
     if (Number.isFinite(maybeAzimuthDeg)) {
@@ -136,6 +154,15 @@ class BaseBricksElement extends HTMLElement {
     }
     if (Number.isFinite(maybeDistance)) {
       params.push(`d=${String(maybeDistance)}`)
+    }
+    if (Number.isFinite(maybeTargetX)) {
+      params.push(`tx=${String(maybeTargetX)}`)
+    }
+    if (Number.isFinite(maybeTargetY)) {
+      params.push(`ty=${String(maybeTargetY)}`)
+    }
+    if (Number.isFinite(maybeTargetZ)) {
+      params.push(`tz=${String(maybeTargetZ)}`)
     }
 
     return params.join('&')
@@ -195,18 +222,8 @@ export class BricksViewerElement extends BaseBricksElement {
   }
 }
 
-export class BricksSimulatorElement extends BaseBricksElement {
-  constructor() {
-    super('simulator')
-  }
-}
-
 export function registerBricksElements() {
   if (!customElements.get('bricks-viewer')) {
     customElements.define('bricks-viewer', BricksViewerElement)
-  }
-
-  if (!customElements.get('bricks-simulator')) {
-    customElements.define('bricks-simulator', BricksSimulatorElement)
   }
 }

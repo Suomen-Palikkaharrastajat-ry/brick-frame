@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Palikkakehys Web Components Playground</title>
+  <title>Palikkakehys – Suomen Palikkaharrastajat ry</title>
   <style>
     :root {
       --bg: #f5f7fa;
@@ -235,18 +235,36 @@
 <body>
   <main>
     <section class="intro">
-      <h1>Palikkakehys Web Components Playground</h1>
-      <p>Interactive builder for embedding <code>&lt;bricks-viewer&gt;</code> and <code>&lt;bricks-simulator&gt;</code>.</p>
-      <p>Edit settings in the form or raw HTML, then copy a ready-to-use snippet.</p>
+      <h1>Palikkakehys – Suomen Palikkaharrastajat ry</h1>
     </section>
 
     <section class="playground" data-playground="viewer"></section>
-    <section class="playground" data-playground="simulator"></section>
   </main>
 
   <script>
-    const DEFAULT_BUNDLE_URL = 'https://kehys.palikkaharrastajat.fi/brick-frame.iife.js'
-    const DEFAULT_MODEL_URL = 'https://kehys.palikkaharrastajat.fi/examples/gears.ldr'
+    const BUNDLE_PARAM = new URLSearchParams(window.location.search).get('bundle')
+    const DEFAULT_BUNDLE_URL = (BUNDLE_PARAM && String(BUNDLE_PARAM).trim())
+      ? String(BUNDLE_PARAM).trim()
+      : 'https://kehys.palikkaharrastajat.fi/bricks-viewer.iife.js'
+    const DEFAULT_ELEMENT_STATE = {
+      src: '',
+      controls: false,
+      cameraAzimuth: '',
+      cameraElevation: '',
+      cameraDistance: '',
+      cameraTargetX: '',
+      cameraTargetY: '',
+      cameraTargetZ: '',
+      motorIndex: '',
+      rpm: '',
+    }
+
+    function usesModuleScript(bundleUrl) {
+      const normalized = String(bundleUrl ?? '').trim().toLowerCase()
+      return normalized.endsWith('.mjs')
+        || normalized.includes('web-components/index.js')
+        || normalized.includes('bricks-viewer.esm.js')
+    }
 
     function escapeHtml(text) {
       return String(text)
@@ -257,23 +275,43 @@
     }
 
     function buildSnippet(state) {
-      const tagName = state.mode === 'viewer' ? 'bricks-viewer' : 'bricks-simulator'
+      const tagName = 'bricks-viewer'
       const attrs = []
+      if (state.controls) {
+        attrs.push('controls')
+      }
       const optional = {
         src: state.src,
-        'ldraw-base': state.ldrawBase,
-        'ldraw-fallback-base': state.ldrawFallbackBase,
-        'max-rpm': state.maxRpm,
-        'worker-mode': state.workerMode,
-        'worker-url': state.workerUrl,
         'camera-azimuth': state.cameraAzimuth,
         'camera-elevation': state.cameraElevation,
         'camera-distance': state.cameraDistance,
+        'camera-target-x': state.cameraTargetX,
+        'camera-target-y': state.cameraTargetY,
+        'camera-target-z': state.cameraTargetZ,
+        'motor-index': state.motorIndex,
+        rpm: state.rpm,
       }
 
       Object.entries(optional).forEach(([key, value]) => {
         const normalized = String(value ?? '').trim()
-        if (normalized) {
+        const stateKey = key === 'camera-azimuth'
+          ? 'cameraAzimuth'
+          : key === 'camera-elevation'
+            ? 'cameraElevation'
+            : key === 'camera-distance'
+              ? 'cameraDistance'
+              : key === 'camera-target-x'
+                ? 'cameraTargetX'
+                : key === 'camera-target-y'
+                  ? 'cameraTargetY'
+                  : key === 'camera-target-z'
+                    ? 'cameraTargetZ'
+                    : key === 'motor-index'
+                      ? 'motorIndex'
+              : key
+
+        const defaultValue = String(DEFAULT_ELEMENT_STATE[stateKey] ?? '').trim()
+        if (normalized && normalized !== defaultValue) {
           attrs.push(`${key}="${escapeHtml(normalized)}"`)
         }
       })
@@ -282,15 +320,21 @@
         ? `<${tagName} ${attrs.join(' ')}></${tagName}>`
         : `<${tagName}></${tagName}>`
 
-      return `<script src="${escapeHtml(state.bundleUrl)}"><\/script>\n\n${elementLine}`
+      const scriptLine = usesModuleScript(state.bundleUrl)
+        ? `<script type="module" src="${escapeHtml(state.bundleUrl)}"><\/script>`
+        : `<script src="${escapeHtml(state.bundleUrl)}"><\/script>`
+
+      return `${scriptLine}\n\n${elementLine}`
     }
 
-    function buildPreviewDocument(snippet) {
+    function buildPreviewDocument(snippet, playgroundId) {
+      const previewBaseHref = `${window.location.origin}/`
       return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <base href="${previewBaseHref}" />
   <style>
     html, body {
       margin: 0;
@@ -303,7 +347,7 @@
       padding: 14px;
       box-sizing: border-box;
     }
-    bricks-viewer, bricks-simulator {
+    bricks-viewer {
       display: block;
       width: 100%;
       height: min(74vh, 520px);
@@ -316,15 +360,33 @@
 </head>
 <body>
 ${snippet}
+<script>
+  const PLAYGROUND_ID = ${JSON.stringify(playgroundId)}
+  document.addEventListener('camera-changed', (event) => {
+    const detail = event?.detail ?? {}
+    window.parent.postMessage(
+      {
+        type: 'camera-changed',
+        playgroundId: PLAYGROUND_ID,
+        azimuthDeg: detail.azimuthDeg,
+        elevationDeg: detail.elevationDeg,
+        distance: detail.distance,
+        targetX: detail.targetX,
+        targetY: detail.targetY,
+        targetZ: detail.targetZ,
+      },
+      '*',
+    )
+  })
+<\/script>
 </body>
 </html>`
     }
 
-    function parseSnippet(snippet, mode) {
+    function parseSnippet(snippet) {
       const parser = new DOMParser()
       const doc = parser.parseFromString(`<body>${snippet}</body>`, 'text/html')
-      const tagName = mode === 'viewer' ? 'bricks-viewer' : 'bricks-simulator'
-      const element = doc.querySelector(tagName)
+      const element = doc.querySelector('bricks-viewer')
       const script = doc.querySelector('script[src]')
       if (!element) {
         return null
@@ -335,39 +397,32 @@ ${snippet}
       return {
         bundleUrl: script?.getAttribute('src') ?? DEFAULT_BUNDLE_URL,
         src: get('src'),
-        ldrawBase: get('ldraw-base'),
-        ldrawFallbackBase: get('ldraw-fallback-base'),
-        maxRpm: get('max-rpm'),
-        workerMode: get('worker-mode'),
-        workerUrl: get('worker-url'),
+        controls: element.hasAttribute('controls'),
         cameraAzimuth: get('camera-azimuth'),
         cameraElevation: get('camera-elevation'),
         cameraDistance: get('camera-distance'),
+        cameraTargetX: get('camera-target-x'),
+        cameraTargetY: get('camera-target-y'),
+        cameraTargetZ: get('camera-target-z'),
+        motorIndex: get('motor-index'),
+        rpm: get('rpm'),
       }
     }
 
-    function createPlayground(mode) {
-      const container = document.querySelector(`[data-playground="${mode}"]`)
-      const modeTitle = mode === 'viewer' ? 'Viewer' : 'Simulator'
+    function createPlayground() {
+      const container = document.querySelector('[data-playground="viewer"]')
+      const mode = 'viewer'
+      const modeTitle = 'Viewer'
 
       const state = {
-        mode,
         bundleUrl: DEFAULT_BUNDLE_URL,
-        src: DEFAULT_MODEL_URL,
-        ldrawBase: '',
-        ldrawFallbackBase: '',
-        maxRpm: '',
-        workerMode: 'auto',
-        workerUrl: '',
-        cameraAzimuth: '',
-        cameraElevation: '',
-        cameraDistance: '',
+        ...DEFAULT_ELEMENT_STATE,
       }
 
       container.innerHTML = `
         <div class="playground-header">
           <h2>${modeTitle} Playground</h2>
-          <span>${mode === 'viewer' ? '<bricks-viewer>' : '<bricks-simulator>'}</span>
+          <span>&lt;bricks-viewer&gt;</span>
         </div>
         <div class="playground-grid">
           <div class="preview-pane">
@@ -392,33 +447,11 @@ ${snippet}
                 </div>
                 <div class="field full">
                   <label>Model src</label>
-                  <input data-key="src" type="url" />
+                  <input data-key="src" type="url" placeholder="default model when empty" />
                 </div>
                 <div class="field">
-                  <label>LDraw base</label>
-                  <input data-key="ldrawBase" type="url" placeholder="optional" />
-                </div>
-                <div class="field">
-                  <label>LDraw fallback base</label>
-                  <input data-key="ldrawFallbackBase" type="url" placeholder="optional" />
-                </div>
-                <div class="field">
-                  <label>Max RPM</label>
-                  <input data-key="maxRpm" type="number" step="1" min="1" placeholder="optional" />
-                </div>
-                <div class="field">
-                  <label>Worker mode</label>
-                  <select data-key="workerMode">
-                    <option value="">(default auto)</option>
-                    <option value="auto">auto</option>
-                    <option value="inline">inline</option>
-                    <option value="external">external</option>
-                    <option value="off">off</option>
-                  </select>
-                </div>
-                <div class="field full">
-                  <label>Worker URL</label>
-                  <input data-key="workerUrl" type="url" placeholder="required for external mode" />
+                  <label>Show controls</label>
+                  <input data-key="controls" type="checkbox" />
                 </div>
                 <div class="field">
                   <label>Camera azimuth (deg)</label>
@@ -431,6 +464,18 @@ ${snippet}
                 <div class="field">
                   <label>Camera distance</label>
                   <input data-key="cameraDistance" type="number" step="1" min="1" placeholder="optional" />
+                </div>
+                <div class="field">
+                  <label>Camera target X</label>
+                  <input data-key="cameraTargetX" type="number" step="1" placeholder="optional" />
+                </div>
+                <div class="field">
+                  <label>Camera target Y</label>
+                  <input data-key="cameraTargetY" type="number" step="1" placeholder="optional" />
+                </div>
+                <div class="field">
+                  <label>Camera target Z</label>
+                  <input data-key="cameraTargetZ" type="number" step="1" placeholder="optional" />
                 </div>
               </div>
             </section>
@@ -446,34 +491,82 @@ ${snippet}
       const textArea = container.querySelector('textarea')
       const status = container.querySelector('.copy-status')
       const inputs = container.querySelectorAll('[data-key]')
+      let previewObjectUrl = null
+
+      function setPreviewHtml(html, preferBlobUrl) {
+        if (previewObjectUrl) {
+          URL.revokeObjectURL(previewObjectUrl)
+          previewObjectUrl = null
+        }
+
+        if (preferBlobUrl) {
+          const blob = new Blob([html], { type: 'text/html' })
+          previewObjectUrl = URL.createObjectURL(blob)
+          iframe.src = previewObjectUrl
+        } else {
+          iframe.srcdoc = html
+        }
+      }
 
       function syncFormFromState() {
         inputs.forEach((input) => {
           const key = input.dataset.key
-          input.value = state[key] ?? ''
+          if (input.type === 'checkbox') {
+            input.checked = Boolean(state[key])
+          } else {
+            input.value = state[key] ?? ''
+          }
         })
       }
 
       function renderFromState() {
         const snippet = buildSnippet(state)
         textArea.value = snippet
-        iframe.srcdoc = buildPreviewDocument(snippet)
+        setPreviewHtml(buildPreviewDocument(snippet, mode), usesModuleScript(state.bundleUrl))
       }
 
       function renderFromRaw() {
         const raw = String(textArea.value ?? '')
-        iframe.srcdoc = buildPreviewDocument(raw)
-        const parsed = parseSnippet(raw, mode)
+        const hasModuleScript = /<script[^>]*type=["']module["']/i.test(raw)
+        setPreviewHtml(buildPreviewDocument(raw, mode), hasModuleScript)
+        const parsed = parseSnippet(raw)
         if (parsed) {
           Object.assign(state, parsed)
           syncFormFromState()
         }
       }
 
+      window.addEventListener('message', (event) => {
+        if (event.source !== iframe.contentWindow) {
+          return
+        }
+        const payload = event.data
+        if (!payload || payload.type !== 'camera-changed' || payload.playgroundId !== mode) {
+          return
+        }
+
+        const toStringOrEmpty = (value) =>
+          Number.isFinite(Number(value)) ? String(Math.round(Number(value) * 10) / 10) : ''
+
+        state.cameraAzimuth = toStringOrEmpty(payload.azimuthDeg)
+        state.cameraElevation = toStringOrEmpty(payload.elevationDeg)
+        state.cameraDistance = toStringOrEmpty(payload.distance)
+        state.cameraTargetX = toStringOrEmpty(payload.targetX)
+        state.cameraTargetY = toStringOrEmpty(payload.targetY)
+        state.cameraTargetZ = toStringOrEmpty(payload.targetZ)
+        syncFormFromState()
+        textArea.value = buildSnippet(state)
+      })
+
       inputs.forEach((input) => {
         input.addEventListener('input', () => {
           const key = input.dataset.key
-          state[key] = input.value
+          state[key] = input.type === 'checkbox' ? input.checked : input.value
+          renderFromState()
+        })
+        input.addEventListener('change', () => {
+          const key = input.dataset.key
+          state[key] = input.type === 'checkbox' ? input.checked : input.value
           renderFromState()
         })
       })
@@ -507,8 +600,7 @@ ${snippet}
       renderFromState()
     }
 
-    createPlayground('viewer')
-    createPlayground('simulator')
+    createPlayground()
   </script>
 </body>
 </html>
