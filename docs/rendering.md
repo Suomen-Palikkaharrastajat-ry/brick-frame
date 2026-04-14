@@ -153,7 +153,7 @@ There are still no point lights, spotlights, shadows, or reflections.
 |-------|---------|
 | `azimuth` | Horizontal angle around Y axis (radians) |
 | `elevation` | Vertical angle from XZ plane (radians, clamped ±π/2) |
-| `distance` | Orbit radius in LDU (clamped 0.5–500) |
+| `distance` | Orbit radius in LDU (clamped 0.5–2000) |
 | `target` | World-space orbit centre (default origin) |
 
 Mouse drag updates `azimuth` and `elevation` at 0.005 rad/px. Scroll wheel

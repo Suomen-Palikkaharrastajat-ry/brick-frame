@@ -1409,13 +1409,13 @@ autoFitCamera width height lines cache currentCamera =
                     radius / sin limitingHalfFov
 
                 distance =
-                    clamp 8 5000 (distanceForSphere * 1.15)
+                    clamp 8 5000 (distanceForSphere * 1.25)
             in
             { currentCamera
                 | target = center
                 , distance = distance
                 , azimuth = 0.75
-                , elevation = 0.45
+                , elevation = 0.6
             }
 
 

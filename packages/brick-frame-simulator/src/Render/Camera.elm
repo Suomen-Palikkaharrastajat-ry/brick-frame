@@ -38,9 +38,9 @@ type alias Camera =
 -}
 init : Camera
 init =
-    { azimuth = 0.5
-    , elevation = 0.4
-    , distance = 50.0
+    { azimuth = 0.75
+    , elevation = 0.6
+    , distance = 200.0
     , target = vec3 0 0 0
     , dragging = False
     , lastMousePos = Nothing
@@ -128,7 +128,7 @@ onMouseUp cam =
 
 
 {-| Zoom by scrolling. `delta` is the wheel deltaY value (positive = zoom out).
-Distance is clamped to [0.5, 500] LDU.
+Distance is clamped to [0.5, 2000] LDU.
 -}
 onWheel : Float -> Camera -> Camera
 onWheel delta cam =
@@ -137,7 +137,7 @@ onWheel delta cam =
             1.0 + delta * 0.001
 
         newDistance =
-            clamp 0.5 500 (cam.distance * factor)
+            clamp 0.5 2000 (cam.distance * factor)
     in
     { cam | distance = newDistance }
 
