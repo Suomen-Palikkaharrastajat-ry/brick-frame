@@ -387,6 +387,8 @@ export function initBricksRuntime(options) {
     initialRpm = 0,
     workerMode = defaultWorkerMode,
     workerUrl = defaultWorkerUrl,
+    ambientStrength = undefined,
+    vibrance = undefined,
     runtimeEventHandler = null,
     dragDropTarget = typeof window !== 'undefined' ? window : null,
     suppressGestureTarget = typeof window !== 'undefined' ? window : null,
@@ -403,6 +405,10 @@ export function initBricksRuntime(options) {
   const sanitizedMotorIndex = Number.isFinite(parsedMotorIndex) ? Math.max(-1, Math.trunc(parsedMotorIndex)) : -1
   const parsedInitialRpm = Number(initialRpm)
   const sanitizedInitialRpm = Number.isFinite(parsedInitialRpm) ? parsedInitialRpm : 0
+  const parsedAmbientStrength = Number(ambientStrength)
+  const sanitizedAmbientStrength = Number.isFinite(parsedAmbientStrength) ? parsedAmbientStrength : null
+  const parsedVibrance = Number(vibrance)
+  const sanitizedVibrance = Number.isFinite(parsedVibrance) ? parsedVibrance : null
 
   const app = Elm.Main.init({
     node,
@@ -417,6 +423,8 @@ export function initBricksRuntime(options) {
       initialMotorIndex: sanitizedMotorIndex,
       initialRpm: sanitizedInitialRpm,
       useWindowResize: Boolean(useWindowResize),
+      ambientStrength: sanitizedAmbientStrength,
+      vibrance: sanitizedVibrance,
     },
   })
 

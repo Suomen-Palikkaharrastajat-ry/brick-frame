@@ -57,6 +57,8 @@ class BaseBricksElement extends HTMLElement {
       'camera-target-x',
       'camera-target-y',
       'camera-target-z',
+      'ambient-strength',
+      'vibrance',
     ]
   }
 
@@ -87,6 +89,8 @@ class BaseBricksElement extends HTMLElement {
       initialRpm: this.getAttribute('rpm') ?? undefined,
       workerMode: this.getAttribute('worker-mode') ?? undefined,
       workerUrl: this.getAttribute('worker-url') ?? undefined,
+      ambientStrength: this.getAttribute('ambient-strength') ?? undefined,
+      vibrance: this.getAttribute('vibrance') ?? undefined,
       initialHash,
       syncUrlHash: false,
       useWindowResize: false,
@@ -129,6 +133,8 @@ class BaseBricksElement extends HTMLElement {
       || name === 'camera-target-x'
       || name === 'camera-target-y'
       || name === 'camera-target-z'
+      || name === 'ambient-strength'
+      || name === 'vibrance'
     ) {
       this.runtimeReady = false
       this.runtime?.destroy()

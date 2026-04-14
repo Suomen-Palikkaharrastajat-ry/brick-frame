@@ -55,6 +55,8 @@ type alias Flags =
     , initialMotorIndex : Int
     , initialRpm : Float
     , useWindowResize : Bool
+    , ambientStrength : Maybe Float
+    , vibrance : Maybe Float
     }
 
 
@@ -145,6 +147,7 @@ type alias Model =
     , heldControl : HeldControl
     , heldControlTick : Maybe Time.Posix
     , useWindowResize : Bool
+    , renderStyle : Style.Style
     }
 
 
@@ -287,6 +290,7 @@ init flags =
       , heldControl = NoHeldControl
       , heldControlTick = Nothing
       , useWindowResize = flags.useWindowResize
+      , renderStyle = buildRenderStyle flags.ambientStrength flags.vibrance
       }
     , Cmd.batch <|
         (if flags.useWindowResize then
@@ -326,20 +330,26 @@ embeddedPartCache =
         Data.embeddedParts
 
 
-appRenderStyle : Style.Style
-appRenderStyle =
+buildRenderStyle : Maybe Float -> Maybe Float -> Style.Style
+buildRenderStyle maybeAmbient maybeVibrance =
     let
         baseStyle =
             Style.defaultStyle
+
+        ambient =
+            Maybe.withDefault 0.57 maybeAmbient
+
+        vibrance =
+            Maybe.withDefault 0.08 maybeVibrance
     in
     Style.clampStyle
         { baseStyle
-            | ambientStrength = 0.57
+            | ambientStrength = ambient
             , specularStrength = 0.0
             , specularPower = 18
             , rimStrength = 0.0
             , rimPower = 2.2
-            , vibrance = 0.08
+            , vibrance = vibrance
         }
 
 
@@ -3254,9 +3264,9 @@ viewCanvas model =
         entities =
             case model.scene of
                 Just scene ->
-                    Scene.renderSceneWithStyle scene model.camera appRenderStyle aspect
-                        ++ renderGearEntities model.camera appRenderStyle aspect model
-                        ++ renderComponentEntities model.camera appRenderStyle aspect model
+                    Scene.renderSceneWithStyle scene model.camera model.renderStyle aspect
+                        ++ renderGearEntities model.camera model.renderStyle aspect model
+                        ++ renderComponentEntities model.camera model.renderStyle aspect model
                         ++ renderComponentArrows model.camera aspect model
 
                 Nothing ->
