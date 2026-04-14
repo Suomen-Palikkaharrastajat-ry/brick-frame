@@ -72,6 +72,9 @@ jobs:
         if: steps.ldraw-cache.outputs.cache-hit != 'true'
         run: devenv shell --profile ci -- make sync-ldraw
 
+      - name: Generate and validate missing LDraw replacements
+        run: devenv shell --profile ci -- make ldraw-missing
+
       - name: Restore Elm cache
         id: elm-cache-restore
         uses: actions/cache/restore@v4

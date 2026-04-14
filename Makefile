@@ -148,6 +148,19 @@ sync-ldraw: ## Sync official LDraw library into local assets + write manifest
 sync-ldraw-clean: ## Remove synced LDraw assets and lockfile
 	rm -rf "$(LDRAW_SYNC_DIR)" "$(LDRAW_SYNC_LOCK)"
 
+.PHONY: ldraw-missing-generate
+ldraw-missing-generate: ## Generate replacement parts from missing-part catalog
+	LDRAW_SYNC_DIR="$(LDRAW_SYNC_DIR)" \
+	./scripts/generate-missing-ldraw-parts.sh
+
+.PHONY: ldraw-missing-check
+ldraw-missing-check: ## Check model references resolve via synced + generated LDraw assets
+	LDRAW_SYNC_DIR="$(LDRAW_SYNC_DIR)" \
+	./scripts/check-missing-ldraw-parts.sh
+
+.PHONY: ldraw-missing
+ldraw-missing: ldraw-missing-generate ldraw-missing-check ## Generate + validate missing-part replacements
+
 # ── Test & quality ────────────────────────────────────────────────────────────
 
 .PHONY: test

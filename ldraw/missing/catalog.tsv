@@ -1,0 +1,5 @@
+# part|strategy|target|description|source_models
+# strategy:
+#   alias  => generate wrapper part that references target part with color 16
+#   inline => copy target file from ldraw/missing/inline/<target>
+bl_98138pb396.dat|alias|98138.dat|Tile Round 1 x 1 with Battery print|python-01.ldr
