@@ -65,7 +65,7 @@ suite =
                     , \_ -> Expect.atLeast 0 style.lightStrength
                     , \_ -> Expect.atMost 0.5 style.vibrance
                     , \_ -> Expect.atLeast -0.5 style.vibrance
-                    , \_ -> Expect.atLeast 0.5 style.edgeWidth
+                    , \_ -> Expect.atLeast 0.25 style.edgeWidth
                     , \_ -> Expect.atMost 8 style.edgeWidth
                     ]
                     ()

@@ -6,6 +6,10 @@ Each line segment is rendered as a screen-aligned quad (two triangles) so that
 `lineWidth` is honoured regardless of hardware. WebGL 1.0 fixes `gl.lineWidth`
 at 1 px on most drivers; this approach works around that limitation.
 
+The fragment shader applies a smooth alpha falloff from the quad centre to its
+edges, producing antialiased strokes. Alpha blending must be enabled on the
+entity for this to take effect (see `Render.Scene`).
+
 -}
 
 import Math.Matrix4 exposing (Mat4)
@@ -41,7 +45,8 @@ type alias Uniforms =
 
 
 type alias Varyings =
-    {}
+    { vSide : Float
+    }
 
 
 {-| Edge vertex shader.
@@ -49,6 +54,7 @@ type alias Varyings =
 Transforms both endpoints to clip space, computes the perpendicular direction
 of the segment in NDC, then offsets this vertex by `lineWidth` pixels along
 that perpendicular (scaled back to clip space by multiplying by `clip.w`).
+Passes `side` (−1.0 / +1.0) to the fragment shader as `vSide`.
 
 -}
 vertexShader : Shader EdgeVertex Uniforms Varyings
@@ -64,6 +70,8 @@ vertexShader =
         uniform float viewportWidth;
         uniform float viewportHeight;
         uniform float lineWidth;
+
+        varying float vSide;
 
         void main() {
             vec4 clip0 = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
@@ -85,11 +93,17 @@ vertexShader =
             vec2 offset = perp * (lineWidth / vec2(viewportWidth, viewportHeight)) * clip0.w;
 
             gl_Position = clip0 + vec4(offset * side, 0.0, 0.0);
+            vSide = side;
         }
     |]
 
 
-{-| Edge fragment shader — flat uniform colour.
+{-| Edge fragment shader.
+
+Applies a smooth alpha falloff from the quad centre (fully opaque) to the
+quad boundaries (fully transparent), producing antialiased strokes. Requires
+alpha blending to be enabled on the entity.
+
 -}
 fragmentShader : Shader {} Uniforms Varyings
 fragmentShader =
@@ -97,7 +111,13 @@ fragmentShader =
         precision mediump float;
         uniform vec3 edgeColor;
 
+        varying float vSide;
+
         void main() {
-            gl_FragColor = vec4(clamp(edgeColor, 0.0, 1.0), 1.0);
+            // Fade alpha smoothly from 1.0 at centre (vSide = 0) to 0.0 at the
+            // quad boundary (|vSide| = 1.0). The inner 50% stays fully opaque;
+            // the outer 50% fades, giving a crisp antialiased stroke.
+            float alpha = 1.0 - smoothstep(0.5, 1.0, abs(vSide));
+            gl_FragColor = vec4(clamp(edgeColor, 0.0, 1.0), alpha);
         }
     |]

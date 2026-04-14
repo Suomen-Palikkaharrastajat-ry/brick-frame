@@ -99,7 +99,7 @@ defaultStyle =
     , rimPower = 2.2
     , vibrance = 0.25
     , edgeColor = vec3 0.18 0.19 0.2
-    , edgeWidth = 1.5
+    , edgeWidth = 1.0
     }
 
 
@@ -131,7 +131,7 @@ clampStyle style =
         , rimPower = clamp 0.1 8 style.rimPower
         , vibrance = clampVibrance style.vibrance
         , edgeColor = clampVec3 style.edgeColor
-        , edgeWidth = clamp 0.5 8.0 style.edgeWidth
+        , edgeWidth = clamp 0.25 8.0 style.edgeWidth
     }
 
 

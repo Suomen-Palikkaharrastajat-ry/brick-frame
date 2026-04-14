@@ -5,11 +5,12 @@ module Render.Scene exposing (Scene, buildScene, renderScene, renderSceneWithSty
 
 ## Render order
 
-1.  Triangle mesh (opaque geometry, depth test enabled, optional back-face cull)
-2.  Edge line mesh (flat dark lines, depth test enabled, no culling)
+1.  Triangle mesh (opaque geometry, depth-write on, optional back-face cull)
+2.  Edge line mesh + conditional lines (antialiased, depth-write off, alpha blend)
 
-Rendering triangles before lines avoids depth-fighting artefacts where edges
-would flicker through filled faces.
+Triangles are rendered first with full depth writing. Edges then use
+`lessOrEqual` depth test with `write = False` so they composite correctly
+over the opaque pass without z-fighting or blocking each other.
 
 -}
 
@@ -24,6 +25,7 @@ import Render.Shader as Shader
 import Render.Style as Style
 import WebGL
 import WebGL.Settings
+import WebGL.Settings.Blend as Blend
 import WebGL.Settings.DepthTest as DepthTest
 
 
@@ -144,9 +146,19 @@ renderSceneWithStyle scene camera styleInput width height =
                 scene.triangleMesh
                 triangleUniforms
 
+        -- Edges use lessOrEqual (not strict less) so they pass the depth test
+        -- when sitting at the same depth as a triangle surface, and write=False
+        -- prevents them from blocking later geometry or each other.
+        -- Alpha blending lets the smooth falloff in the fragment shader composite
+        -- correctly over the opaque triangle pass.
+        edgeSettings =
+            [ DepthTest.lessOrEqual { write = False, near = 0, far = 1 }
+            , Blend.add Blend.srcAlpha Blend.oneMinusSrcAlpha
+            ]
+
         lineEntity =
             WebGL.entityWith
-                [ DepthTest.default ]
+                edgeSettings
                 EdgeShader.vertexShader
                 EdgeShader.fragmentShader
                 scene.lineMesh
@@ -164,7 +176,7 @@ renderSceneWithStyle scene camera styleInput width height =
             else
                 Just
                     (WebGL.entityWith
-                        [ DepthTest.default ]
+                        edgeSettings
                         EdgeShader.vertexShader
                         EdgeShader.fragmentShader
                         (WebGL.triangles conditionalVisibleQuads)
