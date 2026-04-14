@@ -33,6 +33,7 @@ suite =
                             , rimPower = 0.01
                             , vibrance = 99
                             , edgeColor = vec3 -1 0.4 2
+                            , edgeWidth = 99
                             }
                 in
                 Expect.all
@@ -46,6 +47,7 @@ suite =
                     , \_ -> Expect.within (Expect.Absolute 0.0001) 0.4 (Vec3.getY clamped.edgeColor)
                     , \_ -> Expect.within (Expect.Absolute 0.0001) 1 (Vec3.getZ clamped.edgeColor)
                     , \_ -> Expect.notEqual 0 (Vec3.length clamped.lightDirection)
+                    , \_ -> Expect.within (Expect.Absolute 0.0001) 8 clamped.edgeWidth
                     ]
                     ()
         , test "default style remains within expected range" <|
@@ -59,6 +61,8 @@ suite =
                     , \_ -> Expect.atLeast 0 style.ambientStrength
                     , \_ -> Expect.atMost 0.5 style.vibrance
                     , \_ -> Expect.atLeast -0.5 style.vibrance
+                    , \_ -> Expect.atLeast 0.5 style.edgeWidth
+                    , \_ -> Expect.atMost 8 style.edgeWidth
                     ]
                     ()
         ]

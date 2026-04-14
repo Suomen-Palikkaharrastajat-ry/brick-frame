@@ -18,6 +18,53 @@ import Render.Lighting exposing (LightUniforms)
 
 
 {-| Configurable material + edge look parameters used by render shaders.
+
+Fields:
+
+  - **`lightDirection`** — World-space vector pointing _toward_ the light
+    source. Only the direction matters; magnitude is ignored (normalised
+    automatically by `clampStyle`). Affects diffuse shading and specular
+    highlights. Default: slightly above-right-front `(0.25, 1.0, 0.35)`.
+
+  - **`ambientStrength`** — Minimum brightness applied to every face
+    regardless of its orientation (`0`–`1`). The final light multiplier is
+    `ambientStrength + (1 − ambientStrength) × diffuse`, so `1.0` gives
+    perfectly flat/unlit rendering (all faces the same brightness) and `0.0`
+    makes faces pointing away from the light completely black.
+
+  - **`specularStrength`** — Intensity of the Blinn-Phong specular
+    highlight (`0`–`1`). `0.0` disables specular entirely. Keep low (≤ 0.2)
+    for a matte plastic look; raise toward `0.5` for a shiny surface.
+
+  - **`specularPower`** — Sharpness of the specular highlight (`1`–`64`).
+    Low values (e.g. `4`) give a broad, soft gloss; high values (e.g. `32`)
+    give a tight, hard reflection. Only relevant when `specularStrength > 0`.
+
+  - **`rimStrength`** — Intensity of the rim-light halo applied to silhouette
+    edges (`0`–`1`). Rim light brightens faces whose normal is nearly
+    perpendicular to the view direction, adding a subtle glow around the
+    model outline. `0.0` disables rim lighting.
+
+  - **`rimPower`** — Fall-off sharpness of the rim light (`0.1`–`8`). Lower
+    values spread the rim effect over a wider band; higher values restrict it
+    to a thin edge highlight. Only relevant when `rimStrength > 0`.
+
+  - **`vibrance`** — Post-lighting saturation boost/cut (`−0.5`–`0.5`).
+    Positive values pull colours toward their saturated hue (useful when
+    ambient/diffuse multipliers wash out the original colour). Negative values
+    desaturate. `0.0` leaves colours unchanged.
+
+  - **`edgeColor`** — RGB colour of LDraw type-2 edge lines and conditional
+    lines. Clamped to `[0, 1]` per channel. Dark values (near black) give
+    crisp LEGO-style outlines; matching the background colour makes edges
+    invisible.
+
+  - **`edgeWidth`** — Pixel width of edge lines (`0.5`–`8.0`). Because WebGL
+    1.0 fixes `gl.lineWidth` at 1 px on most hardware, edges are rendered as
+    screen-aligned quads, so any width in the clamped range is honoured.
+    `1.5` gives a clean, slightly sub-antialiased outline; `2.0`–`3.0` suits
+    larger viewports or stylised renders.
+
 -}
 type alias Style =
     { lightDirection : Vec3
@@ -28,6 +75,7 @@ type alias Style =
     , rimPower : Float
     , vibrance : Float
     , edgeColor : Vec3
+    , edgeWidth : Float
     }
 
 
@@ -36,13 +84,14 @@ type alias Style =
 defaultStyle : Style
 defaultStyle =
     { lightDirection = Vec3.normalize (vec3 0.25 1.0 0.35)
-    , ambientStrength = 1.0
+    , ambientStrength = 0.75
     , specularStrength = 0.0
     , specularPower = 18.0
     , rimStrength = 0.0
     , rimPower = 2.2
     , vibrance = 0.0
     , edgeColor = vec3 0.18 0.19 0.2
+    , edgeWidth = 1.5
     }
 
 
@@ -73,6 +122,7 @@ clampStyle style =
         , rimPower = clamp 0.1 8 style.rimPower
         , vibrance = clampVibrance style.vibrance
         , edgeColor = clampVec3 style.edgeColor
+        , edgeWidth = clamp 0.5 8.0 style.edgeWidth
     }
 
 

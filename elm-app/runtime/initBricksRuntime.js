@@ -389,6 +389,7 @@ export function initBricksRuntime(options) {
     workerUrl = defaultWorkerUrl,
     ambientStrength = undefined,
     vibrance = undefined,
+    edgeWidth = undefined,
     runtimeEventHandler = null,
     dragDropTarget = typeof window !== 'undefined' ? window : null,
     suppressGestureTarget = typeof window !== 'undefined' ? window : null,
@@ -409,6 +410,8 @@ export function initBricksRuntime(options) {
   const sanitizedAmbientStrength = Number.isFinite(parsedAmbientStrength) ? parsedAmbientStrength : null
   const parsedVibrance = Number(vibrance)
   const sanitizedVibrance = Number.isFinite(parsedVibrance) ? parsedVibrance : null
+  const parsedEdgeWidth = Number(edgeWidth)
+  const sanitizedEdgeWidth = Number.isFinite(parsedEdgeWidth) ? parsedEdgeWidth : null
 
   const app = Elm.Main.init({
     node,
@@ -425,6 +428,7 @@ export function initBricksRuntime(options) {
       useWindowResize: Boolean(useWindowResize),
       ambientStrength: sanitizedAmbientStrength,
       vibrance: sanitizedVibrance,
+      edgeWidth: sanitizedEdgeWidth,
     },
   })
 

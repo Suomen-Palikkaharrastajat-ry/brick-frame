@@ -59,6 +59,7 @@ class BaseBricksElement extends HTMLElement {
       'camera-target-z',
       'ambient-strength',
       'vibrance',
+      'edge-width',
     ]
   }
 
@@ -91,6 +92,7 @@ class BaseBricksElement extends HTMLElement {
       workerUrl: this.getAttribute('worker-url') ?? undefined,
       ambientStrength: this.getAttribute('ambient-strength') ?? undefined,
       vibrance: this.getAttribute('vibrance') ?? undefined,
+      edgeWidth: this.getAttribute('edge-width') ?? undefined,
       initialHash,
       syncUrlHash: false,
       useWindowResize: false,
@@ -135,6 +137,7 @@ class BaseBricksElement extends HTMLElement {
       || name === 'camera-target-z'
       || name === 'ambient-strength'
       || name === 'vibrance'
+      || name === 'edge-width'
     ) {
       this.runtimeReady = false
       this.runtime?.destroy()

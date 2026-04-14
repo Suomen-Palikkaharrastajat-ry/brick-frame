@@ -65,7 +65,7 @@ buildScene :
     -> Scene
 buildScene geom bfc =
     { triangleMesh = WebGL.triangles geom.triangles
-    , lineMesh = WebGL.lines (List.map lineToVertices geom.lines)
+    , lineMesh = WebGL.triangles (List.concatMap lineToQuad geom.lines)
     , conditionalLines = geom.conditionalLines
     , bfcCertified = bfc
     }
@@ -79,18 +79,21 @@ buildScene geom bfc =
   - Returns two entities: triangles then lines.
 
 -}
-renderScene : Scene -> Camera -> LightUniforms -> Float -> List WebGL.Entity
-renderScene scene camera light aspect =
-    renderSceneWithStyle scene camera (Style.fromLight light) aspect
+renderScene : Scene -> Camera -> LightUniforms -> Int -> Int -> List WebGL.Entity
+renderScene scene camera light width height =
+    renderSceneWithStyle scene camera (Style.fromLight light) width height
 
 
 {-| Render the scene with the provided material style configuration.
 -}
-renderSceneWithStyle : Scene -> Camera -> Style.Style -> Float -> List WebGL.Entity
-renderSceneWithStyle scene camera styleInput aspect =
+renderSceneWithStyle : Scene -> Camera -> Style.Style -> Int -> Int -> List WebGL.Entity
+renderSceneWithStyle scene camera styleInput width height =
     let
         style =
             Style.clampStyle styleInput
+
+        aspect =
+            toFloat width / toFloat height
 
         viewMat =
             Camera.viewMatrix camera
@@ -120,6 +123,9 @@ renderSceneWithStyle scene camera styleInput aspect =
             , viewMatrix = viewMat
             , projectionMatrix = projMat
             , edgeColor = style.edgeColor
+            , viewportWidth = toFloat width
+            , viewportHeight = toFloat height
+            , lineWidth = style.edgeWidth
             }
 
         bfcSettings =
@@ -145,13 +151,13 @@ renderSceneWithStyle scene camera styleInput aspect =
                 scene.lineMesh
                 edgeUniforms
 
-        conditionalVisibleLines =
+        conditionalVisibleQuads =
             scene.conditionalLines
                 |> List.filter (conditionalLineVisible (cameraPosition camera))
-                |> List.map conditionalToVertices
+                |> List.concatMap conditionalToQuad
 
         conditionalEntity =
-            if List.isEmpty conditionalVisibleLines then
+            if List.isEmpty conditionalVisibleQuads then
                 Nothing
 
             else
@@ -160,7 +166,7 @@ renderSceneWithStyle scene camera styleInput aspect =
                         [ DepthTest.default ]
                         EdgeShader.vertexShader
                         EdgeShader.fragmentShader
-                        (WebGL.lines conditionalVisibleLines)
+                        (WebGL.triangles conditionalVisibleQuads)
                         edgeUniforms
                     )
     in
@@ -179,14 +185,27 @@ renderSceneWithStyle scene camera styleInput aspect =
 -- ── Internal ──────────────────────────────────────────────────────────────────
 
 
-lineToVertices : ( Vec3, Vec3 ) -> ( EdgeVertex, EdgeVertex )
-lineToVertices ( p1, p2 ) =
-    ( { position = p1 }, { position = p2 } )
+{-| Expand a line segment into two screen-aligned triangles (a quad).
+
+Each call produces 6 vertices: two triangles that together form a rectangle
+centred on the segment. The vertex shader expands them perpendicular to the
+segment direction by `lineWidth` pixels.
+
+-}
+lineToQuad : ( Vec3, Vec3 ) -> List ( EdgeVertex, EdgeVertex, EdgeVertex )
+lineToQuad ( p1, p2 ) =
+    let
+        v side pos other =
+            { position = pos, other = other, side = side }
+    in
+    [ ( v -1 p1 p2, v 1 p1 p2, v 1 p2 p1 )
+    , ( v -1 p1 p2, v 1 p2 p1, v -1 p2 p1 )
+    ]
 
 
-conditionalToVertices : ConditionalEdge -> ( EdgeVertex, EdgeVertex )
-conditionalToVertices cond =
-    ( { position = cond.p1 }, { position = cond.p2 } )
+conditionalToQuad : ConditionalEdge -> List ( EdgeVertex, EdgeVertex, EdgeVertex )
+conditionalToQuad cond =
+    lineToQuad ( cond.p1, cond.p2 )
 
 
 conditionalLineVisible : Vec3 -> ConditionalEdge -> Bool

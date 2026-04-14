@@ -57,6 +57,7 @@ type alias Flags =
     , useWindowResize : Bool
     , ambientStrength : Maybe Float
     , vibrance : Maybe Float
+    , edgeWidth : Maybe Float
     }
 
 
@@ -290,7 +291,7 @@ init flags =
       , heldControl = NoHeldControl
       , heldControlTick = Nothing
       , useWindowResize = flags.useWindowResize
-      , renderStyle = buildRenderStyle flags.ambientStrength flags.vibrance
+      , renderStyle = buildRenderStyle flags.ambientStrength flags.vibrance flags.edgeWidth
       }
     , Cmd.batch <|
         (if flags.useWindowResize then
@@ -330,8 +331,8 @@ embeddedPartCache =
         Data.embeddedParts
 
 
-buildRenderStyle : Maybe Float -> Maybe Float -> Style.Style
-buildRenderStyle maybeAmbient maybeVibrance =
+buildRenderStyle : Maybe Float -> Maybe Float -> Maybe Float -> Style.Style
+buildRenderStyle maybeAmbient maybeVibrance maybeEdgeWidth =
     let
         baseStyle =
             Style.defaultStyle
@@ -341,6 +342,9 @@ buildRenderStyle maybeAmbient maybeVibrance =
 
         vibrance =
             Maybe.withDefault 0.0 maybeVibrance
+
+        edgeWidth =
+            Maybe.withDefault 1.5 maybeEdgeWidth
     in
     Style.clampStyle
         { baseStyle
@@ -350,6 +354,7 @@ buildRenderStyle maybeAmbient maybeVibrance =
             , rimStrength = 0.0
             , rimPower = 2.2
             , vibrance = vibrance
+            , edgeWidth = edgeWidth
         }
 
 
@@ -2291,7 +2296,10 @@ componentArrowLines component axis =
 
 lineToEdgeVertices : ( Vec3.Vec3, Vec3.Vec3 ) -> ( EdgeVertex, EdgeVertex )
 lineToEdgeVertices ( p1, p2 ) =
-    ( { position = p1 }, { position = p2 } )
+    -- GuideShader only reads `position`; `other` and `side` are unused but required by the type.
+    ( { position = p1, other = p2, side = -1.0 }
+    , { position = p2, other = p1, side = 1.0 }
+    )
 
 
 componentDrivingGear : PartCache -> Components.ComponentInstance -> List GearInstance -> Maybe GearId
@@ -3264,7 +3272,7 @@ viewCanvas model =
         entities =
             case model.scene of
                 Just scene ->
-                    Scene.renderSceneWithStyle scene model.camera model.renderStyle aspect
+                    Scene.renderSceneWithStyle scene model.camera model.renderStyle model.width model.height
                         ++ renderGearEntities model.camera model.renderStyle aspect model
                         ++ renderComponentEntities model.camera model.renderStyle aspect model
                         ++ renderComponentArrows model.camera aspect model

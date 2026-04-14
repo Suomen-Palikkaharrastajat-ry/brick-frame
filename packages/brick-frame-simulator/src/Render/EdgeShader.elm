@@ -1,9 +1,10 @@
 module Render.EdgeShader exposing (EdgeVertex, Uniforms, fragmentShader, vertexShader)
 
-{-| Minimal shader for LDraw edge lines (type-2 line segments).
+{-| Shader for LDraw edge lines (type-2 line segments and conditional lines).
 
-Renders all edges in a single uniform colour — no lighting calculation needed.
-WebGL 1.0 line width is fixed at 1 px on most hardware; accept this limitation.
+Each line segment is rendered as a screen-aligned quad (two triangles) so that
+`lineWidth` is honoured regardless of hardware. WebGL 1.0 fixes `gl.lineWidth`
+at 1 px on most drivers; this approach works around that limitation.
 
 -}
 
@@ -12,20 +13,30 @@ import Math.Vector3 exposing (Vec3)
 import WebGL exposing (Shader)
 
 
-{-| A vertex carrying only a position — no colour or normal needed.
+{-| One corner of a screen-aligned edge quad.
+
+  - `position` — the endpoint this vertex belongs to (world space).
+  - `other` — the opposite endpoint of the segment (world space).
+  - `side` — which side of the quad: `−1.0` or `+1.0`.
+
 -}
 type alias EdgeVertex =
     { position : Vec3
+    , other : Vec3
+    , side : Float
     }
 
 
-{-| MVP matrices passed to the vertex shader.
+{-| Uniforms for the edge shaders.
 -}
 type alias Uniforms =
     { modelMatrix : Mat4
     , viewMatrix : Mat4
     , projectionMatrix : Mat4
     , edgeColor : Vec3
+    , viewportWidth : Float
+    , viewportHeight : Float
+    , lineWidth : Float
     }
 
 
@@ -33,24 +44,52 @@ type alias Varyings =
     {}
 
 
-{-| Edge vertex shader — just MVP transform.
+{-| Edge vertex shader.
+
+Transforms both endpoints to clip space, computes the perpendicular direction
+of the segment in NDC, then offsets this vertex by `lineWidth` pixels along
+that perpendicular (scaled back to clip space by multiplying by `clip.w`).
+
 -}
 vertexShader : Shader EdgeVertex Uniforms Varyings
 vertexShader =
     [glsl|
         attribute vec3 position;
+        attribute vec3 other;
+        attribute float side;
 
         uniform mat4 modelMatrix;
         uniform mat4 viewMatrix;
         uniform mat4 projectionMatrix;
+        uniform float viewportWidth;
+        uniform float viewportHeight;
+        uniform float lineWidth;
 
         void main() {
-            gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+            vec4 clip0 = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+            vec4 clip1 = projectionMatrix * viewMatrix * modelMatrix * vec4(other, 1.0);
+
+            // Segment direction in NDC; guard against degenerate zero-length segments
+            vec2 dir = clip1.xy / clip1.w - clip0.xy / clip0.w;
+            float len = length(dir);
+            if (len > 0.0001) {
+                dir = dir / len;
+            } else {
+                dir = vec2(1.0, 0.0);
+            }
+
+            vec2 perp = vec2(-dir.y, dir.x);
+
+            // Scale to pixel width; multiply by clip0.w to undo perspective divide
+            // so the offset is constant in screen space regardless of depth.
+            vec2 offset = perp * (lineWidth / vec2(viewportWidth, viewportHeight)) * clip0.w;
+
+            gl_Position = clip0 + vec4(offset * side, 0.0, 0.0);
         }
     |]
 
 
-{-| Edge fragment shader — configurable uniform colour.
+{-| Edge fragment shader — flat uniform colour.
 -}
 fragmentShader : Shader {} Uniforms Varyings
 fragmentShader =
