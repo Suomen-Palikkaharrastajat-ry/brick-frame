@@ -337,10 +337,10 @@ buildRenderStyle maybeAmbient maybeVibrance =
             Style.defaultStyle
 
         ambient =
-            Maybe.withDefault 0.57 maybeAmbient
+            Maybe.withDefault 1.0 maybeAmbient
 
         vibrance =
-            Maybe.withDefault 0.08 maybeVibrance
+            Maybe.withDefault 0.0 maybeVibrance
     in
     Style.clampStyle
         { baseStyle

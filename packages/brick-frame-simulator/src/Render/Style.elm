@@ -36,12 +36,12 @@ type alias Style =
 defaultStyle : Style
 defaultStyle =
     { lightDirection = Vec3.normalize (vec3 0.25 1.0 0.35)
-    , ambientStrength = 0.9
-    , specularStrength = 0.14
+    , ambientStrength = 1.0
+    , specularStrength = 0.0
     , specularPower = 18.0
-    , rimStrength = 0.08
+    , rimStrength = 0.0
     , rimPower = 2.2
-    , vibrance = 0.12
+    , vibrance = 0.0
     , edgeColor = vec3 0.18 0.19 0.2
     }
 
