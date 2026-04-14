@@ -40,7 +40,7 @@ ldrawColors =
     , LDrawColor 11 "Light Turquoise" 0.000 0.659 0.682 1.0
     , LDrawColor 12 "Salmon" 0.988 0.565 0.478 1.0
     , LDrawColor 13 "Pink" 0.988 0.671 0.749 1.0
-    , LDrawColor 14 "Yellow" 0.988 0.812 0.027 1.0
+    , LDrawColor 14 "Yellow" 0.980 0.784 0.039 1.0
     , LDrawColor 15 "White" 1.000 1.000 1.000 1.0
     , LDrawColor 17 "Light Green" 0.710 0.902 0.710 1.0
     , LDrawColor 18 "Light Yellow" 0.988 0.929 0.624 1.0

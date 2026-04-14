@@ -1435,8 +1435,24 @@ handleTopLevelText text model =
             else
                 ( model.partCache, Parser.parseFile text )
 
+        -- Also scan embedded submodels (seeded from MPD) for their own dependencies,
+        -- since those lines are never passed through handlePartResult's additionalPending.
+        seededSubmodelLines =
+            seededCache
+                |> Dict.values
+                |> List.filterMap
+                    (\status ->
+                        case status of
+                            Loaded ls ->
+                                Just ls
+
+                            _ ->
+                                Nothing
+                    )
+                |> List.concat
+
         pending =
-            Resolve.pendingParts lines seededCache
+            Resolve.pendingParts (lines ++ seededSubmodelLines) seededCache
 
         cacheWithLoading =
             Resolve.markLoading pending seededCache

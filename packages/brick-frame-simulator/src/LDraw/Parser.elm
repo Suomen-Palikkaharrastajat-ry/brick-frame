@@ -139,42 +139,59 @@ parseFileName line =
 parseSubFileRef : List String -> Maybe LDrawLine
 parseSubFileRef tokens =
     -- color x y z a b c d e f g h i file
-    case tokens of
-        [ c, x, y, z, a, b, d, e, f, g, h, i, j, file ] ->
-            Maybe.map5
-                (\color tx ty tz rot ->
-                    SubFileRef
-                        { color = color
-                        , transform =
-                            Mat4.fromRecord
-                                { m11 = getF 0 rot
-                                , m21 = getF 3 rot
-                                , m31 = getF 6 rot
-                                , m41 = 0
-                                , m12 = getF 1 rot
-                                , m22 = getF 4 rot
-                                , m32 = getF 7 rot
-                                , m42 = 0
-                                , m13 = getF 2 rot
-                                , m23 = getF 5 rot
-                                , m33 = getF 8 rot
-                                , m43 = 0
-                                , m14 = tx
-                                , m24 = ty
-                                , m34 = tz
-                                , m44 = 1
-                                }
-                        , file = normaliseName file
-                        }
-                )
-                (String.toInt c)
-                (String.toFloat x)
-                (String.toFloat y)
-                (String.toFloat z)
-                (floatList [ a, b, d, e, f, g, h, i, j ])
+    -- The filename may contain spaces (e.g. embedded MPD sub-models like
+    -- "submodel group 1"), so we take the first 13 tokens as the numeric
+    -- fields and join everything that follows as the filename.
+    let
+        matrixTokens =
+            List.take 13 tokens
 
-        _ ->
-            Nothing
+        fileTokens =
+            List.drop 13 tokens
+
+        file =
+            String.join " " fileTokens
+    in
+    if List.isEmpty fileTokens then
+        Nothing
+
+    else
+        case matrixTokens of
+            [ c, x, y, z, a, b, d, e, f, g, h, i, j ] ->
+                Maybe.map5
+                    (\color tx ty tz rot ->
+                        SubFileRef
+                            { color = color
+                            , transform =
+                                Mat4.fromRecord
+                                    { m11 = getF 0 rot
+                                    , m21 = getF 3 rot
+                                    , m31 = getF 6 rot
+                                    , m41 = 0
+                                    , m12 = getF 1 rot
+                                    , m22 = getF 4 rot
+                                    , m32 = getF 7 rot
+                                    , m42 = 0
+                                    , m13 = getF 2 rot
+                                    , m23 = getF 5 rot
+                                    , m33 = getF 8 rot
+                                    , m43 = 0
+                                    , m14 = tx
+                                    , m24 = ty
+                                    , m34 = tz
+                                    , m44 = 1
+                                    }
+                            , file = normaliseName file
+                            }
+                    )
+                    (String.toInt c)
+                    (String.toFloat x)
+                    (String.toFloat y)
+                    (String.toFloat z)
+                    (floatList [ a, b, d, e, f, g, h, i, j ])
+
+            _ ->
+                Nothing
 
 
 parseSubFileRefV2 : List String -> Maybe LDrawLine

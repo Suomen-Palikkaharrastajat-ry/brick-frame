@@ -83,7 +83,7 @@ colorTable =
         , ( 11, { r = 0.0, g = 0.659, b = 0.682, alpha = 1.0 } ) -- Light Turquoise
         , ( 12, { r = 0.988, g = 0.565, b = 0.478, alpha = 1.0 } ) -- Salmon
         , ( 13, { r = 0.988, g = 0.671, b = 0.749, alpha = 1.0 } ) -- Pink
-        , ( 14, { r = 0.988, g = 0.812, b = 0.027, alpha = 1.0 } ) -- Yellow
+        , ( 14, { r = 0.980, g = 0.784, b = 0.039, alpha = 1.0 } ) -- Yellow
         , ( 15, { r = 1.0, g = 1.0, b = 1.0, alpha = 1.0 } ) -- White
         , ( 17, { r = 0.71, g = 0.902, b = 0.71, alpha = 1.0 } ) -- Light Green
         , ( 18, { r = 0.988, g = 0.929, b = 0.624, alpha = 1.0 } ) -- Light Yellow

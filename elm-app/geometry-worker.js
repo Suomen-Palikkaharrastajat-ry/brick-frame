@@ -71,6 +71,12 @@ function toYUp(p) {
   return [p[0], -p[1], p[2]]
 }
 
+// Scalar triple product: det of matrix whose columns are t.x, t.y, t.z.
+// Negative result means the transform flips handedness (inverts winding order).
+function transformDet(t) {
+  return dot(t.x, cross(t.y, t.z))
+}
+
 function faceNormal(p1, p2, p3) {
   return normalizeSafe(cross(sub(p2, p1), sub(p3, p1)))
 }
@@ -90,22 +96,42 @@ function hasBfcCertify(lines) {
   return lines.some((line) => line.k === 'comment' && line.text.includes('BFC CERTIFY CCW'))
 }
 
-function flattenLines(lines, cache, parentColor, transform, colorTable, acc) {
+// windingFlipped tracks the accumulated winding state:
+//   - Starts true because toYUp negates Y, which is a reflection (det = -1) that
+//     inverts the winding of every triangle.  Compensating for it here means normals
+//     point outward and lighting works correctly.
+//   - Each BFC INVERTNEXT or negative-determinant sub-file transform XORs this flag,
+//     so the two inversions in e.g. "INVERTNEXT + neg-det" cancel out correctly.
+function flattenLines(lines, cache, parentColor, transform, colorTable, acc, windingFlipped) {
+  let invertNext = false
   for (const line of lines) {
     switch (line.k) {
+      case 'comment': {
+        if (line.text && line.text.includes('BFC INVERTNEXT')) {
+          invertNext = true
+        }
+        // Comments do not reset invertNext (other BFC or non-BFC comments are ignored).
+        continue
+      }
       case 'subfile': {
         const loaded = cache[line.file]
-        if (!loaded) break
         const childColor = (line.color === 16 || line.color === -1) ? parentColor : line.color
         const childTransform = composeTransforms(transform, line.transform)
-        flattenLines(loaded, cache, childColor, childTransform, colorTable, acc)
+        // A negative-determinant local transform flips winding; INVERTNEXT also flips.
+        const detFlip = transformDet(line.transform) < 0
+        const childFlipped = windingFlipped !== (invertNext !== detFlip)
+        invertNext = false
+        if (!loaded) break
+        flattenLines(loaded, cache, childColor, childTransform, colorTable, acc, childFlipped)
         break
       }
       case 'tri': {
+        invertNext = false
         const p1 = toYUp(applyTransform(transform, line.p1))
         const p2 = toYUp(applyTransform(transform, line.p2))
         const p3 = toYUp(applyTransform(transform, line.p3))
-        const normal = faceNormal(p1, p2, p3)
+        // windingFlipped=true → swap p2/p3 so the cross product gives the outward normal.
+        const normal = windingFlipped ? faceNormal(p1, p3, p2) : faceNormal(p1, p2, p3)
         const color = resolveColor(parentColor, line.color, colorTable)
         acc.triangles.push([
           { position: p1, normal, color },
@@ -115,13 +141,14 @@ function flattenLines(lines, cache, parentColor, transform, colorTable, acc) {
         break
       }
       case 'quad': {
+        invertNext = false
         const p1 = toYUp(applyTransform(transform, line.p1))
         const p2 = toYUp(applyTransform(transform, line.p2))
         const p3 = toYUp(applyTransform(transform, line.p3))
         const p4 = toYUp(applyTransform(transform, line.p4))
         const color = resolveColor(parentColor, line.color, colorTable)
-        const n1 = faceNormal(p1, p2, p3)
-        const n2 = faceNormal(p1, p3, p4)
+        const n1 = windingFlipped ? faceNormal(p1, p3, p2) : faceNormal(p1, p2, p3)
+        const n2 = windingFlipped ? faceNormal(p1, p4, p3) : faceNormal(p1, p3, p4)
         acc.triangles.push([
           { position: p1, normal: n1, color },
           { position: p2, normal: n1, color },
@@ -135,12 +162,14 @@ function flattenLines(lines, cache, parentColor, transform, colorTable, acc) {
         break
       }
       case 'line': {
+        invertNext = false
         const p1 = toYUp(applyTransform(transform, line.p1))
         const p2 = toYUp(applyTransform(transform, line.p2))
         acc.lines.push([p1, p2])
         break
       }
       case 'cond': {
+        invertNext = false
         const p1 = toYUp(applyTransform(transform, line.p1))
         const p2 = toYUp(applyTransform(transform, line.p2))
         const c1 = toYUp(applyTransform(transform, line.c1))
@@ -163,7 +192,9 @@ self.onmessage = (event) => {
     const colorTable = payload.colorTable ?? {}
 
     const acc = { triangles: [], lines: [], conditionalLines: [] }
-    flattenLines(lines, cache, parentColor, identityTransform(), colorTable, acc)
+    // Start with windingFlipped=true: the toYUp Y-axis reflection (det=-1) inverts
+    // winding for every triangle; this flag compensates for that globally.
+    flattenLines(lines, cache, parentColor, identityTransform(), colorTable, acc, true)
 
     self.postMessage(
       JSON.stringify({
