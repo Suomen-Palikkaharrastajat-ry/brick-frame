@@ -27,10 +27,16 @@ Fields:
     highlights. Default: slightly above-right-front `(0.25, 1.0, 0.35)`.
 
   - **`ambientStrength`** — Minimum brightness applied to every face
-    regardless of its orientation (`0`–`1`). The final light multiplier is
-    `ambientStrength + (1 − ambientStrength) × diffuse`, so `1.0` gives
-    perfectly flat/unlit rendering (all faces the same brightness) and `0.0`
-    makes faces pointing away from the light completely black.
+    regardless of its orientation (`0`–`1`). Acts as the base floor of the
+    light multiplier: `ambientStrength + lightStrength × diffuse`. `1.0`
+    makes all faces equally bright (flat rendering); `0.0` lets faces
+    pointing away from the light go completely black.
+
+  - **`lightStrength`** — Intensity of the directional light contribution
+    (`0`–`1`). Added on top of ambient: the final light multiplier is
+    `ambientStrength + lightStrength × diffuse`. `0.0` disables directional
+    light entirely (pure flat rendering when `ambientStrength = 1.0`); `0.3`
+    adds gentle shading that reads depth without darkening shadows too much.
 
   - **`specularStrength`** — Intensity of the Blinn-Phong specular
     highlight (`0`–`1`). `0.0` disables specular entirely. Keep low (≤ 0.2)
@@ -69,6 +75,7 @@ Fields:
 type alias Style =
     { lightDirection : Vec3
     , ambientStrength : Float
+    , lightStrength : Float
     , specularStrength : Float
     , specularPower : Float
     , rimStrength : Float
@@ -84,12 +91,13 @@ type alias Style =
 defaultStyle : Style
 defaultStyle =
     { lightDirection = Vec3.normalize (vec3 0.25 1.0 0.35)
-    , ambientStrength = 0.75
+    , lightStrength = 0.0
+    , ambientStrength = 1.0
     , specularStrength = 0.0
     , specularPower = 18.0
     , rimStrength = 0.0
     , rimPower = 2.2
-    , vibrance = 0.0
+    , vibrance = 0.25
     , edgeColor = vec3 0.18 0.19 0.2
     , edgeWidth = 1.5
     }
@@ -116,6 +124,7 @@ clampStyle style =
     { style
         | lightDirection = normalizedDirection style.lightDirection
         , ambientStrength = clamp 0 1 style.ambientStrength
+        , lightStrength = clamp 0 1 style.lightStrength
         , specularStrength = clamp 0 1 style.specularStrength
         , specularPower = clamp 1 64 style.specularPower
         , rimStrength = clamp 0 1 style.rimStrength

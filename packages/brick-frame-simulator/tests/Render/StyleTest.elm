@@ -27,6 +27,7 @@ suite =
                         Style.clampStyle
                             { lightDirection = vec3 0 0 0
                             , ambientStrength = 3
+                            , lightStrength = 5
                             , specularStrength = -1
                             , specularPower = 100
                             , rimStrength = -2
@@ -38,6 +39,7 @@ suite =
                 in
                 Expect.all
                     [ \_ -> Expect.within (Expect.Absolute 0.0001) 1 clamped.ambientStrength
+                    , \_ -> Expect.within (Expect.Absolute 0.0001) 1 clamped.lightStrength
                     , \_ -> Expect.within (Expect.Absolute 0.0001) 0 clamped.specularStrength
                     , \_ -> Expect.within (Expect.Absolute 0.0001) 64 clamped.specularPower
                     , \_ -> Expect.within (Expect.Absolute 0.0001) 0 clamped.rimStrength
@@ -59,6 +61,8 @@ suite =
                 Expect.all
                     [ \_ -> Expect.atMost 1 style.ambientStrength
                     , \_ -> Expect.atLeast 0 style.ambientStrength
+                    , \_ -> Expect.atMost 1 style.lightStrength
+                    , \_ -> Expect.atLeast 0 style.lightStrength
                     , \_ -> Expect.atMost 0.5 style.vibrance
                     , \_ -> Expect.atLeast -0.5 style.vibrance
                     , \_ -> Expect.atLeast 0.5 style.edgeWidth

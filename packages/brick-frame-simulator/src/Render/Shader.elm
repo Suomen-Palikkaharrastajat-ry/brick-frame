@@ -19,6 +19,7 @@ type alias Uniforms =
     , viewPosition : Vec3
     , lightDirection : Vec3
     , ambientStrength : Float
+    , lightStrength : Float
     , specularStrength : Float
     , specularPower : Float
     , rimStrength : Float
@@ -76,6 +77,7 @@ fragmentShader =
         uniform vec3 lightDirection;
         uniform vec3 viewPosition;
         uniform float ambientStrength;
+        uniform float lightStrength;
         uniform float specularStrength;
         uniform float specularPower;
         uniform float rimStrength;
@@ -91,7 +93,7 @@ fragmentShader =
             vec3 lightDir = normalize(lightDirection);
             vec3 viewDir = normalize(viewPosition - vPositionWorld);
             float diffuse = max(0.0, dot(norm, lightDir));
-            float light = ambientStrength + (1.0 - ambientStrength) * diffuse;
+            float light = ambientStrength + lightStrength * diffuse;
 
             float specular = 0.0;
             if (specularStrength > 0.0001) {

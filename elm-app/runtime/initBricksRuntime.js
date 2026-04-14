@@ -388,6 +388,7 @@ export function initBricksRuntime(options) {
     workerMode = defaultWorkerMode,
     workerUrl = defaultWorkerUrl,
     ambientStrength = undefined,
+    lightStrength = undefined,
     vibrance = undefined,
     edgeWidth = undefined,
     runtimeEventHandler = null,
@@ -408,6 +409,8 @@ export function initBricksRuntime(options) {
   const sanitizedInitialRpm = Number.isFinite(parsedInitialRpm) ? parsedInitialRpm : 0
   const parsedAmbientStrength = Number(ambientStrength)
   const sanitizedAmbientStrength = Number.isFinite(parsedAmbientStrength) ? parsedAmbientStrength : null
+  const parsedLightStrength = Number(lightStrength)
+  const sanitizedLightStrength = Number.isFinite(parsedLightStrength) ? parsedLightStrength : null
   const parsedVibrance = Number(vibrance)
   const sanitizedVibrance = Number.isFinite(parsedVibrance) ? parsedVibrance : null
   const parsedEdgeWidth = Number(edgeWidth)
@@ -427,6 +430,7 @@ export function initBricksRuntime(options) {
       initialRpm: sanitizedInitialRpm,
       useWindowResize: Boolean(useWindowResize),
       ambientStrength: sanitizedAmbientStrength,
+      lightStrength: sanitizedLightStrength,
       vibrance: sanitizedVibrance,
       edgeWidth: sanitizedEdgeWidth,
     },

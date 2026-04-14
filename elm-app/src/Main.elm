@@ -56,6 +56,7 @@ type alias Flags =
     , initialRpm : Float
     , useWindowResize : Bool
     , ambientStrength : Maybe Float
+    , lightStrength : Maybe Float
     , vibrance : Maybe Float
     , edgeWidth : Maybe Float
     }
@@ -291,7 +292,7 @@ init flags =
       , heldControl = NoHeldControl
       , heldControlTick = Nothing
       , useWindowResize = flags.useWindowResize
-      , renderStyle = buildRenderStyle flags.ambientStrength flags.vibrance flags.edgeWidth
+      , renderStyle = buildRenderStyle flags.ambientStrength flags.lightStrength flags.vibrance flags.edgeWidth
       }
     , Cmd.batch <|
         (if flags.useWindowResize then
@@ -331,28 +332,28 @@ embeddedPartCache =
         Data.embeddedParts
 
 
-buildRenderStyle : Maybe Float -> Maybe Float -> Maybe Float -> Style.Style
-buildRenderStyle maybeAmbient maybeVibrance maybeEdgeWidth =
+buildRenderStyle : Maybe Float -> Maybe Float -> Maybe Float -> Maybe Float -> Style.Style
+buildRenderStyle maybeAmbient maybeLightStrength maybeVibrance maybeEdgeWidth =
     let
         baseStyle =
             Style.defaultStyle
 
         ambient =
-            Maybe.withDefault 1.0 maybeAmbient
+            Maybe.withDefault baseStyle.ambientStrength maybeAmbient
+
+        lightStrength =
+            Maybe.withDefault baseStyle.lightStrength maybeLightStrength
 
         vibrance =
-            Maybe.withDefault 0.0 maybeVibrance
+            Maybe.withDefault baseStyle.vibrance maybeVibrance
 
         edgeWidth =
-            Maybe.withDefault 1.5 maybeEdgeWidth
+            Maybe.withDefault baseStyle.edgeWidth maybeEdgeWidth
     in
     Style.clampStyle
         { baseStyle
             | ambientStrength = ambient
-            , specularStrength = 0.0
-            , specularPower = 18
-            , rimStrength = 0.0
-            , rimPower = 2.2
+            , lightStrength = lightStrength
             , vibrance = vibrance
             , edgeWidth = edgeWidth
         }
@@ -2159,6 +2160,7 @@ renderGearEntities camera styleInput aspect model =
                                             , viewPosition = viewPos
                                             , lightDirection = style.lightDirection
                                             , ambientStrength = style.ambientStrength
+                                            , lightStrength = style.lightStrength
                                             , specularStrength = style.specularStrength
                                             , specularPower = style.specularPower
                                             , rimStrength = style.rimStrength
@@ -2777,6 +2779,7 @@ renderComponentEntities camera styleInput aspect model =
                         , viewPosition = viewPos
                         , lightDirection = style.lightDirection
                         , ambientStrength = style.ambientStrength
+                        , lightStrength = style.lightStrength
                         , specularStrength = style.specularStrength
                         , specularPower = style.specularPower
                         , rimStrength = style.rimStrength

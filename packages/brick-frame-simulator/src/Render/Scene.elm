@@ -111,6 +111,7 @@ renderSceneWithStyle scene camera styleInput width height =
             , viewPosition = cameraPosition camera
             , lightDirection = style.lightDirection
             , ambientStrength = style.ambientStrength
+            , lightStrength = style.lightStrength
             , specularStrength = style.specularStrength
             , specularPower = style.specularPower
             , rimStrength = style.rimStrength
