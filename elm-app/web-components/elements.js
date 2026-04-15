@@ -18,7 +18,6 @@ function createShadowStyles() {
   display: block;
   position: relative;
   width: 100%;
-  min-height: var(--bricks-min-height, ${DEFAULT_HEIGHT});
   font-family: Outfit, system-ui, sans-serif;
 }
 
