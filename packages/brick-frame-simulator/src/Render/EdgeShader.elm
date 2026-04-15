@@ -115,9 +115,9 @@ fragmentShader =
 
         void main() {
             // Fade alpha smoothly from 1.0 at centre (vSide = 0) to 0.0 at the
-            // quad boundary (|vSide| = 1.0). The inner 50% stays fully opaque;
-            // the outer 50% fades, giving a crisp antialiased stroke.
-            float alpha = 1.0 - smoothstep(0.5, 1.0, abs(vSide));
+            // quad boundary (|vSide| = 1.0). The inner 70% stays fully opaque;
+            // the outer 30% fades, giving a crisper antialiased stroke.
+            float alpha = 1.0 - smoothstep(0.7, 1.0, abs(vSide));
             gl_FragColor = vec4(clamp(edgeColor, 0.0, 1.0), alpha);
         }
     |]

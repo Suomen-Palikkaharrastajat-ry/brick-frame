@@ -18,7 +18,7 @@ function createShadowStyles() {
   display: block;
   position: relative;
   width: 100%;
-  min-height: ${DEFAULT_HEIGHT};
+  min-height: var(--bricks-min-height, ${DEFAULT_HEIGHT});
   font-family: Outfit, system-ui, sans-serif;
 }
 
@@ -29,7 +29,7 @@ function createShadowStyles() {
 .mount {
   width: 100%;
   height: 100%;
-  min-height: ${DEFAULT_HEIGHT};
+  min-height: var(--bricks-min-height, ${DEFAULT_HEIGHT});
 }
 
 input[type="range"] {
@@ -76,7 +76,6 @@ class BaseBricksElement extends HTMLElement {
   }
 
   connectedCallback() {
-    this.ensureSizing()
     const initialHash = this.cameraHashFromAttributes()
 
     this.runtime = initBricksRuntime({
@@ -187,12 +186,6 @@ class BaseBricksElement extends HTMLElement {
     }
     const parsed = Number(raw)
     return Number.isFinite(parsed) ? parsed : null
-  }
-
-  ensureSizing() {
-    if (!this.style.minHeight) {
-      this.style.minHeight = DEFAULT_HEIGHT
-    }
   }
 
   forwardRuntimeEvent(eventPayload) {

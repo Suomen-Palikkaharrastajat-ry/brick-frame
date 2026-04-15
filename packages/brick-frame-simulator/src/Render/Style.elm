@@ -68,7 +68,7 @@ Fields:
   - **`edgeWidth`** — Pixel width of edge lines (`0.5`–`8.0`). Because WebGL
     1.0 fixes `gl.lineWidth` at 1 px on most hardware, edges are rendered as
     screen-aligned quads, so any width in the clamped range is honoured.
-    `1.5` gives a clean, slightly sub-antialiased outline; `2.0`–`3.0` suits
+    `1.5` (the default) gives a clean antialiased outline; `2.0`–`3.0` suits
     larger viewports or stylised renders.
 
 -}
@@ -98,8 +98,8 @@ defaultStyle =
     , rimStrength = 0.0
     , rimPower = 2.2
     , vibrance = 0.25
-    , edgeColor = vec3 0.18 0.19 0.2
-    , edgeWidth = 1.0
+    , edgeColor = vec3 0 0 0
+    , edgeWidth = 1.5
     }
 
 
