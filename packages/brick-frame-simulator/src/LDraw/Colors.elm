@@ -43,7 +43,7 @@ resolveColor parentColor thisColor =
         { r = 0.0, g = 0.0, b = 0.0, alpha = 1.0 }
 
     else
-        lookupColor thisColor
+        lookupColor (normalizeColorCode thisColor)
 
 
 {-| Convert a color record to a `Vec4` for WebGL shaders.
@@ -55,6 +55,18 @@ toVec4 c =
 
 
 -- ── Internal ──────────────────────────────────────────────────────────────────
+
+
+{-| BrickLink Studio encodes certain colors as 100000 + ldrawCode in its
+exported .ldr files. Strip the offset so lookups hit the standard table.
+-}
+normalizeColorCode : Int -> Int
+normalizeColorCode code =
+    if code >= 100000 then
+        code - 100000
+
+    else
+        code
 
 
 lookupColor : Int -> { r : Float, g : Float, b : Float, alpha : Float }
@@ -108,6 +120,8 @@ colorTable =
         , ( 45, { r = 0.878, g = 0.4, b = 0.573, alpha = 0.5 } ) -- Trans Dark Pink
         , ( 46, { r = 0.988, g = 0.855, b = 0.165, alpha = 0.5 } ) -- Trans Yellow
         , ( 47, { r = 0.878, g = 0.878, b = 0.878, alpha = 0.5 } ) -- Trans White
+        , ( 48, { r = 0.208, g = 0.537, b = 0.165, alpha = 0.5 } ) -- Trans Dark Green
+        , ( 55, { r = 0.988, g = 0.592, b = 0.675, alpha = 0.5 } ) -- Trans Pink
         , ( 57, { r = 0.988, g = 0.502, b = 0.122, alpha = 0.5 } ) -- Trans Orange
         , ( 68, { r = 0.988, g = 0.769, b = 0.518, alpha = 1.0 } ) -- Very Light Orange
         , ( 69, { r = 0.584, g = 0.106, b = 0.624, alpha = 1.0 } ) -- Bright Purple
@@ -137,6 +151,7 @@ colorTable =
         , ( 216, { r = 0.671, g = 0.165, b = 0.082, alpha = 1.0 } ) -- Rust
         , ( 226, { r = 0.988, g = 0.929, b = 0.447, alpha = 1.0 } ) -- Bright Light Yellow
         , ( 232, { r = 0.533, g = 0.753, b = 0.878, alpha = 1.0 } ) -- Sky Blue
+        , ( 251, { r = 0.537, g = 0.529, b = 0.533, alpha = 1.0 } ) -- Flat Silver
         , ( 256, { r = 0.067, g = 0.067, b = 0.067, alpha = 1.0 } ) -- Rubber Black
         , ( 272, { r = 0.0, g = 0.173, b = 0.475, alpha = 1.0 } ) -- Dark Blue
         , ( 288, { r = 0.055, g = 0.267, b = 0.09, alpha = 1.0 } ) -- Dark Green

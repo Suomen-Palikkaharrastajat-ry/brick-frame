@@ -7,6 +7,7 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
+import Numeric (showFFloat)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 
@@ -65,6 +66,8 @@ ldrawColors =
     , LDrawColor 45 "Trans Dark Pink" 0.878 0.400 0.573 0.5
     , LDrawColor 46 "Trans Yellow" 0.988 0.855 0.165 0.5
     , LDrawColor 47 "Trans White" 0.878 0.878 0.878 0.5
+    , LDrawColor 48 "Trans Dark Green" 0.208 0.537 0.165 0.5
+    , LDrawColor 55 "Trans Pink" 0.988 0.592 0.675 0.5
     , LDrawColor 57 "Trans Orange" 0.988 0.502 0.122 0.5
     , LDrawColor 68 "Very Light Orange" 0.988 0.769 0.518 1.0
     , LDrawColor 69 "Bright Purple" 0.584 0.106 0.624 1.0
@@ -94,6 +97,7 @@ ldrawColors =
     , LDrawColor 216 "Rust" 0.671 0.165 0.082 1.0
     , LDrawColor 226 "Bright Light Yellow" 0.988 0.929 0.447 1.0
     , LDrawColor 232 "Sky Blue" 0.533 0.753 0.878 1.0
+    , LDrawColor 251 "Flat Silver" 0.537 0.529 0.533 1.0
     , LDrawColor 256 "Rubber Black" 0.067 0.067 0.067 1.0
     , LDrawColor 272 "Dark Blue" 0.000 0.173 0.475 1.0
     , LDrawColor 288 "Dark Green" 0.055 0.267 0.090 1.0
@@ -252,7 +256,7 @@ embeddedPartEntry (name, content) =
 
 showF :: Float -> Text
 showF f =
-    let s = show f
+    let s = showFFloat Nothing f ""
      in if '.' `elem` s then Text.pack s else Text.pack s <> ".0"
 
 elmString :: Text -> Text

@@ -55,6 +55,7 @@ generate: elm-app/src/Data.elm ## Run Haskell generator to produce elm-app/src/D
 
 elm-app/src/Data.elm: brick-data-generator
 	./brick-data-generator
+	cd elm-app && elm-format --yes src/Data.elm
 
 elm-app/src/.data-nix-stamp:
 	$(GENERATOR_NIX)

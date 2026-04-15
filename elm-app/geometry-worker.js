@@ -68,7 +68,9 @@ function composeTransforms(parent, local) {
 }
 
 function toYUp(p) {
-  return [p[0], -p[1], p[2]]
+  // Negate both Y and Z: converts LDraw (X-right, Y-down, Z-away) to WebGL
+  // right-handed (X-right, Y-up, Z-toward-viewer). det = +1, so no winding flip.
+  return [p[0], -p[1], -p[2]]
 }
 
 // Scalar triple product: det of matrix whose columns are t.x, t.y, t.z.
@@ -86,7 +88,9 @@ function resolveColor(parentColor, lineColor, colorTable) {
   if (lineColor === 24 || lineColor === -2) {
     return [0, 0, 0, 1]
   }
-  const code = (lineColor === 16 || lineColor === -1) ? parentColor : lineColor
+  const raw = (lineColor === 16 || lineColor === -1) ? parentColor : lineColor
+  // Studio encodes some colors as 100000 + ldrawCode; strip the offset.
+  const code = raw >= 100000 ? raw - 100000 : raw
   const mapped = colorTable[String(code)]
   if (!mapped) return [1, 0, 1, 1]
   return [mapped.r, mapped.g, mapped.b, mapped.alpha]
@@ -192,9 +196,9 @@ self.onmessage = (event) => {
     const colorTable = payload.colorTable ?? {}
 
     const acc = { triangles: [], lines: [], conditionalLines: [] }
-    // Start with windingFlipped=true: the toYUp Y-axis reflection (det=-1) inverts
-    // winding for every triangle; this flag compensates for that globally.
-    flattenLines(lines, cache, parentColor, identityTransform(), colorTable, acc, true)
+    // Start with windingFlipped=false: [x, -y, -z] has det=+1 (rotation, not a
+    // reflection), so triangle winding is preserved and no initial compensation needed.
+    flattenLines(lines, cache, parentColor, identityTransform(), colorTable, acc, false)
 
     self.postMessage(
       JSON.stringify({

@@ -233,7 +233,8 @@ flattenLine cache parentColor transform line acc =
 
 
 {-| Apply the accumulated world transform to a point.
-Negates Y to convert LDraw Y-down → OpenGL Y-up.
+Negates Y and Z to convert LDraw (X-right, Y-down, Z-away) →
+WebGL right-handed (X-right, Y-up, Z-toward-viewer).
 -}
 transformPoint : Mat4 -> Vec3 -> Vec3
 transformPoint mat p =
@@ -241,7 +242,7 @@ transformPoint mat p =
         tp =
             Mat4.transform mat p
     in
-    vec3 (Vec3.getX tp) -(Vec3.getY tp) (Vec3.getZ tp)
+    vec3 (Vec3.getX tp) -(Vec3.getY tp) -(Vec3.getZ tp)
 
 
 {-| Compute a face normal from three points (CCW winding assumed).

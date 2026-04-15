@@ -1,4 +1,4 @@
-import { unzipSync } from 'fflate'
+import { unzipSync, inflateSync } from 'fflate'
 import { Elm } from '../src/Main.elm'
 import GeometryWorker from '../geometry-worker.js?worker'
 import geometryWorkerSource from '../geometry-worker.js?raw'
@@ -50,34 +50,192 @@ function decodeLdrawBytes(bytes) {
   return decoded.charCodeAt(0) === 0xfeff ? decoded.slice(1) : decoded
 }
 
-function extractLdrawFromStudioArchive(arrayBuffer) {
-  const files = unzipSync(new Uint8Array(arrayBuffer))
-  const entries = Object.entries(files)
-  if (entries.length === 0) {
-    throw new Error('Archive is empty')
+// ---------------------------------------------------------------------------
+// ZipCrypto decryption (traditional PKZIP encryption, password "soho0909")
+// BrickLink Studio 2 uses this to encrypt .io archives.
+// ---------------------------------------------------------------------------
+
+const _CRC32_TABLE = (() => {
+  const t = new Uint32Array(256)
+  for (let i = 0; i < 256; i++) {
+    let c = i
+    for (let j = 0; j < 8; j++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1)
+    t[i] = c >>> 0
   }
+  return t
+})()
 
-  const normalizedEntries = entries.map(([name, bytes]) => ({
-    name,
-    normalized: String(name).replaceAll('\\', '/').toLowerCase(),
-    bytes,
-  }))
+function _crc32Byte(crc, b) {
+  return ((_CRC32_TABLE[(crc ^ b) & 0xff] ^ (crc >>> 8)) >>> 0)
+}
 
-  const preferred = ['model2.ldr', 'modelv2.ldr', 'model.ldr']
+function _zipCryptoInitKeys(password) {
+  let k0 = 0x12345678
+  let k1 = 0x23456789
+  let k2 = 0x34567890
+  for (let i = 0; i < password.length; i++) {
+    const b = password.charCodeAt(i) & 0xff
+    k0 = _crc32Byte(k0, b)
+    k1 = (Math.imul((k1 + (k0 & 0xff)) >>> 0, 134775813) + 1) >>> 0
+    k2 = _crc32Byte(k2, (k1 >>> 24) & 0xff)
+  }
+  return [k0, k1, k2]
+}
 
-  for (const target of preferred) {
-    const found = normalizedEntries.find((entry) => entry.normalized.endsWith(target))
-    if (found) {
-      return decodeLdrawBytes(found.bytes)
+function _zipCryptoKeystream(keys) {
+  const tmp = ((keys[2] & 0xffff) | 2) >>> 0
+  return ((tmp * (tmp ^ 1)) >>> 8) & 0xff
+}
+
+function _zipCryptoUpdateKeys(keys, plainByte) {
+  keys[0] = _crc32Byte(keys[0], plainByte)
+  keys[1] = (Math.imul((keys[1] + (keys[0] & 0xff)) >>> 0, 134775813) + 1) >>> 0
+  keys[2] = _crc32Byte(keys[2], (keys[1] >>> 24) & 0xff)
+}
+
+// Decrypt `src` (Uint8Array) in-place using password, returning plaintext.
+// The first 12 bytes are the ZipCrypto encryption header and are discarded.
+function _zipCryptoDecrypt(src, password) {
+  const keys = _zipCryptoInitKeys(password)
+  const result = new Uint8Array(src.length)
+  for (let i = 0; i < src.length; i++) {
+    const ks = _zipCryptoKeystream(keys)
+    const plain = (src[i] ^ ks) & 0xff
+    result[i] = plain
+    _zipCryptoUpdateKeys(keys, plain)
+  }
+  // Discard the 12-byte encryption header; remainder is compressed data.
+  return result.subarray(12)
+}
+
+// ---------------------------------------------------------------------------
+// Minimal ZIP central-directory parser (handles encrypted entries).
+// ---------------------------------------------------------------------------
+
+function _readUint16LE(u8, offset) {
+  return (u8[offset] | (u8[offset + 1] << 8)) >>> 0
+}
+
+function _readUint32LE(u8, offset) {
+  return (u8[offset] | (u8[offset + 1] << 8) | (u8[offset + 2] << 16) | (u8[offset + 3] << 24)) >>> 0
+}
+
+// Locate the End-of-Central-Directory record by scanning backward.
+function _findEocd(u8) {
+  // EOCD is at least 22 bytes from the end; signature is 0x06054b50.
+  for (let i = u8.length - 22; i >= 0; i--) {
+    if (u8[i] === 0x50 && u8[i + 1] === 0x4b && u8[i + 2] === 0x05 && u8[i + 3] === 0x06) {
+      return i
     }
   }
+  return -1
+}
 
-  const anyLdr = normalizedEntries.find((entry) => entry.normalized.endsWith('.ldr'))
-  if (anyLdr) {
-    return decodeLdrawBytes(anyLdr.bytes)
+// Parse central directory entries, return array of entry descriptors.
+function _parseCentralDir(u8) {
+  const eocdOffset = _findEocd(u8)
+  if (eocdOffset < 0) throw new Error('ZIP central directory not found')
+
+  const cdOffset = _readUint32LE(u8, eocdOffset + 16)
+  const cdSize = _readUint32LE(u8, eocdOffset + 12)
+  const entries = []
+  let pos = cdOffset
+
+  while (pos < cdOffset + cdSize) {
+    if (u8[pos] !== 0x50 || u8[pos + 1] !== 0x4b || u8[pos + 2] !== 0x01 || u8[pos + 3] !== 0x02) break
+    const flags = _readUint16LE(u8, pos + 8)
+    const compression = _readUint16LE(u8, pos + 10)
+    const compressedSize = _readUint32LE(u8, pos + 20)
+    const localHeaderOffset = _readUint32LE(u8, pos + 42)
+    const nameLen = _readUint16LE(u8, pos + 28)
+    const extraLen = _readUint16LE(u8, pos + 30)
+    const commentLen = _readUint16LE(u8, pos + 32)
+    const name = new TextDecoder('utf-8', { fatal: false }).decode(u8.subarray(pos + 46, pos + 46 + nameLen))
+    entries.push({ name, flags, compression, compressedSize, localHeaderOffset })
+    pos += 46 + nameLen + extraLen + commentLen
   }
 
+  return entries
+}
+
+// Extract a single entry (decrypt + inflate if needed).
+function _extractEntry(u8, entry, password) {
+  const lh = entry.localHeaderOffset
+  if (u8[lh] !== 0x50 || u8[lh + 1] !== 0x4b || u8[lh + 2] !== 0x03 || u8[lh + 3] !== 0x04) {
+    throw new Error(`Bad local file header for "${entry.name}"`)
+  }
+  const nameLen = _readUint16LE(u8, lh + 26)
+  const extraLen = _readUint16LE(u8, lh + 28)
+  const dataOffset = lh + 30 + nameLen + extraLen
+  const encrypted = !!(entry.flags & 0x1)
+
+  let data = u8.subarray(dataOffset, dataOffset + entry.compressedSize)
+
+  if (encrypted) {
+    if (!password) throw new Error(`Entry "${entry.name}" is encrypted but no password given`)
+    data = _zipCryptoDecrypt(data, password)
+  }
+
+  if (entry.compression === 0) return data          // stored (no compression)
+  if (entry.compression === 8) return inflateSync(data) // deflate
+  throw new Error(`Unsupported compression method ${entry.compression} in "${entry.name}"`)
+}
+
+// Try to extract a preferred .ldr file from a potentially encrypted archive.
+function _extractLdrWithPassword(uint8Array, password) {
+  const entries = _parseCentralDir(uint8Array)
+  if (entries.length === 0) throw new Error('Archive is empty')
+
+  const normalize = (n) => String(n).replaceAll('\\', '/').toLowerCase()
+  // Prefer modelv2.ldr / model.ldr which use standard LDraw color codes.
+  // model2.ldr uses Studio-internal color indices that don't match LDraw IDs.
+  const preferred = ['modelv2.ldr', 'model.ldr', 'model2.ldr']
+
+  for (const target of preferred) {
+    const entry = entries.find((e) => normalize(e.name).endsWith(target))
+    if (entry) return decodeLdrawBytes(_extractEntry(uint8Array, entry, password))
+  }
+
+  const anyLdr = entries.find((e) => normalize(e.name).endsWith('.ldr'))
+  if (anyLdr) return decodeLdrawBytes(_extractEntry(uint8Array, anyLdr, password))
+
   throw new Error('No .ldr model found in archive')
+}
+
+// ---------------------------------------------------------------------------
+
+function extractLdrawFromStudioArchive(arrayBuffer) {
+  const uint8Array = new Uint8Array(arrayBuffer)
+
+  // Fast path: unencrypted archive — use fflate for decompression.
+  try {
+    const files = unzipSync(uint8Array)
+    const entries = Object.entries(files)
+    if (entries.length === 0) throw new Error('Archive is empty')
+
+    const normalizedEntries = entries.map(([name, bytes]) => ({
+      name,
+      normalized: String(name).replaceAll('\\', '/').toLowerCase(),
+      bytes,
+    }))
+
+    // Prefer modelv2.ldr / model.ldr which use standard LDraw color codes.
+    // model2.ldr uses Studio-internal color indices that don't match LDraw IDs.
+    const preferred = ['modelv2.ldr', 'model.ldr', 'model2.ldr']
+
+    for (const target of preferred) {
+      const found = normalizedEntries.find((entry) => entry.normalized.endsWith(target))
+      if (found) return decodeLdrawBytes(found.bytes)
+    }
+
+    const anyLdr = normalizedEntries.find((entry) => entry.normalized.endsWith('.ldr'))
+    if (anyLdr) return decodeLdrawBytes(anyLdr.bytes)
+
+    throw new Error('No .ldr model found in archive')
+  } catch (_) {
+    // Encrypted archives (BrickLink Studio uses ZipCrypto with a fixed password).
+    return _extractLdrWithPassword(uint8Array, 'soho0909')
+  }
 }
 
 function createFileReader({ reportLoadError, pushFileText }) {
@@ -321,7 +479,9 @@ function flattenGeometryPayload(payloadText) {
   const colorTable = payload.colorTable ?? {}
 
   const acc = { triangles: [], lines: [], conditionalLines: [] }
-  flattenLines(lines, cache, parentColor, identityTransform(), colorTable, acc)
+  // windingFlipped=true: same as the geometry worker — compensates for toYUp's Y-negation
+  // which is a det=-1 reflection that inverts every triangle's winding order.
+  flattenLines(lines, cache, parentColor, identityTransform(), colorTable, acc, true)
 
   return {
     ok: true,
@@ -416,12 +576,16 @@ export function initBricksRuntime(options) {
   const parsedEdgeWidth = Number(edgeWidth)
   const sanitizedEdgeWidth = Number.isFinite(parsedEdgeWidth) ? parsedEdgeWidth : null
 
+  // .io files are ZIP archives (binary) — Elm's Http.expectString would corrupt them.
+  // Pass an empty defaultModelUrl so Elm starts idle; we load via the JS binary path below.
+  const defaultModelIsIo = inferFileExtension(String(defaultModel ?? '')) === '.io'
+
   const app = Elm.Main.init({
     node,
     flags: {
       ldrawBase,
       ldrawFallbackBase,
-      defaultModelUrl: String(defaultModel ?? ''),
+      defaultModelUrl: defaultModelIsIo ? '' : String(defaultModel ?? ''),
       initialHash,
       maxRpm: sanitizedMaxRpm,
       uiMode: normalizeMode(mode),
@@ -638,6 +802,12 @@ export function initBricksRuntime(options) {
   }
 
   const { readLdrawFile, loadFromUrl } = createFileReader({ reportLoadError, pushFileText })
+
+  // If the default model is a .io archive, load it now via the binary path
+  // (Elm's Http.expectString cannot handle binary ZIP data).
+  if (defaultModelIsIo && defaultModel) {
+    loadFromUrl(String(defaultModel))
+  }
 
   function loadFromText(text) {
     pushFileText(String(text ?? ''))
