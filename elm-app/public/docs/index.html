@@ -4,6 +4,78 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Palikkakehys – Suomen Palikkaharrastajat ry</title>
+
+  <!-- SEO -->
+  <meta name="description" content="Interactive web components playground for Palikkakehys bricks viewer. Explore and configure the 3D LEGO model viewer by Finnish Brick Hobbyists Association." />
+  <meta name="robots" content="index, follow" />
+  <meta name="author" content="Suomen Palikkaharrastajat ry" />
+  <link rel="canonical" href="https://kehys.palikkaharrastajat.fi/docs/" />
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="Palikkakehys – Suomen Palikkaharrastajat ry" />
+  <meta property="og:description" content="Interactive web components playground for Palikkakehys bricks viewer. Explore and configure the 3D LEGO model viewer by Finnish Brick Hobbyists Association." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://kehys.palikkaharrastajat.fi/docs/" />
+  <meta property="og:image" content="https://kehys.palikkaharrastajat.fi/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Palikkakehys – LEGO model 3D viewer playground" />
+  <meta property="og:site_name" content="Palikkakehys" />
+  <meta property="og:locale" content="en_US" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Palikkakehys – Suomen Palikkaharrastajat ry" />
+  <meta name="twitter:description" content="Interactive web components playground for Palikkakehys bricks viewer. Explore and configure the 3D LEGO model viewer by Finnish Brick Hobbyists Association." />
+  <meta name="twitter:image" content="https://kehys.palikkaharrastajat.fi/og-image.png" />
+
+  <!-- Browser / UI -->
+  <meta name="theme-color" content="#0f6cab" />
+  <meta name="color-scheme" content="light" />
+  <meta name="format-detection" content="telephone=no" />
+
+  <!-- Favicons -->
+  <link rel="icon" href="/favicon.ico" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="icon" sizes="16x16" href="/favicon-16x16.png" />
+  <link rel="icon" sizes="32x32" href="/favicon-32x32.png" />
+  <link rel="icon" sizes="48x48" href="/favicon-48x48.png" />
+  <link rel="icon" sizes="192x192" href="/icon-192.png" />
+  <link rel="icon" sizes="512x512" href="/icon-512.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+
+  <!-- PWA -->
+  <link rel="manifest" href="/site.webmanifest" />
+
+  <!-- Apple (iOS) -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Palikkakehys" />
+
+  <!-- Android -->
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="application-name" content="Palikkakehys" />
+
+  <!-- Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    "name": "Palikkakehys – Suomen Palikkaharrastajat ry",
+    "url": "https://kehys.palikkaharrastajat.fi/docs/",
+    "description": "Interactive web components playground for Palikkakehys bricks viewer",
+    "isPartOf": {
+      "@type": "WebSite",
+      "name": "Palikkakehys",
+      "url": "https://kehys.palikkaharrastajat.fi"
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "Suomen Palikkaharrastajat ry"
+    }
+  }
+  </script>
+
   <style>
     :root {
       --bg: #f5f7fa;
@@ -39,7 +111,6 @@
     .intro,
     .playground {
       border: 1px solid var(--border);
-      border-radius: 14px;
       background: var(--card);
       box-shadow: var(--shadow);
       overflow: hidden;
@@ -114,7 +185,6 @@
       height: 100%;
       min-height: 500px;
       border: 1px solid var(--border);
-      border-radius: 8px;
       background: #fff;
     }
 
@@ -132,7 +202,6 @@
     .tab-btn,
     .copy-btn {
       border: 1px solid var(--border);
-      border-radius: 8px;
       background: #fff;
       color: var(--text);
       padding: 6px 10px;
@@ -212,7 +281,6 @@
 
     .ghost-btn {
       border: 1px solid var(--border);
-      border-radius: 8px;
       background: #fff;
       color: var(--text);
       padding: 6px 10px;
@@ -225,7 +293,6 @@
     .field select,
     textarea {
       border: 1px solid var(--border);
-      border-radius: 8px;
       padding: 8px;
       font: inherit;
       font-size: 0.88rem;
@@ -382,7 +449,6 @@
       width: 100%;
       height: min(74vh, 520px);
       border: 1px solid #d9e0e7;
-      border-radius: 8px;
       overflow: hidden;
       background: #fff;
     }
@@ -442,7 +508,7 @@ ${snippet}
     function createPlayground() {
       const container = document.querySelector('[data-playground="viewer"]')
       const mode = 'viewer'
-      const modeTitle = 'Viewer'
+      const modeTitle = 'Katselin'
 
       const state = {
         bundleUrl: DEFAULT_BUNDLE_URL,
@@ -451,74 +517,74 @@ ${snippet}
 
       container.innerHTML = `
         <div class="playground-header">
-          <h2>${modeTitle} Playground</h2>
+          <h2>${modeTitle}-leikkikenttä</h2>
           <span>&lt;bricks-viewer&gt;</span>
         </div>
         <div class="playground-grid">
           <div class="preview-pane">
-            <p class="preview-label">Live Preview</p>
-            <iframe class="preview-frame" title="${modeTitle} preview"></iframe>
+            <p class="preview-label">Reaaliaikainen esikatselu</p>
+            <iframe class="preview-frame" title="${modeTitle}-esikatselu"></iframe>
           </div>
           <div class="editor-pane">
             <div class="editor-controls">
               <div class="tabs">
-                <button type="button" class="tab-btn active" data-tab="form">Form</button>
-                <button type="button" class="tab-btn" data-tab="raw">Raw HTML</button>
+                <button type="button" class="tab-btn active" data-tab="form">Lomake</button>
+                <button type="button" class="tab-btn" data-tab="raw">HTML-koodi</button>
               </div>
-              <button type="button" class="copy-btn">Copy Snippet</button>
+              <button type="button" class="copy-btn">Kopioi koodi</button>
             </div>
             <p class="copy-status" aria-live="polite"></p>
             <section class="panel panel-form active">
-              <p class="editor-label">Configuration</p>
+              <p class="editor-label">Asetukset</p>
               <div class="form-grid">
                 <div class="field full">
-                  <label>Bundle URL</label>
+                  <label>Bundle-URL</label>
                   <input data-key="bundleUrl" type="url" />
                 </div>
                 <div class="field full">
-                  <label>Model src</label>
-                  <input data-key="src" type="url" placeholder="default model when empty" />
+                  <label>Mallin lähde</label>
+                  <input data-key="src" type="url" placeholder="oletusmalli kun tyhjä" />
                 </div>
                 <div class="field full">
-                  <label>Local model file (.ldr, .mpd, .dat, .io)</label>
+                  <label>Paikallinen mallitiedosto (.ldr, .mpd, .dat, .io)</label>
                   <div class="file-row">
                     <input data-local-file-input type="file" accept=".ldr,.mpd,.dat,.io" />
-                    <button type="button" class="ghost-btn" data-clear-local-file>Clear local file</button>
+                    <button type="button" class="ghost-btn" data-clear-local-file>Poista paikallinen tiedosto</button>
                   </div>
-                  <p class="field-help" data-local-file-status>No local file selected. When selected, local file is used only for this preview.</p>
+                  <p class="field-help" data-local-file-status>Ei paikallista tiedostoa valittu. Valittuna paikallista tiedostoa käytetään vain tässä esikatselmassa.</p>
                 </div>
                 <div class="field">
-                  <label>Show controls</label>
+                  <label>Näytä ohjaimet</label>
                   <input data-key="controls" type="checkbox" />
                 </div>
                 <div class="field">
-                  <label>Camera azimuth (deg)</label>
-                  <input data-key="cameraAzimuth" type="number" step="1" placeholder="optional" />
+                  <label>Kameran atsimuutti (astetta)</label>
+                  <input data-key="cameraAzimuth" type="number" step="1" placeholder="valinnainen" />
                 </div>
                 <div class="field">
-                  <label>Camera elevation (deg)</label>
-                  <input data-key="cameraElevation" type="number" step="1" placeholder="optional" />
+                  <label>Kameran korkeus (astetta)</label>
+                  <input data-key="cameraElevation" type="number" step="1" placeholder="valinnainen" />
                 </div>
                 <div class="field">
-                  <label>Camera distance</label>
-                  <input data-key="cameraDistance" type="number" step="1" min="1" placeholder="optional" />
+                  <label>Kameran etäisyys</label>
+                  <input data-key="cameraDistance" type="number" step="1" min="1" placeholder="valinnainen" />
                 </div>
                 <div class="field">
-                  <label>Camera target X</label>
-                  <input data-key="cameraTargetX" type="number" step="1" placeholder="optional" />
+                  <label>Kameran kohde X</label>
+                  <input data-key="cameraTargetX" type="number" step="1" placeholder="valinnainen" />
                 </div>
                 <div class="field">
-                  <label>Camera target Y</label>
-                  <input data-key="cameraTargetY" type="number" step="1" placeholder="optional" />
+                  <label>Kameran kohde Y</label>
+                  <input data-key="cameraTargetY" type="number" step="1" placeholder="valinnainen" />
                 </div>
                 <div class="field">
-                  <label>Camera target Z</label>
-                  <input data-key="cameraTargetZ" type="number" step="1" placeholder="optional" />
+                  <label>Kameran kohde Z</label>
+                  <input data-key="cameraTargetZ" type="number" step="1" placeholder="valinnainen" />
                 </div>
               </div>
             </section>
             <section class="panel panel-raw">
-              <p class="editor-label">Generated Embed HTML</p>
+              <p class="editor-label">Generoitu HTML-koodi</p>
               <textarea spellcheck="false"></textarea>
             </section>
           </div>
@@ -557,8 +623,8 @@ ${snippet}
         }
 
         localFileStatus.textContent = localModelUrl
-          ? `Using local file: ${localFileName}. This file is not included in generated HTML.`
-          : 'No local file selected. When selected, local file is used only for this preview.'
+          ? `Käytetään paikallista tiedostoa: ${localFileName}. Tätä tiedostoa ei sisällytetä generoituun HTML-koodiin.`
+          : 'Ei paikallista tiedostoa valittu. Valittuna paikallista tiedostoa käytetään vain tässä esikatselmassa.'
       }
 
       function clearLocalModel() {
@@ -581,6 +647,17 @@ ${snippet}
         })
       }
 
+      function rawSnippetFromState() {
+        if (!localFileName) {
+          return buildSnippet(state)
+        }
+
+        return buildSnippet({
+          ...state,
+          src: localFileName,
+        })
+      }
+
       function syncFormFromState() {
         inputs.forEach((input) => {
           const key = input.dataset.key
@@ -593,7 +670,7 @@ ${snippet}
       }
 
       function renderFromState() {
-        textArea.value = buildSnippet(state)
+        textArea.value = rawSnippetFromState()
         const previewSnippet = previewSnippetFromState()
         setPreviewHtml(buildPreviewDocument(previewSnippet, mode), usesModuleScript(state.bundleUrl))
       }
@@ -628,7 +705,7 @@ ${snippet}
         state.cameraTargetY = toStringOrEmpty(payload.targetY)
         state.cameraTargetZ = toStringOrEmpty(payload.targetZ)
         syncFormFromState()
-        textArea.value = buildSnippet(state)
+        textArea.value = rawSnippetFromState()
       })
 
       inputs.forEach((input) => {
@@ -660,9 +737,9 @@ ${snippet}
       container.querySelector('.copy-btn').addEventListener('click', async () => {
         try {
           await navigator.clipboard.writeText(textArea.value)
-          status.textContent = 'Snippet copied.'
+          status.textContent = 'Koodi kopioitu.'
         } catch {
-          status.textContent = 'Clipboard unavailable. Select and copy manually.'
+          status.textContent = 'Leikepöytä ei ole saatavilla. Valitse ja kopioi manuaalisesti.'
         }
         setTimeout(() => {
           status.textContent = ''
