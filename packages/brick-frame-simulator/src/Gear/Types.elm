@@ -77,9 +77,13 @@ type alias GearInstance =
   - `instances`   — all detected gear instances, indexed by `GearId`
   - `connections` — adjacency list; each `GearId` maps to the list of
     `GearId`s whose pitch circles touch it
+  - `rigidAxles`  — adjacency list for gears that share a physical axle
+    (co-axial, zero radial offset). These rotate together 1:1 in the same
+    direction, regardless of tooth count.
 
 -}
 type alias GearGraph =
     { instances : Array GearInstance
     , connections : Dict GearId (List GearId)
+    , rigidAxles : Dict GearId (List GearId)
     }

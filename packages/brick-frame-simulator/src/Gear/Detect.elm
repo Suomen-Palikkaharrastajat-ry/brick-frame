@@ -59,11 +59,11 @@ buildGearGraph instances =
         n =
             Array.length arr
 
-        connections =
+        ( connections, rigidAxles ) =
             List.foldl
-                (\i acc ->
+                (\i ( accC, accA ) ->
                     List.foldl
-                        (\j acc2 ->
+                        (\j ( acc2C, acc2A ) ->
                             case ( Array.get i arr, Array.get j arr ) of
                                 ( Just g1, Just g2 ) ->
                                     if meshing g1 g2 then
@@ -71,30 +71,40 @@ buildGearGraph instances =
                                         -- worm→wheel direction so that BFS cannot
                                         -- back-drive a worm from the wheel side.
                                         if isWorm g1.spec then
-                                            acc2 |> addConnection i j
+                                            ( acc2C |> addConnection i j, acc2A )
 
                                         else if isWorm g2.spec then
-                                            acc2 |> addConnection j i
+                                            ( acc2C |> addConnection j i, acc2A )
 
                                         else
-                                            acc2
+                                            ( acc2C
                                                 |> addConnection i j
                                                 |> addConnection j i
+                                            , acc2A
+                                            )
+
+                                    else if coAxial g1 g2 then
+                                        ( acc2C
+                                        , acc2A
+                                            |> addConnection i j
+                                            |> addConnection j i
+                                        )
 
                                     else
-                                        acc2
+                                        ( acc2C, acc2A )
 
                                 _ ->
-                                    acc2
+                                    ( acc2C, acc2A )
                         )
-                        acc
+                        ( accC, accA )
                         (List.range (i + 1) (n - 1))
                 )
-                Dict.empty
+                ( Dict.empty, Dict.empty )
                 (List.range 0 (n - 1))
     in
     { instances = arr
     , connections = connections
+    , rigidAxles = rigidAxles
     }
 
 
@@ -144,6 +154,10 @@ meshing g1 g2 =
                 -- Bevel/crown meshes are approximately perpendicular
                 absDot <= 0.35
 
+            else if isWorm g1.spec || isWorm g2.spec then
+                -- Worm-spur meshes have perpendicular axes
+                absDot <= 0.35
+
             else
                 -- Spur meshes share a common axle direction
                 absDot >= 0.9 && axialOffset <= 2.0
@@ -152,6 +166,33 @@ meshing g1 g2 =
             meshToleranceFor expected
     in
     axisOk && abs (dist - expected) <= radialTolerance
+
+
+{-| True when two gears share a physical axle: parallel axes with negligible
+radial offset between their centres. Such gears rotate together at 1:1.
+-}
+coAxial : GearInstance -> GearInstance -> Bool
+coAxial g1 g2 =
+    let
+        axis1 =
+            gearAxis g1
+
+        centerDelta =
+            Vec3.sub g2.worldPosition g1.worldPosition
+
+        axialProjection =
+            Vec3.dot centerDelta axis1
+
+        radialComponent =
+            Vec3.sub centerDelta (Vec3.scale axialProjection axis1)
+
+        radialOffset =
+            Vec3.length radialComponent
+
+        absDot =
+            abs (Vec3.dot axis1 (gearAxis g2))
+    in
+    absDot >= 0.99 && radialOffset <= 2.0
 
 
 gearAxis : GearInstance -> Vec3

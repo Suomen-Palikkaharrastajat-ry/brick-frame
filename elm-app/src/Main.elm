@@ -1543,7 +1543,7 @@ finishLoading model =
                 |> List.filter
                     (\( line, coaxial ) ->
                         not (isTopLevelGearRef line)
-                            && not (isTopLevelComponentRef line)
+                            && not (isTopLevelAxleRef line)
                             && coaxial
                             == Nothing
                     )
@@ -1555,7 +1555,7 @@ finishLoading model =
                     (\( line, coaxial ) ->
                         case ( line, coaxial ) of
                             ( SubFileRef ref, Just gearId ) ->
-                                if not (isTopLevelGearRef line) && not (isTopLevelComponentRef line) then
+                                if not (isTopLevelGearRef line) && not (isTopLevelAxleRef line) then
                                     Just
                                         { file = ref.file
                                         , color = resolveRootColor ref.color
@@ -1747,11 +1747,11 @@ isTopLevelGearRef line =
             False
 
 
-isTopLevelComponentRef : LDrawLine -> Bool
-isTopLevelComponentRef line =
+isTopLevelAxleRef : LDrawLine -> Bool
+isTopLevelAxleRef line =
     case line of
         SubFileRef ref ->
-            List.any (\spec -> spec.partFile == ref.file) Components.defaultSpecs
+            List.any (\spec -> spec.partFile == ref.file && spec.kind == Components.AxleLike) Components.defaultSpecs
 
         _ ->
             False
@@ -2052,14 +2052,14 @@ buildGearMeshes cache instances =
 
 toYUpPoint : Vec3.Vec3 -> Vec3.Vec3
 toYUpPoint p =
-    Vec3.vec3 (Vec3.getX p) -(Vec3.getY p) (Vec3.getZ p)
+    Vec3.vec3 (Vec3.getX p) -(Vec3.getY p) -(Vec3.getZ p)
 
 
 toYUpAxis : Vec3.Vec3 -> Vec3.Vec3
 toYUpAxis axis =
     let
         raw =
-            Vec3.vec3 (Vec3.getX axis) -(Vec3.getY axis) (Vec3.getZ axis)
+            Vec3.vec3 (Vec3.getX axis) -(Vec3.getY axis) -(Vec3.getZ axis)
 
         len =
             Vec3.length raw

@@ -47,6 +47,7 @@ chainGraph t0 t1 t2 =
             , ( 1, [ 0, 2 ] )
             , ( 2, [ 1 ] )
             ]
+    , rigidAxles = Dict.empty
     }
 
 
@@ -62,6 +63,7 @@ twoGearGraph t0 t1 =
             [ ( 0, [ 1 ] )
             , ( 1, [ 0 ] )
             ]
+    , rigidAxles = Dict.empty
     }
 
 
@@ -73,6 +75,7 @@ isolatedGraph =
             , makeInstance 1 16 24
             ]
     , connections = Dict.empty
+    , rigidAxles = Dict.empty
     }
 
 
@@ -100,6 +103,7 @@ suite =
                         emptyGraph =
                             { instances = Array.fromList [ makeInstance 0 8 16 ]
                             , connections = Dict.empty
+                            , rigidAxles = Dict.empty
                             }
 
                         result =
@@ -171,5 +175,57 @@ suite =
                 \_ ->
                     angleAt Dict.empty 99
                         |> Expect.within (Expect.Absolute 1.0e-6) 0.0
+            ]
+        , describe "propagate — rigid axle"
+            [ test "gear on same axle rotates at the same angle" <|
+                \_ ->
+                    let
+                        rigidGraph =
+                            { instances =
+                                Array.fromList
+                                    [ makeInstance 0 8 10
+                                    , makeInstance 1 8 10
+                                    ]
+                            , connections = Dict.empty
+                            , rigidAxles =
+                                Dict.fromList
+                                    [ ( 0, [ 1 ] )
+                                    , ( 1, [ 0 ] )
+                                    ]
+                            }
+                    in
+                    propagate rigidGraph 0 2.5
+                        |> angleAt
+                        |> (\f -> f 1)
+                        |> Expect.within (Expect.Absolute 1.0e-6) 2.5
+            , test "rigid coupling chains through to a meshing gear" <|
+                \_ ->
+                    -- Gear 0 (motor, 8T) is rigid-coupled to gear 1 (8T),
+                    -- and gear 1 meshes with gear 2 (16T).
+                    -- Expected angle for gear 2: motor * 1 * -(8/16) = -0.5.
+                    let
+                        mixedGraph =
+                            { instances =
+                                Array.fromList
+                                    [ makeInstance 0 8 10
+                                    , makeInstance 1 8 10
+                                    , makeInstance 2 16 20
+                                    ]
+                            , connections =
+                                Dict.fromList
+                                    [ ( 1, [ 2 ] )
+                                    , ( 2, [ 1 ] )
+                                    ]
+                            , rigidAxles =
+                                Dict.fromList
+                                    [ ( 0, [ 1 ] )
+                                    , ( 1, [ 0 ] )
+                                    ]
+                            }
+                    in
+                    propagate mixedGraph 0 1.0
+                        |> angleAt
+                        |> (\f -> f 2)
+                        |> Expect.within (Expect.Absolute 1.0e-6) -0.5
             ]
         ]

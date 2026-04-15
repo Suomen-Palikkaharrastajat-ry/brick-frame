@@ -314,4 +314,56 @@ suite =
                         |> Maybe.withDefault []
                         |> Expect.equal []
             ]
+        , describe "buildGearGraph — rigidAxles"
+            [ test "two gears on the same Z-axis → co-axial coupling" <|
+                \_ ->
+                    -- Both gears use identity transform → axis is Z.
+                    -- They are separated along Z only, so radial offset = 0.
+                    let
+                        g1 =
+                            { id = 0, spec = spec8T, color = 16, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
+
+                        g2 =
+                            { id = 1, spec = spec16T, color = 16, worldPosition = vec3 0 0 40, worldMatrix = Mat4.identity }
+
+                        graph =
+                            buildGearGraph [ g1, g2 ]
+                    in
+                    Expect.all
+                        [ \g -> Dict.get 0 g.rigidAxles |> Maybe.withDefault [] |> List.member 1 |> Expect.equal True
+                        , \g -> Dict.get 1 g.rigidAxles |> Maybe.withDefault [] |> List.member 0 |> Expect.equal True
+                        ]
+                        graph
+            , test "co-axial gears do NOT appear in meshing connections" <|
+                \_ ->
+                    let
+                        g1 =
+                            { id = 0, spec = spec8T, color = 16, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
+
+                        g2 =
+                            { id = 1, spec = spec16T, color = 16, worldPosition = vec3 0 0 40, worldMatrix = Mat4.identity }
+
+                        graph =
+                            buildGearGraph [ g1, g2 ]
+                    in
+                    Dict.get 0 graph.connections
+                        |> Maybe.withDefault []
+                        |> Expect.equal []
+            , test "two gears with parallel but offset axes → not co-axial" <|
+                \_ ->
+                    -- Shifted 5 LDU radially — axes are parallel but not the same shaft.
+                    let
+                        g1 =
+                            { id = 0, spec = spec8T, color = 16, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity }
+
+                        g2 =
+                            { id = 1, spec = spec16T, color = 16, worldPosition = vec3 5 0 40, worldMatrix = Mat4.identity }
+
+                        graph =
+                            buildGearGraph [ g1, g2 ]
+                    in
+                    Dict.get 0 graph.rigidAxles
+                        |> Maybe.withDefault []
+                        |> Expect.equal []
+            ]
         ]

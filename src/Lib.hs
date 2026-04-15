@@ -140,6 +140,8 @@ knownGears =
     , GearSpec "3648.dat" 24 30.0 -- 24T (was 38.4)
     , GearSpec "3649.dat" 40 50.0 -- 40T (was 56.0)
     , GearSpec "4716.dat" 1 6.0 -- worm gear (empirical; unchanged)
+    , GearSpec "32905.dat" 1 6.0 -- worm screw long Type II (empirical, same as 4716)
+    , GearSpec "69778.dat" 12 5.5 -- 12T gear with axle hole (empirical; R+R≈11.5 LDU)
     , GearSpec "32198.dat" 20 25.0 -- bevel 20T (was 32.0)
     , GearSpec "32269.dat" 20 25.0 -- double bevel 20T (was 32.0)
     , GearSpec "3650b.dat" 24 30.0 -- crown gear (was 38.4)

@@ -84,8 +84,14 @@ bfsStep graph queue visited angles =
                 neighbours =
                     Dict.get currentId graph.connections |> Maybe.withDefault []
 
+                rigidNeighbours =
+                    Dict.get currentId graph.rigidAxles |> Maybe.withDefault []
+
                 unvisited =
                     List.filter (\n -> not (Set.member n visited)) neighbours
+
+                unvisitedRigid =
+                    List.filter (\n -> not (Set.member n visited)) rigidNeighbours
 
                 ( newVisited, newAngles, newEntries ) =
                     List.foldl
@@ -106,8 +112,22 @@ bfsStep graph queue visited angles =
                         )
                         ( visited, angles, [] )
                         unvisited
+
+                ( newVisited2, newAngles2, newEntries2 ) =
+                    List.foldl
+                        (\neighbourId ( vis, ang, entries ) ->
+                            ( Set.insert neighbourId vis
+                            , Dict.insert neighbourId currentAngle ang
+                            , ( neighbourId, currentAngle ) :: entries
+                            )
+                        )
+                        ( newVisited, newAngles, [] )
+                        unvisitedRigid
             in
-            bfsStep graph (rest ++ List.reverse newEntries) newVisited newAngles
+            bfsStep graph
+                (rest ++ List.reverse newEntries ++ List.reverse newEntries2)
+                newVisited2
+                newAngles2
 
 
 gearTeeth : GearGraph -> GearId -> Maybe Int

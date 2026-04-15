@@ -869,7 +869,7 @@ export function initBricksRuntime(options) {
     fileInput.type = 'file'
     fileInput.accept = '.ldr,.mpd,.dat,.io'
     fileInput.style.display = 'none'
-    ownerDocument.body?.appendChild(fileInput)
+    node.appendChild(fileInput)
 
     addEventListener(fileInput, 'change', () => {
       const file = fileInput.files?.[0]
@@ -931,7 +931,7 @@ export function initBricksRuntime(options) {
     hasResizeObserver = true
   }
 
-  if (ownerWindow) {
+  if (ownerWindow && !hasResizeObserver) {
     addEventListener(ownerWindow, 'resize', measureAndEmitViewportSize)
     addEventListener(ownerWindow, 'orientationchange', measureAndEmitViewportSize)
   }
