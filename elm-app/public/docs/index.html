@@ -508,7 +508,6 @@ ${snippet}
     function createPlayground() {
       const container = document.querySelector('[data-playground="viewer"]')
       const mode = 'viewer'
-      const modeTitle = 'Katselin'
 
       const state = {
         bundleUrl: DEFAULT_BUNDLE_URL,
@@ -516,14 +515,10 @@ ${snippet}
       }
 
       container.innerHTML = `
-        <div class="playground-header">
-          <h2>${modeTitle}-leikkikenttä</h2>
-          <span>&lt;bricks-viewer&gt;</span>
-        </div>
         <div class="playground-grid">
           <div class="preview-pane">
-            <p class="preview-label">Reaaliaikainen esikatselu</p>
-            <iframe class="preview-frame" title="${modeTitle}-esikatselu"></iframe>
+            <p class="preview-label">Esikatselu</p>
+            <iframe class="preview-frame" title="Esikatselu"></iframe>
           </div>
           <div class="editor-pane">
             <div class="editor-controls">
