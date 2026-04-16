@@ -408,7 +408,7 @@
               : key
 
         const defaultValue = String(DEFAULT_ELEMENT_STATE[stateKey] ?? '').trim()
-        if (normalized && normalized !== defaultValue) {
+        if (normalized && (key === 'src' || normalized !== defaultValue)) {
           attrs.push(`${key}="${escapeHtml(normalized)}"`)
         }
       })
