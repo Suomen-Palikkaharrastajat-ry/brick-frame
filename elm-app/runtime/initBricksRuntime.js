@@ -13,7 +13,7 @@ function pathFromBase(relativePath) {
 const defaultLdrawBase = pathFromBase('ldraw')
 const defaultFallbackBase = ''
 const defaultMaxRpm = 50
-const defaultModelUrl = pathFromBase('examples/gears.ldr')
+const defaultModelUrl = pathFromBase('examples/wheeler.ldr')
 const defaultWorkerMode = 'auto'
 const defaultWorkerUrl = ''
 const allowedExtensions = new Set(['.ldr', '.mpd', '.dat', '.io'])
