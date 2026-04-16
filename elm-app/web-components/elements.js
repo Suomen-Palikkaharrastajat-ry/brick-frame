@@ -43,6 +43,7 @@ class BaseBricksElement extends HTMLElement {
     return [
       'src',
       'controls',
+      'debug',
       'ldraw-base',
       'ldraw-fallback-base',
       'max-rpm',
@@ -196,6 +197,41 @@ class BaseBricksElement extends HTMLElement {
         composed: true,
       }),
     )
+    if (type === 'camera-changed' && this.hasAttribute('debug')) {
+      console.log(this.debugTagString(eventPayload))
+    }
+  }
+
+  debugTagString(cameraPayload) {
+    const tagName = this.tagName.toLowerCase()
+    const cameraAttrNames = new Set([
+      'camera-azimuth',
+      'camera-elevation',
+      'camera-distance',
+      'camera-target-x',
+      'camera-target-y',
+      'camera-target-z',
+    ])
+    const parts = []
+    for (const attr of this.attributes) {
+      if (attr.name === 'debug' || cameraAttrNames.has(attr.name)) continue
+      parts.push(`${attr.name}="${attr.value}"`)
+    }
+    const camValues = {
+      'camera-azimuth': cameraPayload?.azimuthDeg,
+      'camera-elevation': cameraPayload?.elevationDeg,
+      'camera-distance': cameraPayload?.distance,
+      'camera-target-x': cameraPayload?.targetX,
+      'camera-target-y': cameraPayload?.targetY,
+      'camera-target-z': cameraPayload?.targetZ,
+    }
+    for (const [name, value] of Object.entries(camValues)) {
+      if (value != null) {
+        parts.push(`${name}="${value}"`)
+      }
+    }
+    const attrsStr = parts.length > 0 ? ' ' + parts.join(' ') : ''
+    return `<${tagName}${attrsStr}></${tagName}>`
   }
 
   async loadFromText(text, filename = 'inline.ldr') {
