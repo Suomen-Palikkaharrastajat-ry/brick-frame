@@ -94,10 +94,7 @@ world matrix. The test depends on gear type:
 | Spur (default) | `absDot(axis1, axis2) ≥ 0.9` AND axial offset ≤ 2 LDU |
 | Crown (`3650b.dat`) | `absDot(axis1, axis2) ≤ 0.35` (perpendicular) |
 | Bevel (`32198.dat`, `32269.dat`) | `absDot(axis1, axis2) ≤ 0.35` (perpendicular) |
-
-A worm gear (`4716.dat`) currently passes through the default spur axis check;
-its perpendicular engagement with a driven gear is handled by the distance test
-in practice.
+| Worm (`4716.dat`, `32905.dat`) | `absDot(axis1, axis2) ≤ 0.35` (perpendicular) |
 
 ## Rotation propagation
 

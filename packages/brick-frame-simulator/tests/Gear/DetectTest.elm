@@ -54,6 +54,16 @@ specCrown24T =
     { partFile = "3650b.dat", teeth = 24, pitchRadius = 30.0 }
 
 
+specWorm : GearSpec
+specWorm =
+    { partFile = "4716.dat", teeth = 1, pitchRadius = 12.0 }
+
+
+spec12T : GearSpec
+spec12T =
+    { partFile = "69778.dat", teeth = 12, pitchRadius = 12.0 }
+
+
 testGearSpecs : List GearSpec
 testGearSpecs =
     [ spec8T
@@ -313,6 +323,62 @@ suite =
                     Dict.get 0 graph.connections
                         |> Maybe.withDefault []
                         |> Expect.equal []
+            , test "worm drives 12T when axes are perpendicular and centres are 24 LDU apart" <|
+                \_ ->
+                    -- Mirrors wheeler-plain.ldr: worm axis along X (identity Z→X via 90° Y rotation),
+                    -- 12T axis along Z (identity). Centre distance = 24 LDU along Y.
+                    let
+                        worm =
+                            { id = 0
+                            , spec = specWorm
+                            , color = 16
+                            , worldPosition = vec3 0 0 0
+                            , worldMatrix = Mat4.makeRotate (pi / 2) (vec3 0 1 0)
+                            }
+
+                        gear12T =
+                            { id = 1
+                            , spec = spec12T
+                            , color = 16
+                            , worldPosition = vec3 0 24 0
+                            , worldMatrix = Mat4.identity
+                            }
+
+                        graph =
+                            buildGearGraph [ worm, gear12T ]
+                    in
+                    Dict.get 0 graph.connections
+                        |> Maybe.withDefault []
+                        |> List.member 1
+                        |> Expect.equal True
+            , test "worm→12T connection is one-way (self-locking)" <|
+                \_ ->
+                    let
+                        worm =
+                            { id = 0
+                            , spec = specWorm
+                            , color = 16
+                            , worldPosition = vec3 0 0 0
+                            , worldMatrix = Mat4.makeRotate (pi / 2) (vec3 0 1 0)
+                            }
+
+                        gear12T =
+                            { id = 1
+                            , spec = spec12T
+                            , color = 16
+                            , worldPosition = vec3 0 24 0
+                            , worldMatrix = Mat4.identity
+                            }
+
+                        graph =
+                            buildGearGraph [ worm, gear12T ]
+                    in
+                    -- worm → 12T exists, but 12T → worm must not
+                    Expect.all
+                        [ \g -> Dict.get 0 g.connections |> Maybe.withDefault [] |> List.member 1 |> Expect.equal True
+                        , \g -> Dict.get 1 g.connections |> Maybe.withDefault [] |> Expect.equal []
+                        ]
+                        graph
             ]
         , describe "buildGearGraph — rigidAxles"
             [ test "two gears on the same Z-axis → co-axial coupling" <|
