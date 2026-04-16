@@ -302,6 +302,17 @@ function createFileReader({ reportLoadError, pushFileText }) {
       if (extension === '.io') {
         const buffer = await response.arrayBuffer()
         pushFileText(extractLdrawFromStudioArchive(buffer))
+      } else if (extension === null) {
+        // URL carries no recognisable extension (e.g. blob: URLs from the docs
+        // playground). Sniff for ZIP magic bytes (PK = 0x50 0x4B); if found,
+        // treat as a BrickLink Studio .io archive, otherwise decode as text.
+        const buffer = await response.arrayBuffer()
+        const magic = new Uint8Array(buffer, 0, 2)
+        if (magic[0] === 0x50 && magic[1] === 0x4b) {
+          pushFileText(extractLdrawFromStudioArchive(buffer))
+        } else {
+          pushFileText(new TextDecoder('utf-8').decode(buffer))
+        }
       } else {
         pushFileText(await response.text())
       }
