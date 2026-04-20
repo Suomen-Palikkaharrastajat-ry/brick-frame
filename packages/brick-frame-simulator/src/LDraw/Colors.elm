@@ -165,6 +165,7 @@ colorTable =
         , ( 334, { r = 0.769, g = 0.608, b = 0.224, alpha = 1.0 } ) -- Pearl Gold
         , ( 335, { r = 0.694, g = 0.49, b = 0.459, alpha = 1.0 } ) -- Sand Red
         , ( 366, { r = 0.671, g = 0.376, b = 0.071, alpha = 1.0 } ) -- Earth Orange
+        , ( 371, { r = 0.8, g = 0.639, b = 0.451, alpha = 1.0 } ) -- Medium Tan
         , ( 373, { r = 0.58, g = 0.486, b = 0.592, alpha = 1.0 } ) -- Sand Purple
         , ( 378, { r = 0.482, g = 0.608, b = 0.518, alpha = 1.0 } ) -- Sand Green
         , ( 379, { r = 0.427, g = 0.518, b = 0.616, alpha = 1.0 } ) -- Sand Blue

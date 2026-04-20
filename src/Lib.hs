@@ -111,6 +111,7 @@ ldrawColors =
     , LDrawColor 334 "Pearl Gold" 0.769 0.608 0.224 1.0
     , LDrawColor 335 "Sand Red" 0.694 0.490 0.459 1.0
     , LDrawColor 366 "Earth Orange" 0.671 0.376 0.071 1.0
+    , LDrawColor 371 "Medium Tan" 0.800 0.639 0.451 1.0
     , LDrawColor 373 "Sand Purple" 0.580 0.486 0.592 1.0
     , LDrawColor 378 "Sand Green" 0.482 0.608 0.518 1.0
     , LDrawColor 379 "Sand Blue" 0.427 0.518 0.616 1.0

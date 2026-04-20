@@ -588,15 +588,18 @@ export function initBricksRuntime(options) {
   const sanitizedEdgeWidth = Number.isFinite(parsedEdgeWidth) ? parsedEdgeWidth : null
 
   // .io files are ZIP archives (binary) — Elm's Http.expectString would corrupt them.
-  // Pass an empty defaultModelUrl so Elm starts idle; we load via the JS binary path below.
-  const defaultModelIsIo = inferFileExtension(String(defaultModel ?? '')) === '.io'
+  // Extensionless URLs (for example blob: URLs in docs playground) can also point to .io
+  // payloads, so route those through the JS loader too where we can sniff ZIP magic bytes.
+  const defaultModelExtension = inferFileExtension(String(defaultModel ?? ''))
+  const defaultModelNeedsJsLoader =
+    defaultModelExtension === '.io' || defaultModelExtension === null
 
   const app = Elm.Main.init({
     node,
     flags: {
       ldrawBase,
       ldrawFallbackBase,
-      defaultModelUrl: defaultModelIsIo ? '' : String(defaultModel ?? ''),
+      defaultModelUrl: defaultModelNeedsJsLoader ? '' : String(defaultModel ?? ''),
       initialHash,
       maxRpm: sanitizedMaxRpm,
       uiMode: normalizeMode(mode),
@@ -814,9 +817,8 @@ export function initBricksRuntime(options) {
 
   const { readLdrawFile, loadFromUrl } = createFileReader({ reportLoadError, pushFileText })
 
-  // If the default model is a .io archive, load it now via the binary path
-  // (Elm's Http.expectString cannot handle binary ZIP data).
-  if (defaultModelIsIo && defaultModel) {
+  // If default model loading is handled in JS, load it now through the binary-safe path.
+  if (defaultModelNeedsJsLoader && defaultModel) {
     loadFromUrl(String(defaultModel))
   }
 
