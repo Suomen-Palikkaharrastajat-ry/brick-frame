@@ -33,10 +33,12 @@ import Ports
 import Render.Camera as Camera exposing (Camera)
 import Render.EdgeShader as EdgeShader exposing (EdgeVertex)
 import Render.GuideShader as GuideShader
+import Render.Instanced as Instanced exposing (InstancedScene)
 import Render.Mesh exposing (Vertex)
 import Render.Scene as Scene exposing (Scene)
 import Render.Shader as Shader
 import Render.Style as Style
+import Set exposing (Set)
 import Task
 import Time
 import UI.FileUpload as FileUpload
@@ -122,6 +124,9 @@ type alias Model =
     , partsLoaded : Int
     , partsTotal : Int
     , scene : Maybe Scene
+    , instancedScene : Maybe InstancedScene
+    , submodelNames : Set String
+    , refineFrames : Int
     , errorMsg : Maybe String
     , gearGraph : Maybe GearGraph
     , gearMeshes : Dict GearId GearRender
@@ -258,6 +263,9 @@ init flags =
       , partsLoaded = 0
       , partsTotal = 0
       , scene = Nothing
+      , instancedScene = Nothing
+      , submodelNames = Set.empty
+      , refineFrames = 0
       , errorMsg = Nothing
       , gearGraph = Nothing
       , gearMeshes = Dict.empty
@@ -462,11 +470,29 @@ cameraChangedEventCmd camera =
 
 cameraChangedIfNeededCmd : Camera -> Camera -> Cmd Msg
 cameraChangedIfNeededCmd before after =
-    if before.azimuth /= after.azimuth || before.elevation /= after.elevation || before.distance /= after.distance || Vec3.getX before.target /= Vec3.getX after.target || Vec3.getY before.target /= Vec3.getY after.target || Vec3.getZ before.target /= Vec3.getZ after.target then
+    if cameraMoved before after then
         cameraChangedEventCmd after
 
     else
         Cmd.none
+
+
+{-| Whether the viewpoint actually changed, ignoring drag bookkeeping fields.
+-}
+cameraMoved : Camera -> Camera -> Bool
+cameraMoved before after =
+    before.azimuth
+        /= after.azimuth
+        || before.elevation
+        /= after.elevation
+        || before.distance
+        /= after.distance
+        || Vec3.getX before.target
+        /= Vec3.getX after.target
+        || Vec3.getY before.target
+        /= Vec3.getY after.target
+        || Vec3.getZ before.target
+        /= Vec3.getZ after.target
 
 
 partsProgressPct : Int -> Int -> Float
@@ -491,8 +517,59 @@ update msg model =
     -- Refresh per-gear LOD after every update so that any camera or gear-mesh
     -- change is reflected before the next render. `chooseLod` carries the
     -- previous LOD, giving hysteresis across frames. This single choke point
-    -- avoids threading the refresh through every camera-mutating branch.
-    ( { newModel | gearLods = refreshGearLods newModel }, cmd )
+    -- avoids threading the refresh through every camera-mutating branch, and
+    -- is also where the instanced renderer's settle countdown is maintained.
+    ( { newModel
+        | gearLods = refreshGearLods newModel
+        , refineFrames = nextRefineFrames msg model newModel
+      }
+    , cmd
+    )
+
+
+{-| Countdown of frames still to be drawn at reduced detail.
+
+Any camera movement refills it; each animation frame that does not move the
+camera spends one. When it reaches zero the next frame is drawn at full detail.
+Counting frames rather than milliseconds keeps this in step with the
+`onAnimationFrame` subscription that `needsAnimationFrame` gates, so the
+refinement frame is guaranteed to actually be rendered before the subscription
+goes quiet again.
+
+-}
+nextRefineFrames : Msg -> Model -> Model -> Int
+nextRefineFrames msg before after =
+    if cameraMoved before.camera after.camera then
+        coarseFrameCount
+
+    else
+        case msg of
+            AnimationFrame _ ->
+                max 0 (after.refineFrames - 1)
+
+            _ ->
+                after.refineFrames
+
+
+{-| How many frames to keep coarsening after the last camera movement.
+At 60 fps this is a little over 100 ms — long enough to cover the gap between
+consecutive wheel events, short enough to feel immediate on release.
+-}
+coarseFrameCount : Int
+coarseFrameCount =
+    8
+
+
+{-| Whether the next frame should be drawn one detail band coarser.
+
+Only static scenes get this treatment. A model with a running simulation is
+redrawing continuously and has no settled state to refine towards, so trading
+detail for latency there would simply make it permanently coarse.
+
+-}
+cameraIsMoving : Model -> Bool
+cameraIsMoving model =
+    not model.simulationAvailable && model.refineFrames > 0
 
 
 {-| Recompute each gear's level of detail from its distance to the camera,
@@ -502,7 +579,7 @@ refreshGearLods : Model -> Dict GearId Lod
 refreshGearLods model =
     let
         viewPos =
-            cameraPosition model.camera
+            Camera.position model.camera
     in
     Dict.map
         (\id rendered ->
@@ -1155,6 +1232,8 @@ resetForLoad url m =
     { m
         | loadPhase = FetchingTopLevel url
         , scene = Nothing
+        , instancedScene = Nothing
+        , submodelNames = Set.empty
         , errorMsg = Nothing
         , topLevelLines = []
         , partsLoaded = 0
@@ -1448,31 +1527,54 @@ autoFitCamera width height lines cache currentCamera =
 
                 radius =
                     max 1 (sqrt (extentX * extentX + extentY * extentY + extentZ * extentZ) / 2)
-
-                aspect =
-                    toFloat width / max 1 (toFloat height)
-
-                fovY =
-                    45 * pi / 180
-
-                fovX =
-                    2 * atan (tan (fovY / 2) * aspect)
-
-                limitingHalfFov =
-                    max 0.15 (min (fovX / 2) (fovY / 2))
-
-                distanceForSphere =
-                    radius / sin limitingHalfFov
-
-                distance =
-                    clamp 8 5000 (distanceForSphere * 1.25)
             in
-            { currentCamera
-                | target = center
-                , distance = distance
-                , azimuth = 0.75
-                , elevation = 0.6
-            }
+            cameraForBounds width height center radius currentCamera
+
+
+{-| Frame a bounding sphere: orbit far enough back that it fits the narrower of
+the two field-of-view angles, from the default three-quarter viewpoint.
+
+Split out of `autoFitCamera` so the instanced path can reuse it with bounds
+derived from placement spheres, instead of flattening the whole model just to
+measure it.
+
+-}
+cameraForBounds : Int -> Int -> Vec3.Vec3 -> Float -> Camera -> Camera
+cameraForBounds width height center radius currentCamera =
+    let
+        aspect =
+            toFloat width / max 1 (toFloat height)
+
+        fovY =
+            45 * pi / 180
+
+        fovX =
+            2 * atan (tan (fovY / 2) * aspect)
+
+        limitingHalfFov =
+            max 0.15 (min (fovX / 2) (fovY / 2))
+
+        distanceForSphere =
+            radius / sin limitingHalfFov
+    in
+    { currentCamera
+        | target = center
+        , distance = clamp 8 maxAutoFitDistance (distanceForSphere * 1.25)
+        , azimuth = 0.75
+        , elevation = 0.6
+    }
+
+
+{-| Upper bound on the auto-fit orbit distance, in LDU.
+
+A city-scale model needs to be viewed from several thousand LDU out; the clip
+planes now scale with orbit distance (`Render.Camera.farPlane`), so there is no
+longer a fixed far plane for this to stay under.
+
+-}
+maxAutoFitDistance : Float
+maxAutoFitDistance =
+    200000
 
 
 {-| Shared handler for HTTP-fetched and file-uploaded LDraw text.
@@ -1482,6 +1584,17 @@ handleTopLevelText text model =
     let
         isMpd =
             String.contains "0 FILE " text
+
+        -- The names of the model's own embedded sub-models, as opposed to the
+        -- library parts fetched over HTTP. `Render.Instanced` recurses through
+        -- these and stops at everything else, so one placement comes out per
+        -- physical brick.
+        submodelNames =
+            if isMpd then
+                Parser.splitMpd text |> Dict.keys |> Set.fromList
+
+            else
+                Set.empty
 
         ( seededCache, lines ) =
             if isMpd then
@@ -1533,10 +1646,12 @@ handleTopLevelText text model =
             { model
                 | topLevelLines = lines
                 , partCache = cacheWithLoading
+                , submodelNames = submodelNames
                 , loadPhase = ResolvingParts
                 , partsTotal = List.length pending
                 , partsLoaded = 0
                 , scene = Nothing
+                , instancedScene = Nothing
                 , errorMsg = Nothing
                 , gearGraph = Nothing
                 , gearMeshes = Dict.empty
@@ -1571,9 +1686,96 @@ handleTopLevelText text model =
 
 
 {-| Called when all parts have been resolved. Build the scene and gear graph.
+
+Model size is measured first, because every step below — gear detection, the
+auto-fit flatten, and the geometry worker — walks the fully expanded part tree
+and none of them are viable at city scale. Above `Instanced` threshold the model
+takes the instanced path instead; see `finishLoadingInstanced`.
+
 -}
 finishLoading : Model -> ( Model, Cmd Msg )
 finishLoading model =
+    let
+        placements =
+            Instanced.extractPlacements model.submodelNames model.topLevelLines model.partCache rootColorCode
+    in
+    if Instanced.triangleBudgetExceeded (List.length placements) then
+        finishLoadingInstanced placements model
+
+    else
+        finishLoadingBaked model
+
+
+{-| The root inherited colour: LDraw code 15 (white), matching the value passed
+to `Geometry.flatten` everywhere else.
+-}
+rootColorCode : Int
+rootColorCode =
+    15
+
+
+{-| Large-model path: build per-part meshes and per-placement transforms.
+
+Gear detection is deliberately skipped. `Detect.extractGears` recurses through
+every sub-file down to the primitives, which on a model this size is millions of
+nodes for a walk that is almost certainly going to come back empty — a model of
+this scale is a display piece, not a mechanism. The runtime event says so
+explicitly rather than leaving the missing simulation unexplained.
+
+-}
+finishLoadingInstanced : List Instanced.RawPlacement -> Model -> ( Model, Cmd Msg )
+finishLoadingInstanced placements model =
+    let
+        instanced =
+            Instanced.build model.partCache placements
+
+        nextCamera =
+            case model.cameraMode of
+                CameraAutoFit ->
+                    cameraForBounds model.width
+                        model.height
+                        (Vec3.scale 0.5 (Vec3.add instanced.boundsMin instanced.boundsMax))
+                        (max 1 (0.5 * Vec3.length (Vec3.sub instanced.boundsMax instanced.boundsMin)))
+                        model.camera
+
+                CameraManual ->
+                    model.camera
+
+        updatedModel =
+            { model
+                | camera = nextCamera
+                , scene = Nothing
+                , instancedScene = Just instanced
+                , loadPhase = Ready
+                , gearGraph = Nothing
+                , gearMeshes = Dict.empty
+                , gearLods = Dict.empty
+                , components = []
+                , componentMeshes = []
+                , componentRenders = []
+                , gearAngles = Dict.empty
+                , simulationChecked = True
+                , simulationAvailable = False
+                , loadingProgressPct = 100
+                , loadingProgressTick = Nothing
+            }
+    in
+    ( updatedModel
+    , Cmd.batch
+        [ runtimeEventCmd "simulation-unavailable"
+            [ ( "reason", Encode.string "Model too large for gear detection" )
+            , ( "partCount", Encode.int (List.length placements) )
+            ]
+        , modelLoadedEventCmd updatedModel
+        , cameraChangedIfNeededCmd model.camera nextCamera
+        ]
+    )
+
+
+{-| Original path: detect gears, then bake world-space geometry in the worker.
+-}
+finishLoadingBaked : Model -> ( Model, Cmd Msg )
+finishLoadingBaked model =
     let
         nextCamera =
             case model.cameraMode of
@@ -2018,8 +2220,10 @@ triangleDecoder =
 
 vertexDecoder : Decode.Decoder Vertex
 vertexDecoder =
+    -- The worker bakes world-space geometry with colours already resolved, so
+    -- nothing it produces inherits from a placement.
     Decode.map3
-        (\p n c -> { position = p, normal = n, color = c })
+        (\p n c -> { position = p, normal = n, color = c, inherit = 0 })
         (Decode.field "position" vec3Decoder)
         (Decode.field "normal" vec3Decoder)
         (Decode.field "color" vec4Decoder)
@@ -2203,7 +2407,7 @@ renderGearEntities camera styleInput aspect model =
                     Camera.projectionMatrix aspect 0.1 2000.0
 
                 viewPos =
-                    cameraPosition camera
+                    Camera.position camera
             in
             graph.instances
                 |> Array.toList
@@ -2237,6 +2441,7 @@ renderGearEntities camera styleInput aspect model =
                                             , projectionMatrix = projMat
                                             , viewPosition = viewPos
                                             , lightDirection = style.lightDirection
+                                            , instanceColor = Shader.noInstanceColor
                                             , ambientStrength = style.ambientStrength
                                             , lightStrength = style.lightStrength
                                             , specularStrength = style.specularStrength
@@ -2832,7 +3037,7 @@ renderComponentEntities camera styleInput aspect model =
             Camera.projectionMatrix aspect 0.1 2000.0
 
         viewPos =
-            cameraPosition camera
+            Camera.position camera
     in
     model.componentMeshes
         |> List.filter (\c -> isSphereVisible camera aspect c.center 10.0)
@@ -2856,6 +3061,7 @@ renderComponentEntities camera styleInput aspect model =
                         , projectionMatrix = projMat
                         , viewPosition = viewPos
                         , lightDirection = style.lightDirection
+                        , instanceColor = Shader.noInstanceColor
                         , ambientStrength = style.ambientStrength
                         , lightStrength = style.lightStrength
                         , specularStrength = style.specularStrength
@@ -2918,7 +3124,7 @@ isSphereVisible : Camera -> Float -> Vec3.Vec3 -> Float -> Bool
 isSphereVisible camera aspect center radius =
     let
         eye =
-            cameraPosition camera
+            Camera.position camera
 
         forwardRaw =
             Vec3.sub camera.target eye
@@ -3096,7 +3302,7 @@ screenRayFromMouse mouseX mouseY model =
                 1 - (2 * mouseY / heightF)
 
             eye =
-                cameraPosition model.camera
+                Camera.position model.camera
 
             forwardRaw =
                 Vec3.sub model.camera.target eye
@@ -3163,21 +3369,6 @@ screenRayFromMouse mouseX mouseY model =
                     Just ( eye, Vec3.scale (1 / dirLen) dirRaw )
 
 
-cameraPosition : Camera -> Vec3.Vec3
-cameraPosition cam =
-    let
-        x =
-            cam.distance * sin cam.azimuth * cos cam.elevation
-
-        y =
-            cam.distance * sin cam.elevation
-
-        z =
-            cam.distance * cos cam.azimuth * cos cam.elevation
-    in
-    Vec3.add cam.target (Vec3.vec3 x y z)
-
-
 raySphereHit : Vec3.Vec3 -> Vec3.Vec3 -> Vec3.Vec3 -> Float -> Maybe Float
 raySphereHit rayOrigin rayDir center radius =
     let
@@ -3225,15 +3416,18 @@ raySphereHit rayOrigin rayDir center radius =
 frames. When this is `False` we drop the `onAnimationFrame` subscription entirely
 so a static model stops forcing a full update/view/diff at 60 fps.
 
-The three cases mirror the only branches of the `AnimationFrame` handler that do
-real work: driving the flattening progress bar, applying a held rotate button,
-and advancing the gear playback clock.
+The cases mirror the only branches of the `AnimationFrame` handler that do real
+work: driving the flattening progress bar, applying a held rotate button,
+advancing the gear playback clock, and spending down the instanced renderer's
+settle countdown so the refined frame gets drawn after the camera stops.
 
 -}
 needsAnimationFrame : Model -> Bool
 needsAnimationFrame model =
     model.playback.running
         || (model.loadPhase == FlatteningGeometry)
+        || model.refineFrames
+        > 0
         || (case model.heldControl of
                 NoHeldControl ->
                     False
@@ -3377,14 +3571,24 @@ viewCanvas model =
             toFloat model.width / toFloat model.height
 
         entities =
-            case model.scene of
-                Just scene ->
+            case ( model.scene, model.instancedScene ) of
+                ( Just scene, _ ) ->
                     Scene.renderSceneWithStyle scene model.camera model.renderStyle model.width model.height
                         ++ renderGearEntities model.camera model.renderStyle aspect model
                         ++ renderComponentEntities model.camera model.renderStyle aspect model
                         ++ renderComponentArrows model.camera aspect model
 
-                Nothing ->
+                ( Nothing, Just instanced ) ->
+                    Instanced.render
+                        { camera = model.camera
+                        , style = model.renderStyle
+                        , width = model.width
+                        , height = model.height
+                        , coarsen = cameraIsMoving model
+                        }
+                        instanced
+
+                ( Nothing, Nothing ) ->
                     []
     in
     WebGL.toHtml

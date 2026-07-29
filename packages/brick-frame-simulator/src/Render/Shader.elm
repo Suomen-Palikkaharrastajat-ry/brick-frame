@@ -1,16 +1,21 @@
-module Render.Shader exposing (Uniforms, fragmentShader, vertexShader)
+module Render.Shader exposing (Uniforms, fragmentShader, noInstanceColor, vertexShader)
 
 {-| Lightweight plastic shading GLSL programs for triangle mesh rendering.
 -}
 
 import Math.Matrix4 exposing (Mat4)
 import Math.Vector3 exposing (Vec3)
-import Math.Vector4 exposing (Vec4)
+import Math.Vector4 as Vec4 exposing (Vec4)
 import Render.Mesh exposing (Vertex)
 import WebGL exposing (Shader)
 
 
 {-| Uniforms shared between vertex and fragment shaders.
+
+`instanceColor` is the colour substituted into vertices flagged as inheriting
+(see `Render.Mesh.Vertex`). Paths that bake colours into the geometry pass
+white here and are unaffected, because no vertex they produce is flagged.
+
 -}
 type alias Uniforms =
     { modelMatrix : Mat4
@@ -18,6 +23,7 @@ type alias Uniforms =
     , projectionMatrix : Mat4
     , viewPosition : Vec3
     , lightDirection : Vec3
+    , instanceColor : Vec4
     , ambientStrength : Float
     , lightStrength : Float
     , specularStrength : Float
@@ -26,6 +32,14 @@ type alias Uniforms =
     , rimPower : Float
     , vibrance : Float
     }
+
+
+{-| The colour to pass as `instanceColor` when geometry already carries its own
+resolved colours.
+-}
+noInstanceColor : Vec4
+noInstanceColor =
+    Vec4.vec4 1 1 1 1
 
 
 type alias Varyings =
@@ -45,10 +59,12 @@ vertexShader =
         attribute vec3 position;
         attribute vec3 normal;
         attribute vec4 color;
+        attribute float inherit;
 
         uniform mat4 modelMatrix;
         uniform mat4 viewMatrix;
         uniform mat4 projectionMatrix;
+        uniform vec4 instanceColor;
 
         varying vec4 vColor;
         varying vec3 vNormalWorld;
@@ -57,7 +73,10 @@ vertexShader =
         void main() {
             vec4 worldPosition = modelMatrix * vec4(position, 1.0);
             gl_Position = projectionMatrix * viewMatrix * worldPosition;
-            vColor = color;
+            // inherit is 1.0 only on surfaces that took LDraw colour 16 all the
+            // way down, which is what lets one baked mesh serve every colour a
+            // part is placed in.
+            vColor = mix(color, instanceColor, inherit);
             // Transform normal to world space (assumes uniform scale)
             vNormalWorld = mat3(modelMatrix) * normal;
             vPositionWorld = worldPosition.xyz;

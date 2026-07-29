@@ -159,7 +159,14 @@ There are still no point lights, spotlights, shadows, or reflections.
 Mouse drag updates `azimuth` and `elevation` at 0.005 rad/px. Scroll wheel
 scales `distance` by `1 + delta × 0.001`.
 
-Projection: `Mat4.makePerspective 45 aspect 0.1 2000.0` (FOV 45°, clip 0.1–2000 LDU).
+Projection: `Mat4.makePerspective 45 aspect near far` (FOV 45°).
+
+Clip planes scale with orbit distance rather than being fixed:
+`Camera.nearPlane` is `distance / 1000` and `Camera.farPlane` is
+`distance × 10`. A city-scale model is framed from several thousand LDU out, so
+the previous constant `0.1–2000` range clipped it away entirely; tying both
+planes to orbit distance also keeps the near:far ratio — and with it
+depth-buffer precision — constant at any model scale.
 
 ## Interaction controls
 
@@ -218,6 +225,75 @@ simplified and switch-back-to-full distances, both scaled by pitch radius) so a
 gear hovering near the boundary does not flicker; the chosen level is kept in
 `model.gearLods` and refreshed after every update.
 
+## Instanced rendering for large models
+
+Baking world transforms into vertex buffers is fine for a few hundred parts and
+impossible for tens of thousands. `City of Oulu.io` (22,750 parts) expands to
+**10,911,354 triangles, 7,308,039 edge lines and 3,288,704 conditional lines** —
+several gigabytes once serialised through the geometry worker's JSON, which is
+why it never reached the screen at all.
+
+Above `Render.Instanced.triangleBudgetExceeded` (2,000 placements),
+`finishLoading` takes `finishLoadingInstanced` instead of the worker path:
+
+- Each distinct **part** is flattened once in local LDraw space
+  (`Geometry.localOptions`) — 202 meshes and 232,242 triangles for the model
+  above, a 47× reduction.
+- Each placement is a `WebGL.Entity` with its own `modelMatrix` and
+  `instanceColor`. The Y-up conversion is folded into the placement matrix as
+  `Mat4.makeScale3 1 -1 -1` (determinant +1, so winding is untouched).
+- Colour is **not** part of the mesh key. `Render.Mesh.Vertex` carries an
+  `inherit` flag, set by `Geometry` when a surface took LDraw colour 16 all the
+  way down its sub-file chain, and the vertex shader blends `instanceColor` into
+  exactly those surfaces. Keying by part *and* colour instead costs 1,092,318
+  triangles rather than 232,242, because a model uses a part in about five
+  colours on average.
+- Gear detection is skipped on this path: `Detect.extractGears` walks the fully
+  expanded tree down to primitives, which is millions of nodes on a model this
+  size. A `simulation-unavailable` runtime event reports the reason.
+
+### Culling and detail bands
+
+`Render.Instanced.visiblePlacements` frustum-culls each placement's world
+bounding sphere (Gribb–Hartmann planes from `projection × view`), then assigns a
+band from its projected size:
+
+| Projected diameter | Triangles | Edge lines | Conditional lines |
+|--------------------|-----------|------------|-------------------|
+| > 64 px (`Near`)   | mesh      | yes        | yes               |
+| 24–64 px (`Mid`)   | mesh      | yes        | no                |
+| < 24 px (`Far`)    | proxy box | no         | no                |
+
+Conditional lines are dropped first because `ConditionalVertex` carries seven
+`Vec3` attributes per vertex, making it the most expensive buffer in the
+pipeline.
+
+Unlike `Gear.Lod` there is no hysteresis. A settled camera gives a settled
+answer, and keeping previous state for tens of thousands of placements would
+cost a dictionary update per placement per frame to prevent flicker that only
+occurs while the camera is moving — which is when detail is already reduced.
+
+### Proxy chunks
+
+Culling alone cannot rescue a fully zoomed-out view: at that scale a 1×1 plate
+is still around six pixels, so nothing is small enough to drop without leaving
+holes, and every placement is inside the frustum. Each placement therefore also
+contributes a 12-triangle box of its own colour, merged by spatial cell into
+~77 meshes for the model above. At whole-model framing 21,760 of 22,750
+placements fall into `Far`, so the frame costs roughly 2,000 draw calls instead
+of 50,000.
+
+### Static-scene detail settling
+
+When `simulationAvailable` is false nothing animates, so the image only changes
+when the camera does. `Main.refineFrames` is refilled on every camera movement
+and spent one per animation frame; while it is non-zero every placement drops
+one band, and the frame after it reaches zero is drawn at full detail.
+`needsAnimationFrame` includes the countdown so that refinement frame is
+guaranteed to render before the subscription goes quiet. A model with a running
+simulation is excluded — it redraws continuously and has no settled state to
+refine towards.
+
 ## Limitations
 
 - **Edge line width is always 1 px.** WebGL 1.0 does not support `lineWidth > 1`
@@ -230,6 +306,13 @@ gear hovering near the boundary does not flicker; the chosen level is kept in
 - **No smooth shading for static geometry.** Normals are per-face (computed by
   cross product per triangle). Gear meshes share the same limitation, though
   adjacent triangles from the same quad already have consistent normals.
+- **Large models lose gear simulation.** Past the instanced-path threshold, gear
+  detection is skipped outright rather than being made to scale, so a genuinely
+  large *and* motorised model would render but not animate.
+- **Instanced part meshes are built eagerly.** All 202 distinct parts of a
+  city-scale model are flattened and uploaded at load (~750 MB peak, ~2.4 s),
+  even though only a fraction is ever on screen. Building them on demand would
+  cut both, at the cost of pop-in.
 - **No normal maps or PBR.** Shading uses analytic diffuse/specular/rim terms only.
 - **Co-axial rotation is top-level only.** Top-level `SubFileRef` nodes that
   share an axle with a detected gear are rendered with rotation. Parts nested

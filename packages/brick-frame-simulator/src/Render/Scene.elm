@@ -108,7 +108,7 @@ renderSceneWithStyle scene camera styleInput width height =
             Camera.viewMatrix camera
 
         projMat =
-            Camera.projectionMatrix aspect 0.1 2000.0
+            Camera.projectionMatrix aspect (Camera.nearPlane camera) (Camera.farPlane camera)
 
         modelMat =
             Mat4.identity
@@ -117,8 +117,12 @@ renderSceneWithStyle scene camera styleInput width height =
             { modelMatrix = modelMat
             , viewMatrix = viewMat
             , projectionMatrix = projMat
-            , viewPosition = cameraPosition camera
+            , viewPosition = Camera.position camera
             , lightDirection = style.lightDirection
+
+            -- Baked geometry resolves every colour up front, so no vertex here
+            -- is flagged for substitution and this value is never read.
+            , instanceColor = Shader.noInstanceColor
             , ambientStrength = style.ambientStrength
             , lightStrength = style.lightStrength
             , specularStrength = style.specularStrength
@@ -183,7 +187,7 @@ renderSceneWithStyle scene camera styleInput width height =
             , viewportWidth = toFloat width
             , viewportHeight = toFloat height
             , lineWidth = style.edgeWidth
-            , eyePosition = cameraPosition camera
+            , eyePosition = Camera.position camera
             }
 
         conditionalEntity =
@@ -262,18 +266,3 @@ conditionalLineVisible eye cond =
             Vec3.dot (Vec3.cross edge (Vec3.sub cond.c2 cond.p1)) toEye
     in
     side1 * side2 > 0
-
-
-cameraPosition : Camera -> Vec3
-cameraPosition cam =
-    let
-        x =
-            cam.distance * sin cam.azimuth * cos cam.elevation
-
-        y =
-            cam.distance * sin cam.elevation
-
-        z =
-            cam.distance * cos cam.azimuth * cos cam.elevation
-    in
-    Vec3.add cam.target (Vec3.vec3 x y z)

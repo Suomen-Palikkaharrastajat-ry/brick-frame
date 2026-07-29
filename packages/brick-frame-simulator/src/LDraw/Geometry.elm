@@ -1,4 +1,4 @@
-module LDraw.Geometry exposing (ConditionalEdge, FlatGeometry, flatten)
+module LDraw.Geometry exposing (ConditionalEdge, FlatGeometry, Options, flatten, flattenWith, localOptions, worldOptions)
 
 {-| Flatten an LDraw part tree into WebGL-ready vertex buffers.
 
@@ -6,11 +6,29 @@ Takes a parsed list of `LDrawLine` values plus a populated `PartCache` and
 recursively resolves sub-file references, accumulating the 4×4 transform
 matrix and the current color at each level.
 
+
 ## Coordinate conversion
 
-LDraw uses a right-handed coordinate system where **-Y is up**. This module
-negates Y on all output positions so that the geometry is Y-up, matching
-WebGL convention.
+LDraw uses a right-handed coordinate system where **-Y is up**. With
+`worldOptions` this module negates Y and Z on all output positions so that the
+geometry is Y-up, matching WebGL convention.
+
+With `localOptions` the conversion is skipped and geometry stays in LDraw
+space. That is what the instanced renderer wants: a part is baked **once** in
+its own local space, and the Y-up conversion is folded into each placement's
+model matrix instead (see `Render.Instanced`). `[x, -y, -z]` has determinant
++1 — it is a rotation, not a reflection — so skipping it does not change
+triangle winding.
+
+
+## Winding and BFC
+
+Sub-file transforms with a negative determinant invert triangle winding, as
+does a `0 BFC INVERTNEXT` directive. Both are tracked while walking the tree
+and cancel each other out when combined. Triangles are emitted with their
+vertex order corrected, so all output geometry has consistent counter-clockwise
+outward winding and back-face culling is safe on BFC-certified parts.
+
 
 ## Output
 
@@ -21,6 +39,8 @@ WebGL convention.
   - `lines` — pairs of positions for edge rendering via `WebGL.lines`.
   - `bfcCertified` — whether the top-level file declared BFC CCW winding.
     When true, back-face culling can safely be enabled.
+
+@docs ConditionalEdge, FlatGeometry, Options, flatten, flattenWith, localOptions, worldOptions
 
 -}
 
@@ -56,10 +76,46 @@ type alias ConditionalEdge =
     }
 
 
+{-| How positions are mapped on the way out of the flattener.
+
+`flipYZ` negates Y and Z to convert LDraw space to the Y-up convention WebGL
+uses. Use `worldOptions` when the result is drawn directly, `localOptions` when
+the result is a reusable per-part mesh and the conversion belongs in the
+placement matrix instead.
+
+`trackInherit` records, per vertex, whether its colour came all the way down an
+unbroken chain of code-16 references, so a single baked mesh can be re-coloured
+per placement (see `Render.Mesh.Vertex`). Directly rendered geometry leaves it
+off and gets fully resolved colours.
+
+-}
+type alias Options =
+    { flipYZ : Bool
+    , trackInherit : Bool
+    }
+
+
+{-| Convert to Y-up on output, with colours fully resolved. The default for
+directly rendered geometry.
+-}
+worldOptions : Options
+worldOptions =
+    { flipYZ = True, trackInherit = False }
+
+
+{-| Keep LDraw space on output and flag inherited colours, for per-part meshes
+reused across placements and colours.
+-}
+localOptions : Options
+localOptions =
+    { flipYZ = False, trackInherit = True }
+
+
+
 -- ── Public API ────────────────────────────────────────────────────────────────
 
 
-{-| Flatten a parsed LDraw file into renderable geometry.
+{-| Flatten a parsed LDraw file into renderable Y-up geometry.
 
     flatten lines cache parentColor worldTransform
 
@@ -73,18 +129,31 @@ type alias ConditionalEdge =
 
 -}
 flatten : List LDrawLine -> PartCache -> Int -> Mat4 -> FlatGeometry
-flatten lines cache parentColor worldTransform =
+flatten =
+    flattenWith worldOptions
+
+
+{-| `flatten` with control over the output coordinate convention.
+
+    flattenWith localOptions partLines cache color Mat4.identity
+
+-}
+flattenWith : Options -> List LDrawLine -> PartCache -> Int -> Mat4 -> FlatGeometry
+flattenWith options lines cache parentColor worldTransform =
     let
         bfc =
             hasBfcCertify lines
 
         result =
-            flattenLines lines cache parentColor worldTransform { triangles = [], lines = [], conditionalLines = [], bfcCertified = False }
+            flattenLines options
+                lines
+                cache
+                parentColor
+                worldTransform
+                { flipped = False, inheriting = True }
+                { triangles = [], lines = [], conditionalLines = [], bfcCertified = False }
     in
-    { result
-        | triangles = result.triangles
-        , bfcCertified = bfc
-    }
+    { result | bfcCertified = bfc }
 
 
 -- ── Internal ──────────────────────────────────────────────────────────────────
@@ -107,142 +176,243 @@ isBfcCertify line =
             False
 
 
+{-| State carried down the tree, as opposed to accumulated across it.
+
+  - `flipped` — winding inverted by enclosing sub-file transforms.
+  - `inheriting` — no level so far has fixed a concrete colour, so geometry here
+    still takes the caller's colour.
+
+-}
+type alias Inherited =
+    { flipped : Bool
+    , inheriting : Bool
+    }
+
+
 {-| Accumulate geometry by walking the line list.
+
+The `Bool` threaded through the fold is `invertNext`: a pending
+`0 BFC INVERTNEXT` that applies to the next sub-file reference only.
+
 -}
 flattenLines :
-    List LDrawLine
+    Options
+    -> List LDrawLine
     -> PartCache
     -> Int
     -> Mat4
+    -> Inherited
     -> FlatGeometry
     -> FlatGeometry
-flattenLines lines cache parentColor transform acc =
-    List.foldl (flattenLine cache parentColor transform) acc lines
+flattenLines options lines cache parentColor transform inherited acc =
+    List.foldl (flattenLine options cache parentColor transform inherited) ( acc, False ) lines
+        |> Tuple.first
 
 
 flattenLine :
-    PartCache
+    Options
+    -> PartCache
     -> Int
     -> Mat4
+    -> Inherited
     -> LDrawLine
-    -> FlatGeometry
-    -> FlatGeometry
-flattenLine cache parentColor transform line acc =
+    -> ( FlatGeometry, Bool )
+    -> ( FlatGeometry, Bool )
+flattenLine options cache parentColor transform inherited line ( acc, invertNext ) =
+    let
+        flipped =
+            inherited.flipped
+    in
     case line of
         SubFileRef ref ->
-            -- Resolve the sub-file from cache and recurse
+            let
+                inheritsHere =
+                    ref.color == 16 || ref.color == -1
+
+                childColor =
+                    if inheritsHere then
+                        parentColor
+
+                    else
+                        ref.color
+
+                -- A negative-determinant local transform flips winding, and so
+                -- does INVERTNEXT; the two cancel when they occur together.
+                childFlipped =
+                    xor flipped (xor invertNext (determinant3 ref.transform < 0))
+            in
             case Dict.get ref.file cache of
                 Just (Loaded subLines) ->
-                    let
-                        childTransform =
-                            Mat4.mul transform ref.transform
-
-                        childColor =
-                            if ref.color == 16 then
-                                parentColor
-
-                            else
-                                ref.color
-                    in
-                    flattenLines subLines cache childColor childTransform acc
+                    ( flattenLines options
+                        subLines
+                        cache
+                        childColor
+                        (Mat4.mul transform ref.transform)
+                        { flipped = childFlipped
+                        , inheriting = inherited.inheriting && inheritsHere
+                        }
+                        acc
+                    , False
+                    )
 
                 _ ->
                     -- Not loaded or failed — skip silently
-                    acc
+                    ( acc, False )
 
         Triangle tri ->
             let
-                color =
-                    Colors.toVec4 (Colors.resolveColor parentColor tri.color)
-
                 p1 =
-                    transformPoint transform tri.p1
+                    transformPoint options transform tri.p1
 
                 p2 =
-                    transformPoint transform tri.p2
+                    transformPoint options transform tri.p2
 
                 p3 =
-                    transformPoint transform tri.p3
-
-                normal =
-                    faceNormal p1 p2 p3
+                    transformPoint options transform tri.p3
             in
-            { acc
+            ( { acc
                 | triangles =
-                    ( mkVertex p1 normal color
-                    , mkVertex p2 normal color
-                    , mkVertex p3 normal color
-                    )
+                    windTriangle flipped (surfaceColor options inherited parentColor tri.color) p1 p2 p3
                         :: acc.triangles
-            }
+              }
+            , False
+            )
 
         Quad quad ->
             -- Split quad into two triangles along the p1–p3 diagonal
             let
                 color =
-                    Colors.toVec4 (Colors.resolveColor parentColor quad.color)
+                    surfaceColor options inherited parentColor quad.color
 
                 p1 =
-                    transformPoint transform quad.p1
+                    transformPoint options transform quad.p1
 
                 p2 =
-                    transformPoint transform quad.p2
+                    transformPoint options transform quad.p2
 
                 p3 =
-                    transformPoint transform quad.p3
+                    transformPoint options transform quad.p3
 
                 p4 =
-                    transformPoint transform quad.p4
-
-                n1 =
-                    faceNormal p1 p2 p3
-
-                n2 =
-                    faceNormal p1 p3 p4
+                    transformPoint options transform quad.p4
             in
-            { acc
+            ( { acc
                 | triangles =
-                    ( mkVertex p1 n1 color, mkVertex p2 n1 color, mkVertex p3 n1 color )
-                        :: ( mkVertex p1 n2 color, mkVertex p3 n2 color, mkVertex p4 n2 color )
+                    windTriangle flipped color p1 p2 p3
+                        :: windTriangle flipped color p1 p3 p4
                         :: acc.triangles
-            }
+              }
+            , False
+            )
 
         LineSegment seg ->
-            { acc
+            ( { acc
                 | lines =
-                    ( transformPoint transform seg.p1
-                    , transformPoint transform seg.p2
+                    ( transformPoint options transform seg.p1
+                    , transformPoint options transform seg.p2
                     )
                         :: acc.lines
-            }
+              }
+            , False
+            )
 
-        -- Comments and conditional lines do not produce geometry
-        Comment _ ->
-            acc
+        Comment text ->
+            -- Only BFC INVERTNEXT produces state; other comments leave a
+            -- pending invert alone rather than clearing it.
+            ( acc
+            , if String.contains "BFC INVERTNEXT" text then
+                True
+
+              else
+                invertNext
+            )
 
         ConditionalLine cond ->
-            { acc
+            ( { acc
                 | conditionalLines =
-                    { p1 = transformPoint transform cond.p1
-                    , p2 = transformPoint transform cond.p2
-                    , c1 = transformPoint transform cond.c1
-                    , c2 = transformPoint transform cond.c2
+                    { p1 = transformPoint options transform cond.p1
+                    , p2 = transformPoint options transform cond.p2
+                    , c1 = transformPoint options transform cond.c1
+                    , c2 = transformPoint options transform cond.c2
                     }
                         :: acc.conditionalLines
-            }
+              }
+            , False
+            )
 
 
-{-| Apply the accumulated world transform to a point.
-Negates Y and Z to convert LDraw (X-right, Y-down, Z-away) →
-WebGL right-handed (X-right, Y-up, Z-toward-viewer).
+{-| Resolve a surface's colour, and note whether it is still inheriting.
+
+When `trackInherit` is on, a surface whose colour came down an unbroken code-16
+chain is marked so the shader can substitute the placement's colour. The
+resolved colour is still written to the vertex, so a mesh drawn without an
+`instanceColor` override looks exactly as it did before.
+
 -}
-transformPoint : Mat4 -> Vec3 -> Vec3
-transformPoint mat p =
+surfaceColor : Options -> Inherited -> Int -> Int -> ( Vec4.Vec4, Float )
+surfaceColor options inherited parentColor lineColor =
+    ( Colors.toVec4 (Colors.resolveColor parentColor lineColor)
+    , if options.trackInherit && inherited.inheriting && (lineColor == 16 || lineColor == -1) then
+        1.0
+
+      else
+        0.0
+    )
+
+
+{-| Emit a triangle with counter-clockwise outward winding, swapping the last
+two vertices when the accumulated transform chain has inverted it.
+-}
+windTriangle : Bool -> ( Vec4.Vec4, Float ) -> Vec3 -> Vec3 -> Vec3 -> ( Vertex, Vertex, Vertex )
+windTriangle flipped ( color, inherit ) p1 p2 p3 =
+    let
+        ( a, b, c ) =
+            if flipped then
+                ( p1, p3, p2 )
+
+            else
+                ( p1, p2, p3 )
+
+        normal =
+            faceNormal a b c
+
+        mk position =
+            { position = position, normal = normal, color = color, inherit = inherit }
+    in
+    ( mk a, mk b, mk c )
+
+
+{-| Determinant of the upper-left 3×3 block, i.e. of the rotation/scale part.
+Negative means the transform reflects and therefore inverts triangle winding.
+-}
+determinant3 : Mat4 -> Float
+determinant3 mat =
+    let
+        m =
+            Mat4.toRecord mat
+    in
+    (m.m11 * ((m.m22 * m.m33) - (m.m23 * m.m32)))
+        - (m.m12 * ((m.m21 * m.m33) - (m.m23 * m.m31)))
+        + (m.m13 * ((m.m21 * m.m32) - (m.m22 * m.m31)))
+
+
+{-| Apply the accumulated transform to a point.
+
+With `flipYZ` set, negates Y and Z to convert LDraw (X-right, Y-down, Z-away) →
+WebGL right-handed (X-right, Y-up, Z-toward-viewer).
+
+-}
+transformPoint : Options -> Mat4 -> Vec3 -> Vec3
+transformPoint options mat p =
     let
         tp =
             Mat4.transform mat p
     in
-    vec3 (Vec3.getX tp) -(Vec3.getY tp) -(Vec3.getZ tp)
+    if options.flipYZ then
+        vec3 (Vec3.getX tp) -(Vec3.getY tp) -(Vec3.getZ tp)
+
+    else
+        tp
 
 
 {-| Compute a face normal from three points (CCW winding assumed).
@@ -268,97 +438,3 @@ faceNormal p1 p2 p3 =
 
     else
         Vec3.scale (1.0 / len) cross
-
-
-mkVertex : Vec3 -> Vec3 -> Vec4.Vec4 -> Vertex
-mkVertex position normal color =
-    { position = position, normal = normal, color = color }
-
-
-smoothTriangles : List ( Vertex, Vertex, Vertex ) -> List ( Vertex, Vertex, Vertex )
-smoothTriangles triangles =
-    let
-        normalMap =
-            triangles
-                |> List.foldl accumulateTriangleNormals Dict.empty
-    in
-    List.map (smoothTriangle normalMap) triangles
-
-
-accumulateTriangleNormals : ( Vertex, Vertex, Vertex ) -> Dict.Dict String Vec3 -> Dict.Dict String Vec3
-accumulateTriangleNormals ( v1, v2, v3 ) normalMap =
-    normalMap
-        |> accumulateVertexNormal v1
-        |> accumulateVertexNormal v2
-        |> accumulateVertexNormal v3
-
-
-accumulateVertexNormal : Vertex -> Dict.Dict String Vec3 -> Dict.Dict String Vec3
-accumulateVertexNormal vertex normalMap =
-    let
-        key =
-            positionKey vertex.position
-    in
-    Dict.update key
-        (\existing ->
-            case existing of
-                Just current ->
-                    Just (Vec3.add current vertex.normal)
-
-                Nothing ->
-                    Just vertex.normal
-        )
-        normalMap
-
-
-smoothTriangle : Dict.Dict String Vec3 -> ( Vertex, Vertex, Vertex ) -> ( Vertex, Vertex, Vertex )
-smoothTriangle normalMap ( v1, v2, v3 ) =
-    ( smoothVertex normalMap v1
-    , smoothVertex normalMap v2
-    , smoothVertex normalMap v3
-    )
-
-
-smoothVertex : Dict.Dict String Vec3 -> Vertex -> Vertex
-smoothVertex normalMap vertex =
-    let
-        key =
-            positionKey vertex.position
-    in
-    case Dict.get key normalMap of
-        Just summed ->
-            { vertex | normal = normalizeSafe summed }
-
-        Nothing ->
-            vertex
-
-
-normalizeSafe : Vec3 -> Vec3
-normalizeSafe value =
-    let
-        len =
-            Vec3.length value
-    in
-    if len < 1.0e-8 then
-        vec3 0 1 0
-
-    else
-        Vec3.scale (1.0 / len) value
-
-
-positionKey : Vec3 -> String
-positionKey p =
-    String.join "|"
-        [ quantize (Vec3.getX p)
-        , quantize (Vec3.getY p)
-        , quantize (Vec3.getZ p)
-        ]
-
-
-quantize : Float -> String
-quantize value =
-    let
-        scaled =
-            round (value * 1000)
-    in
-    String.fromInt scaled

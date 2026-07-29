@@ -14,6 +14,7 @@ import Math.Vector4 as Vec4
 import Test exposing (Test, describe, test)
 
 
+
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -45,9 +46,13 @@ allVertices triangles =
 
 isAtOrigin : Vec3.Vec3 -> Bool
 isAtOrigin p =
-    abs (Vec3.getX p) < 1.0e-6
-        && abs (Vec3.getY p) < 1.0e-6
-        && abs (Vec3.getZ p) < 1.0e-6
+    abs (Vec3.getX p)
+        < 1.0e-6
+        && abs (Vec3.getY p)
+        < 1.0e-6
+        && abs (Vec3.getZ p)
+        < 1.0e-6
+
 
 
 -- ── Suite ─────────────────────────────────────────────────────────────────────
@@ -328,6 +333,67 @@ suite =
                             flatten lines emptyCache 15 Mat4.identity
                     in
                     Expect.equal 1 (List.length result.conditionalLines)
+            ]
+        , describe "inherited-colour flagging"
+            [ test "worldOptions never flags a vertex" <|
+                \_ ->
+                    -- Directly rendered geometry resolves colours up front, so
+                    -- instanceColor must not be able to override anything.
+                    LDraw.Geometry.flattenWith LDraw.Geometry.worldOptions
+                        [ Triangle { color = 16, p1 = vec3 0 0 0, p2 = vec3 1 0 0, p3 = vec3 0 0 1 } ]
+                        emptyCache
+                        1
+                        Mat4.identity
+                        |> .triangles
+                        |> allVertices
+                        |> List.map .inherit
+                        |> Expect.equal [ 0, 0, 0 ]
+            , test "localOptions flags a colour-16 surface" <|
+                \_ ->
+                    LDraw.Geometry.flattenWith LDraw.Geometry.localOptions
+                        [ Triangle { color = 16, p1 = vec3 0 0 0, p2 = vec3 1 0 0, p3 = vec3 0 0 1 } ]
+                        emptyCache
+                        16
+                        Mat4.identity
+                        |> .triangles
+                        |> allVertices
+                        |> List.map .inherit
+                        |> Expect.equal [ 1, 1, 1 ]
+            , test "a hard-coded colour is not flagged" <|
+                \_ ->
+                    LDraw.Geometry.flattenWith LDraw.Geometry.localOptions
+                        [ xzTriangle 4 ]
+                        emptyCache
+                        16
+                        Mat4.identity
+                        |> .triangles
+                        |> allVertices
+                        |> List.map .inherit
+                        |> Expect.equal [ 0, 0, 0 ]
+            , test "a sub-file that fixes a colour breaks inheritance below it" <|
+                \_ ->
+                    -- The printed-tile case: the tile body follows the
+                    -- placement colour, the print stays the colour it declares.
+                    let
+                        cache =
+                            Dict.fromList
+                                [ ( "print.dat"
+                                  , Loaded [ Triangle { color = 16, p1 = vec3 0 0 0, p2 = vec3 1 0 0, p3 = vec3 0 0 1 } ]
+                                  )
+                                ]
+
+                        lines =
+                            [ Triangle { color = 16, p1 = vec3 0 0 0, p2 = vec3 1 0 0, p3 = vec3 0 0 1 }
+                            , SubFileRef { color = 0, transform = Mat4.identity, file = "print.dat" }
+                            ]
+                    in
+                    LDraw.Geometry.flattenWith LDraw.Geometry.localOptions lines cache 16 Mat4.identity
+                        |> .triangles
+                        |> allVertices
+                        |> List.map .inherit
+                        |> List.sum
+                        -- Three flagged vertices from the body, none from the print.
+                        |> Expect.within (Expect.Absolute 1.0e-9) 3
             ]
         , describe "BFC certification"
             [ test "file with BFC CERTIFY CCW sets bfcCertified = True" <|

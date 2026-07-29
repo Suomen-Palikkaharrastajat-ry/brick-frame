@@ -1,16 +1,28 @@
 module Render.Camera exposing
     ( Camera
+    , farPlane
     , init
+    , nearPlane
     , onMouseDown
     , onMouseMove
     , onMouseUp
     , onPan
     , onWheel
+    , position
     , projectionMatrix
     , viewMatrix
     )
 
 {-| Orbit camera state and controls for interactive scene navigation.
+
+
+## Clip planes
+
+`nearPlane` and `farPlane` scale with the orbit distance rather than being
+fixed. A city-scale model sits thousands of LDU from its centre, so constant
+planes either clip the whole model away or waste the depth buffer's precision
+on empty space in front of it.
+
 -}
 
 import Math.Matrix4 as Mat4 exposing (Mat4)
@@ -82,6 +94,29 @@ Field of view is fixed at 45°.
 projectionMatrix : Float -> Float -> Float -> Mat4
 projectionMatrix aspect near far =
     Mat4.makePerspective 45 aspect near far
+
+
+{-| Near clip distance for the current orbit distance.
+
+Kept at a fixed ratio of the orbit distance so the near:far ratio — and with it
+depth-buffer precision — stays constant no matter how large the model is.
+
+-}
+nearPlane : Camera -> Float
+nearPlane cam =
+    max 0.1 (cam.distance / 1000)
+
+
+{-| Far clip distance for the current orbit distance.
+
+Auto-fit places the camera roughly 2.6 model radii from the target, so ten
+times the orbit distance clears the far side of any framed model with room to
+spare.
+
+-}
+farPlane : Camera -> Float
+farPlane cam =
+    max 100 (cam.distance * 10)
 
 
 {-| Begin a drag. Call on mousedown over the canvas.
