@@ -1,4 +1,11 @@
-module Render.Scene exposing (Scene, buildScene, renderScene, renderSceneWithStyle)
+module Render.Scene exposing
+    ( Scene
+    , buildScene
+    , conditionalLineVisible
+    , conditionalToQuad
+    , renderScene
+    , renderSceneWithStyle
+    )
 
 {-| Scene assembly: convert flat geometry into WebGL meshes and render them.
 
@@ -18,7 +25,7 @@ import LDraw.Geometry exposing (ConditionalEdge)
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (Vec3)
 import Render.Camera as Camera exposing (Camera)
-import Render.EdgeShader as EdgeShader exposing (EdgeVertex)
+import Render.EdgeShader as EdgeShader exposing (ConditionalVertex, EdgeVertex)
 import Render.Lighting exposing (LightUniforms)
 import Render.Mesh exposing (Vertex)
 import Render.Shader as Shader
@@ -41,7 +48,7 @@ Built once after all parts are loaded; held in the app Model.
 type alias Scene =
     { triangleMesh : WebGL.Mesh Vertex
     , lineMesh : WebGL.Mesh EdgeVertex
-    , conditionalLines : List ConditionalEdge
+    , conditionalMesh : WebGL.Mesh ConditionalVertex
     , bfcCertified : Bool
     }
 
@@ -68,7 +75,7 @@ buildScene :
 buildScene geom bfc =
     { triangleMesh = WebGL.triangles geom.triangles
     , lineMesh = WebGL.triangles (List.concatMap lineToQuad geom.lines)
-    , conditionalLines = geom.conditionalLines
+    , conditionalMesh = WebGL.triangles (List.concatMap conditionalToQuad geom.conditionalLines)
     , bfcCertified = bfc
     }
 
@@ -164,34 +171,30 @@ renderSceneWithStyle scene camera styleInput width height =
                 scene.lineMesh
                 edgeUniforms
 
-        conditionalVisibleQuads =
-            scene.conditionalLines
-                |> List.filter (conditionalLineVisible (cameraPosition camera))
-                |> List.concatMap conditionalToQuad
+        -- Conditional edges are uploaded once in buildScene; the visibility
+        -- test runs per-vertex on the GPU (see EdgeShader.conditionalVertexShader),
+        -- so there is no per-frame CPU filtering or re-upload. Invisible edges
+        -- collapse to zero-area quads and rasterize to nothing.
+        conditionalUniforms =
+            { modelMatrix = modelMat
+            , viewMatrix = viewMat
+            , projectionMatrix = projMat
+            , edgeColor = style.edgeColor
+            , viewportWidth = toFloat width
+            , viewportHeight = toFloat height
+            , lineWidth = style.edgeWidth
+            , eyePosition = cameraPosition camera
+            }
 
         conditionalEntity =
-            if List.isEmpty conditionalVisibleQuads then
-                Nothing
-
-            else
-                Just
-                    (WebGL.entityWith
-                        edgeSettings
-                        EdgeShader.vertexShader
-                        EdgeShader.fragmentShader
-                        (WebGL.triangles conditionalVisibleQuads)
-                        edgeUniforms
-                    )
+            WebGL.entityWith
+                edgeSettings
+                EdgeShader.conditionalVertexShader
+                EdgeShader.conditionalFragmentShader
+                scene.conditionalMesh
+                conditionalUniforms
     in
-    triangleEntity
-        :: lineEntity
-        :: (case conditionalEntity of
-                Just entity ->
-                    [ entity ]
-
-                Nothing ->
-                    []
-           )
+    [ triangleEntity, lineEntity, conditionalEntity ]
 
 
 
@@ -216,9 +219,31 @@ lineToQuad ( p1, p2 ) =
     ]
 
 
-conditionalToQuad : ConditionalEdge -> List ( EdgeVertex, EdgeVertex, EdgeVertex )
+{-| Expand a conditional edge into a screen-aligned quad, carrying the control
+points on every vertex for the GPU visibility test.
+
+The geometry (`position` / `other` / `side`) matches `lineToQuad`, but the
+predicate fields `cp1` / `cp2` / `cc1` / `cc2` are stamped **identically** onto
+all six vertices — anchored on `cond.p1` — so the shader evaluates one predicate
+per edge rather than a per-vertex one that would tear the quad.
+
+-}
+conditionalToQuad : ConditionalEdge -> List ( ConditionalVertex, ConditionalVertex, ConditionalVertex )
 conditionalToQuad cond =
-    lineToQuad ( cond.p1, cond.p2 )
+    let
+        v side pos other =
+            { position = pos
+            , other = other
+            , side = side
+            , cp1 = cond.p1
+            , cp2 = cond.p2
+            , cc1 = cond.c1
+            , cc2 = cond.c2
+            }
+    in
+    [ ( v -1 cond.p1 cond.p2, v 1 cond.p1 cond.p2, v 1 cond.p2 cond.p1 )
+    , ( v -1 cond.p1 cond.p2, v 1 cond.p2 cond.p1, v -1 cond.p2 cond.p1 )
+    ]
 
 
 conditionalLineVisible : Vec3 -> ConditionalEdge -> Bool

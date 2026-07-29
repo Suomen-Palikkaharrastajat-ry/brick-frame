@@ -1,18 +1,19 @@
-module Gear.Detect exposing (buildGearGraph, extractGears)
+module Gear.Detect exposing (buildGearGraph, buildGearGraphReference, extractGears)
 
 {-| Gear detection: identify known gear parts within a loaded LDraw
 model and build a connectivity graph from their world positions.
 
+
 ## Detection algorithm
 
-1. `extractGears` — recursive walk of the part tree (same structure as
-   `LDraw.Geometry.flatten`). Every `SubFileRef` whose normalised filename
-   matches a provided gear-spec entry becomes a `GearInstance`. The world matrix is
-   accumulated through the call stack exactly as geometry flattening does it.
+1.  `extractGears` — recursive walk of the part tree (same structure as
+    `LDraw.Geometry.flatten`). Every `SubFileRef` whose normalised filename
+    matches a provided gear-spec entry becomes a `GearInstance`. The world matrix is
+    accumulated through the call stack exactly as geometry flattening does it.
 
-2. `buildGearGraph` — O(n²) pair comparison. Two gears mesh when the Euclidean
-   distance between their axle centres ≈ the sum of their pitch radii, within
-   a ±4 LDU tolerance (empirically derived from standard LEGO geometry).
+2.  `buildGearGraph` — O(n²) pair comparison. Two gears mesh when the Euclidean
+    distance between their axle centres ≈ the sum of their pitch radii, within
+    a ±4 LDU tolerance (empirically derived from standard LEGO geometry).
 
 -}
 
@@ -23,6 +24,8 @@ import LDraw.Resolve exposing (PartCache, PartStatus(..))
 import LDraw.Types exposing (LDrawLine(..))
 import Math.Matrix4 as Mat4 exposing (Mat4)
 import Math.Vector3 as Vec3 exposing (Vec3)
+import Set exposing (Set)
+
 
 
 -- ── Public API ────────────────────────────────────────────────────────────────
@@ -49,9 +52,107 @@ Two gears are considered meshing when:
 
     |distance(g1.worldPosition, g2.worldPosition) - (g1.pitchRadius + g2.pitchRadius)| <= meshTolerance
 
+Rather than comparing every pair (O(n²)), candidate pairs are enumerated from
+two spatial indexes and then classified with the exact `meshing` / `coAxial`
+tests. The output is identical to `buildGearGraphReference` — including the
+order of each adjacency list — because the candidate pairs are folded in
+ascending `(i, j)` order (via `Set (Int, Int)`), matching the reference's nested
+`i < j` iteration.
+
+Two indexes are needed because the two relations have different distance
+bounds:
+
+  - **Meshing** is distance-bounded (`dist ≈ r1 + r2`), so a 3D position hash
+    with a 27-cell neighbour sweep captures every meshing pair.
+  - **Co-axial** is _not_ distance-bounded — two gears on the same axle are
+    co-axial at any axial separation. Hashing by position would silently drop
+    long-axle rigid links. Instead gears are hashed by their _axle line_
+    (canonical axis direction + closest point to the origin), so gears sharing
+    an axle land in the same bucket however far apart they sit along it.
+
 -}
 buildGearGraph : List GearInstance -> GearGraph
 buildGearGraph instances =
+    let
+        arr =
+            Array.fromList instances
+
+        indexed =
+            Array.toIndexedList arr
+
+        maxPitchRadius =
+            List.foldl (\g m -> max m g.spec.pitchRadius) 0.0 instances
+
+        -- A meshing pair is at most `2 * maxPitchRadius + tolerance` apart
+        -- (tolerance ≤ 2.0), so a cell this size guarantees both gears fall in
+        -- the same or an adjacent cell.
+        meshCell =
+            2.0 * maxPitchRadius + 2.0
+
+        meshKey p =
+            ( floor (Vec3.getX p / meshCell)
+            , floor (Vec3.getY p / meshCell)
+            , floor (Vec3.getZ p / meshCell)
+            )
+
+        meshBuckets =
+            List.foldl
+                (\( idx, g ) d -> Dict.update (meshKey g.worldPosition) (prependIndex idx) d)
+                Dict.empty
+                indexed
+
+        axleBuckets =
+            List.foldl
+                (\( idx, g ) d -> Dict.update (axleKey g) (prependIndex idx) d)
+                Dict.empty
+                indexed
+
+        candidatePairs =
+            List.foldl
+                (\( idx, g ) set ->
+                    let
+                        neighbours =
+                            meshNeighbourIndices (meshKey g.worldPosition) meshBuckets
+                                ++ axleNeighbourIndices (axleKey g) axleBuckets
+                    in
+                    List.foldl
+                        (\j s ->
+                            if j /= idx then
+                                Set.insert (orderPair idx j) s
+
+                            else
+                                s
+                        )
+                        set
+                        neighbours
+                )
+                Set.empty
+                indexed
+
+        ( connections, rigidAxles ) =
+            Set.foldl
+                (\( i, j ) acc ->
+                    case ( Array.get i arr, Array.get j arr ) of
+                        ( Just g1, Just g2 ) ->
+                            classifyPair i j g1 g2 acc
+
+                        _ ->
+                            acc
+                )
+                ( Dict.empty, Dict.empty )
+                candidatePairs
+    in
+    { instances = arr
+    , connections = connections
+    , rigidAxles = rigidAxles
+    }
+
+
+{-| Reference O(n²) implementation of `buildGearGraph`, retained as the
+correctness oracle for the spatial-hash version (see `Gear.DetectTest`).
+-}
+buildGearGraphReference : List GearInstance -> GearGraph
+buildGearGraphReference instances =
     let
         arr =
             Array.fromList instances
@@ -61,42 +162,17 @@ buildGearGraph instances =
 
         ( connections, rigidAxles ) =
             List.foldl
-                (\i ( accC, accA ) ->
+                (\i accOuter ->
                     List.foldl
-                        (\j ( acc2C, acc2A ) ->
+                        (\j acc ->
                             case ( Array.get i arr, Array.get j arr ) of
                                 ( Just g1, Just g2 ) ->
-                                    if meshing g1 g2 then
-                                        -- Worm drives are self-locking: only add the
-                                        -- worm→wheel direction so that BFS cannot
-                                        -- back-drive a worm from the wheel side.
-                                        if isWorm g1.spec then
-                                            ( acc2C |> addConnection i j, acc2A )
-
-                                        else if isWorm g2.spec then
-                                            ( acc2C |> addConnection j i, acc2A )
-
-                                        else
-                                            ( acc2C
-                                                |> addConnection i j
-                                                |> addConnection j i
-                                            , acc2A
-                                            )
-
-                                    else if coAxial g1 g2 then
-                                        ( acc2C
-                                        , acc2A
-                                            |> addConnection i j
-                                            |> addConnection j i
-                                        )
-
-                                    else
-                                        ( acc2C, acc2A )
+                                    classifyPair i j g1 g2 acc
 
                                 _ ->
-                                    ( acc2C, acc2A )
+                                    acc
                         )
-                        ( accC, accA )
+                        accOuter
                         (List.range (i + 1) (n - 1))
                 )
                 ( Dict.empty, Dict.empty )
@@ -108,6 +184,46 @@ buildGearGraph instances =
     }
 
 
+{-| Classify a single ordered pair (`i < j`) and fold its edges into the
+`( connections, rigidAxles )` accumulator. Shared verbatim by both graph
+builders so their per-pair behaviour — and adjacency-list order — cannot drift.
+-}
+classifyPair :
+    GearId
+    -> GearId
+    -> GearInstance
+    -> GearInstance
+    -> ( Dict GearId (List GearId), Dict GearId (List GearId) )
+    -> ( Dict GearId (List GearId), Dict GearId (List GearId) )
+classifyPair i j g1 g2 ( accC, accA ) =
+    if meshing g1 g2 then
+        -- Worm drives are self-locking: only add the worm→wheel direction so
+        -- that BFS cannot back-drive a worm from the wheel side.
+        if isWorm g1.spec then
+            ( accC |> addConnection i j, accA )
+
+        else if isWorm g2.spec then
+            ( accC |> addConnection j i, accA )
+
+        else
+            ( accC
+                |> addConnection i j
+                |> addConnection j i
+            , accA
+            )
+
+    else if coAxial g1 g2 then
+        ( accC
+        , accA
+            |> addConnection i j
+            |> addConnection j i
+        )
+
+    else
+        ( accC, accA )
+
+
+
 -- ── Internal ──────────────────────────────────────────────────────────────────
 
 
@@ -115,6 +231,7 @@ buildGearGraph instances =
 
 Scaled from expected centre distance with conservative clamps to avoid
 false-positive links in dense models.
+
 -}
 meshToleranceFor : Float -> Float
 meshToleranceFor expectedDistance =
@@ -244,6 +361,157 @@ addConnection from to dict =
                     Just (to :: xs)
         )
         dict
+
+
+
+-- ── Spatial indexing (pair enumeration only) ──────────────────────────────────
+
+
+prependIndex : Int -> Maybe (List Int) -> Maybe (List Int)
+prependIndex idx existing =
+    Just (idx :: Maybe.withDefault [] existing)
+
+
+orderPair : Int -> Int -> ( Int, Int )
+orderPair a b =
+    if a < b then
+        ( a, b )
+
+    else
+        ( b, a )
+
+
+{-| The 27 neighbour offsets (including the zero offset) of a 3D grid cell.
+-}
+neighbourOffsets : List ( Int, Int, Int )
+neighbourOffsets =
+    let
+        steps =
+            [ -1, 0, 1 ]
+    in
+    List.concatMap
+        (\dx -> List.concatMap (\dy -> List.map (\dz -> ( dx, dy, dz )) steps) steps)
+        steps
+
+
+{-| Gather gear indices from the 27 cells surrounding a meshing-hash cell.
+-}
+meshNeighbourIndices : ( Int, Int, Int ) -> Dict ( Int, Int, Int ) (List Int) -> List Int
+meshNeighbourIndices ( cx, cy, cz ) buckets =
+    List.concatMap
+        (\( dx, dy, dz ) ->
+            Dict.get ( cx + dx, cy + dy, cz + dz ) buckets
+                |> Maybe.withDefault []
+        )
+        neighbourOffsets
+
+
+{-| Cell size for the canonical-axis-direction dimension of the axle hash. A
+co-axial pair may differ in axis direction by up to `acos 0.99 ≈ 8°`
+(per-component difference ≤ 0.14); this cell plus the ±1 sweep captures that.
+-}
+axleDirCell : Float
+axleDirCell =
+    0.2
+
+
+{-| Cell size for the closest-point dimension of the axle hash. `coAxial`
+requires a radial offset ≤ 2.0, so co-axial gears' closest points differ by at
+most that (plus small axis-tilt wobble); this cell plus the ±1 sweep captures it.
+-}
+axleQCell : Float
+axleQCell =
+    3.0
+
+
+{-| The axle-line bucket key for a gear: its canonical axis direction and the
+closest point on that axis to the origin, each quantized. Two gears sharing an
+axle map to the same (or an adjacent) bucket regardless of axial separation.
+-}
+axleKey : GearInstance -> ( ( Int, Int, Int ), ( Int, Int, Int ) )
+axleKey g =
+    let
+        a =
+            canonicalAxis (gearAxis g)
+
+        p =
+            g.worldPosition
+
+        closest =
+            Vec3.sub p (Vec3.scale (Vec3.dot p a) a)
+    in
+    ( ( floor (Vec3.getX a / axleDirCell)
+      , floor (Vec3.getY a / axleDirCell)
+      , floor (Vec3.getZ a / axleDirCell)
+      )
+    , ( floor (Vec3.getX closest / axleQCell)
+      , floor (Vec3.getY closest / axleQCell)
+      , floor (Vec3.getZ closest / axleQCell)
+      )
+    )
+
+
+{-| Gather gear indices from the buckets neighbouring an axle-hash bucket,
+sweeping ±1 in each of the six quantized dimensions.
+-}
+axleNeighbourIndices :
+    ( ( Int, Int, Int ), ( Int, Int, Int ) )
+    -> Dict ( ( Int, Int, Int ), ( Int, Int, Int ) ) (List Int)
+    -> List Int
+axleNeighbourIndices ( ( ax, ay, az ), ( qx, qy, qz ) ) buckets =
+    List.concatMap
+        (\( dax, day, daz ) ->
+            List.concatMap
+                (\( dqx, dqy, dqz ) ->
+                    Dict.get
+                        ( ( ax + dax, ay + day, az + daz )
+                        , ( qx + dqx, qy + dqy, qz + dqz )
+                        )
+                        buckets
+                        |> Maybe.withDefault []
+                )
+                neighbourOffsets
+        )
+        neighbourOffsets
+
+
+{-| Canonicalize an axis direction so that `a` and `-a` map to the same value:
+flip the sign so the first non-negligible component is positive. `coAxial`
+already treats the two directions as equivalent (via `absDot`), so this collapses
+them into one bucket.
+-}
+canonicalAxis : Vec3 -> Vec3
+canonicalAxis a =
+    let
+        x =
+            Vec3.getX a
+
+        y =
+            Vec3.getY a
+
+        z =
+            Vec3.getZ a
+
+        eps =
+            1.0e-6
+    in
+    if x > eps then
+        a
+
+    else if x < -eps then
+        Vec3.scale -1 a
+
+    else if y > eps then
+        a
+
+    else if y < -eps then
+        Vec3.scale -1 a
+
+    else if z >= 0 then
+        a
+
+    else
+        Vec3.scale -1 a
 
 
 {-| Recursive part-tree walk. Accumulates gear instances (without final IDs —

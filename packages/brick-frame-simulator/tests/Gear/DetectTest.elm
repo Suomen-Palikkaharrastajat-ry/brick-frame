@@ -6,13 +6,14 @@ module Gear.DetectTest exposing (suite)
 import Array
 import Dict
 import Expect
-import Gear.Detect exposing (buildGearGraph, extractGears)
-import Gear.Types exposing (GearSpec)
+import Gear.Detect exposing (buildGearGraph, buildGearGraphReference, extractGears)
+import Gear.Types exposing (GearInstance, GearSpec)
 import LDraw.Resolve exposing (PartStatus(..))
 import LDraw.Types exposing (LDrawLine(..))
 import Math.Matrix4 as Mat4
 import Math.Vector3 exposing (vec3)
 import Test exposing (Test, describe, test)
+
 
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
@@ -71,6 +72,34 @@ testGearSpecs =
     , specBevel20T
     , specCrown24T
     ]
+
+
+{-| Build a gear instance with the given id, spec, world matrix and position.
+-}
+gearInst : Int -> GearSpec -> Mat4.Mat4 -> Math.Vector3.Vec3 -> GearInstance
+gearInst id spec mat pos =
+    { id = id, spec = spec, color = 16, worldPosition = pos, worldMatrix = mat }
+
+
+{-| Assert the spatial-hash `buildGearGraph` produces byte-identical output to
+the O(n²) `buildGearGraphReference` — same connections and rigid axles, in the
+same adjacency-list order.
+-}
+expectSameGraph : List GearInstance -> Expect.Expectation
+expectSameGraph insts =
+    let
+        fast =
+            buildGearGraph insts
+
+        ref =
+            buildGearGraphReference insts
+    in
+    Expect.all
+        [ \_ -> Expect.equal ref.connections fast.connections
+        , \_ -> Expect.equal ref.rigidAxles fast.rigidAxles
+        ]
+        ()
+
 
 
 -- ── Suite ─────────────────────────────────────────────────────────────────────
@@ -431,5 +460,64 @@ suite =
                     Dict.get 0 graph.rigidAxles
                         |> Maybe.withDefault []
                         |> Expect.equal []
+            ]
+        , describe "buildGearGraph — equivalence with reference"
+            [ test "empty model" <|
+                \_ -> expectSameGraph []
+            , test "meshing chain along X" <|
+                \_ ->
+                    -- 8T/16T/8T at successive pitch-sum spacings; all identity
+                    -- matrices (axis Z), so parallel spur gears mesh.
+                    expectSameGraph
+                        [ gearInst 0 spec8T Mat4.identity (vec3 0 0 0)
+                        , gearInst 1 spec16T Mat4.identity (vec3 30 0 0)
+                        , gearInst 2 spec8T Mat4.identity (vec3 60 0 0)
+                        ]
+            , test "long co-axial stack along Z" <|
+                \_ ->
+                    -- Gears far apart along a shared Z axle: co-axial at any
+                    -- separation. A position-only hash would drop these links.
+                    expectSameGraph
+                        [ gearInst 0 spec8T Mat4.identity (vec3 0 0 0)
+                        , gearInst 1 spec16T Mat4.identity (vec3 0 0 200)
+                        , gearInst 2 spec8T Mat4.identity (vec3 0 0 500)
+                        ]
+            , test "mixed meshing, co-axial and unrelated gears" <|
+                \_ ->
+                    expectSameGraph
+                        [ gearInst 0 spec8T Mat4.identity (vec3 0 0 0)
+                        , gearInst 1 spec16T Mat4.identity (vec3 30 0 0)
+                        , gearInst 2 spec8T Mat4.identity (vec3 0 0 300)
+                        , gearInst 3 spec16T Mat4.identity (vec3 300 0 0)
+                        , gearInst 4 spec8T Mat4.identity (vec3 30 0 300)
+                        ]
+            , test "worm perpendicular to wheel (one-way edge)" <|
+                \_ ->
+                    expectSameGraph
+                        [ gearInst 0 specWorm (Mat4.makeRotate (pi / 2) (vec3 0 1 0)) (vec3 0 0 0)
+                        , gearInst 1 spec12T Mat4.identity (vec3 0 24 0)
+                        ]
+            , test "meshing pair straddling a spatial-hash cell boundary" <|
+                \_ ->
+                    -- maxPitchRadius = 20 → meshCell = 42. Placing the pair at
+                    -- x = 41 and x = 71 puts them in cells 0 and 1 respectively.
+                    expectSameGraph
+                        [ gearInst 0 spec8T Mat4.identity (vec3 41 0 0)
+                        , gearInst 1 spec16T Mat4.identity (vec3 71 0 0)
+                        ]
+            , test "long co-axial pair is present in rigidAxles" <|
+                \_ ->
+                    -- The decisive regression: a naive position hash drops this.
+                    let
+                        graph =
+                            buildGearGraph
+                                [ gearInst 0 spec8T Mat4.identity (vec3 0 0 0)
+                                , gearInst 1 spec16T Mat4.identity (vec3 0 0 500)
+                                ]
+                    in
+                    Dict.get 0 graph.rigidAxles
+                        |> Maybe.withDefault []
+                        |> List.member 1
+                        |> Expect.equal True
             ]
         ]

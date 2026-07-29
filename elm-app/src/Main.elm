@@ -1,4 +1,4 @@
-module Main exposing (main)
+module Main exposing (Flags, HeldControl(..), LoadPhase(..), Model, init, main, needsAnimationFrame)
 
 {-| Main application entrypoint for Brick Frame (Palikkakehys).
 -}
@@ -13,6 +13,7 @@ import FeatherIcons
 import Gear.Animate as Animate exposing (MotorState)
 import Gear.Components as Components
 import Gear.Detect as Detect
+import Gear.Lod as Lod exposing (Lod)
 import Gear.Physics as Physics
 import Gear.Types exposing (GearGraph, GearId, GearInstance)
 import Html exposing (Html, button, div, input, text)
@@ -124,6 +125,7 @@ type alias Model =
     , errorMsg : Maybe String
     , gearGraph : Maybe GearGraph
     , gearMeshes : Dict GearId GearRender
+    , gearLods : Dict GearId Lod
     , components : List Components.ComponentInstance
     , componentMeshes : List ComponentMeshRender
     , componentRenders : List ComponentRender
@@ -155,8 +157,10 @@ type alias Model =
 
 type alias GearRender =
     { mesh : WebGL.Mesh Vertex
+    , lodMesh : WebGL.Mesh Vertex
     , center : Vec3.Vec3
     , axis : Vec3.Vec3
+    , pitchRadius : Float
     }
 
 
@@ -257,6 +261,7 @@ init flags =
       , errorMsg = Nothing
       , gearGraph = Nothing
       , gearMeshes = Dict.empty
+      , gearLods = Dict.empty
       , components = []
       , componentMeshes = []
       , componentRenders = []
@@ -330,6 +335,20 @@ embeddedPartCache =
         )
         Resolve.initCache
         Data.embeddedParts
+
+
+{-| Simplified (decimated) versions of the embedded gear parts, keyed by the
+same part-file names as `embeddedPartCache`. Used to build the low-detail gear
+meshes selected at a distance (see `Gear.Lod`).
+-}
+embeddedLodCache : PartCache
+embeddedLodCache =
+    Dict.foldl
+        (\name text acc ->
+            Dict.insert name (Loaded (Parser.parseFile text)) acc
+        )
+        Resolve.initCache
+        Data.lodParts
 
 
 buildRenderStyle : Maybe Float -> Maybe Float -> Maybe Float -> Maybe Float -> Style.Style
@@ -465,6 +484,42 @@ partsProgressPct loaded total =
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
+    let
+        ( newModel, cmd ) =
+            updateInner msg model
+    in
+    -- Refresh per-gear LOD after every update so that any camera or gear-mesh
+    -- change is reflected before the next render. `chooseLod` carries the
+    -- previous LOD, giving hysteresis across frames. This single choke point
+    -- avoids threading the refresh through every camera-mutating branch.
+    ( { newModel | gearLods = refreshGearLods newModel }, cmd )
+
+
+{-| Recompute each gear's level of detail from its distance to the camera,
+starting from its previous LOD so the switch has hysteresis (see `Gear.Lod`).
+-}
+refreshGearLods : Model -> Dict GearId Lod
+refreshGearLods model =
+    let
+        viewPos =
+            cameraPosition model.camera
+    in
+    Dict.map
+        (\id rendered ->
+            let
+                distance =
+                    Vec3.distance viewPos rendered.center
+
+                previous =
+                    Dict.get id model.gearLods |> Maybe.withDefault Lod.Full
+            in
+            Lod.chooseLod previous distance rendered.pitchRadius
+        )
+        model.gearMeshes
+
+
+updateInner : Msg -> Model -> ( Model, Cmd Msg )
+updateInner msg model =
     case msg of
         WindowResize w h ->
             ( { model | width = w, height = h }, Cmd.none )
@@ -1106,6 +1161,7 @@ resetForLoad url m =
         , partsTotal = 0
         , gearGraph = Nothing
         , gearMeshes = Dict.empty
+        , gearLods = Dict.empty
         , components = []
         , componentMeshes = []
         , componentRenders = []
@@ -1484,6 +1540,7 @@ handleTopLevelText text model =
                 , errorMsg = Nothing
                 , gearGraph = Nothing
                 , gearMeshes = Dict.empty
+                , gearLods = Dict.empty
                 , components = []
                 , componentMeshes = []
                 , componentRenders = []
@@ -2017,6 +2074,17 @@ buildGearMeshes cache instances =
                             geom =
                                 Geometry.flatten lines cache inst.color inst.worldMatrix
 
+                            -- Low-detail mesh from the decimated part text, falling
+                            -- back to the full geometry when no LOD variant exists.
+                            -- Sub-file refs are still resolved against the full cache.
+                            lodTriangles =
+                                case Dict.get file embeddedLodCache of
+                                    Just (Loaded lodLines) ->
+                                        (Geometry.flatten lodLines cache inst.color inst.worldMatrix).triangles
+
+                                    _ ->
+                                        geom.triangles
+
                             center =
                                 toYUpPoint (Mat4.transform inst.worldMatrix (Vec3.vec3 0 0 0))
 
@@ -2039,8 +2107,10 @@ buildGearMeshes cache instances =
                         Dict.insert
                             inst.id
                             { mesh = WebGL.triangles geom.triangles
+                            , lodMesh = WebGL.triangles lodTriangles
                             , center = center
                             , axis = axis
+                            , pitchRadius = inst.spec.pitchRadius
                             }
                             acc
 
@@ -2153,6 +2223,14 @@ renderGearEntities camera styleInput aspect model =
                                         modelMat =
                                             rotationAround angle rendered.axis rendered.center
 
+                                        meshForLod =
+                                            case Dict.get inst.id model.gearLods of
+                                                Just Lod.Simplified ->
+                                                    rendered.lodMesh
+
+                                                _ ->
+                                                    rendered.mesh
+
                                         uniforms =
                                             { modelMatrix = modelMat
                                             , viewMatrix = viewMat
@@ -2173,7 +2251,7 @@ renderGearEntities camera styleInput aspect model =
                                             [ DepthTest.default ]
                                             Shader.vertexShader
                                             Shader.fragmentShader
-                                            rendered.mesh
+                                            meshForLod
                                             uniforms
                                         )
 
@@ -3143,6 +3221,28 @@ raySphereHit rayOrigin rayDir center radius =
 -- ── Subscriptions ─────────────────────────────────────────────────────────────
 
 
+{-| Whether the scene is doing per-frame work and therefore needs animation
+frames. When this is `False` we drop the `onAnimationFrame` subscription entirely
+so a static model stops forcing a full update/view/diff at 60 fps.
+
+The three cases mirror the only branches of the `AnimationFrame` handler that do
+real work: driving the flattening progress bar, applying a held rotate button,
+and advancing the gear playback clock.
+
+-}
+needsAnimationFrame : Model -> Bool
+needsAnimationFrame model =
+    model.playback.running
+        || (model.loadPhase == FlatteningGeometry)
+        || (case model.heldControl of
+                NoHeldControl ->
+                    False
+
+                HoldRotate _ _ ->
+                    True
+           )
+
+
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
@@ -3167,7 +3267,11 @@ subscriptions model =
         , Ports.fileLoadError FileLoadError
         , Ports.geometryFlattened GeometryFlattened
         , Ports.geometryFlattenFailed GeometryFlattenFailed
-        , Browser.Events.onAnimationFrame AnimationFrame
+        , if needsAnimationFrame model then
+            Browser.Events.onAnimationFrame AnimationFrame
+
+          else
+            Sub.none
         ]
 
 

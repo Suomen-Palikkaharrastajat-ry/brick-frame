@@ -1,4 +1,13 @@
-module Render.EdgeShader exposing (EdgeVertex, Uniforms, fragmentShader, vertexShader)
+module Render.EdgeShader exposing
+    ( ConditionalUniforms
+    , ConditionalVertex
+    , EdgeVertex
+    , Uniforms
+    , conditionalFragmentShader
+    , conditionalVertexShader
+    , fragmentShader
+    , vertexShader
+    )
 
 {-| Shader for LDraw edge lines (type-2 line segments and conditional lines).
 
@@ -46,6 +55,45 @@ type alias Uniforms =
 
 type alias Varyings =
     { vSide : Float
+    }
+
+
+{-| One corner of a conditional-edge quad.
+
+Carries the same geometry attributes as `EdgeVertex` (`position` / `other` /
+`side`) plus the conditional-line control data needed to evaluate visibility on
+the GPU. The predicate fields are **identical across all six vertices** of a
+quad so every vertex collapses (or keeps) the quad in lockstep:
+
+  - `cp1` / `cp2` — the segment endpoints in a fixed order (the CPU reference
+    always anchors on `p1`; using `position`/`other` here would flip the
+    anchor on the `p2` vertices and tear the quad).
+  - `cc1` / `cc2` — the two control points (world space).
+
+-}
+type alias ConditionalVertex =
+    { position : Vec3
+    , other : Vec3
+    , side : Float
+    , cp1 : Vec3
+    , cp2 : Vec3
+    , cc1 : Vec3
+    , cc2 : Vec3
+    }
+
+
+{-| Uniforms for the conditional-edge shaders: the edge uniforms plus the eye
+position (world space) used by the GPU visibility test.
+-}
+type alias ConditionalUniforms =
+    { modelMatrix : Mat4
+    , viewMatrix : Mat4
+    , projectionMatrix : Mat4
+    , edgeColor : Vec3
+    , viewportWidth : Float
+    , viewportHeight : Float
+    , lineWidth : Float
+    , eyePosition : Vec3
     }
 
 
@@ -117,6 +165,93 @@ fragmentShader =
             // Fade alpha smoothly from 1.0 at centre (vSide = 0) to 0.0 at the
             // quad boundary (|vSide| = 1.0). The inner 70% stays fully opaque;
             // the outer 30% fades, giving a crisper antialiased stroke.
+            float alpha = 1.0 - smoothstep(0.7, 1.0, abs(vSide));
+            gl_FragColor = vec4(clamp(edgeColor, 0.0, 1.0), alpha);
+        }
+    |]
+
+
+{-| Conditional-edge vertex shader.
+
+Same screen-aligned quad expansion as `vertexShader`, preceded by the
+conditional-line visibility test performed on the GPU. The test mirrors
+`Render.Scene.conditionalLineVisible` exactly, anchored on `cp1` so that all six
+vertices of a quad evaluate the identical predicate. When the control points
+straddle the edge as seen from the eye (`s1 * s2 <= 0.0`) the vertex is pushed
+outside the clip volume, collapsing the quad to nothing.
+
+-}
+conditionalVertexShader : Shader ConditionalVertex ConditionalUniforms Varyings
+conditionalVertexShader =
+    [glsl|
+        attribute vec3 position;
+        attribute vec3 other;
+        attribute float side;
+        attribute vec3 cp1;
+        attribute vec3 cp2;
+        attribute vec3 cc1;
+        attribute vec3 cc2;
+
+        uniform mat4 modelMatrix;
+        uniform mat4 viewMatrix;
+        uniform mat4 projectionMatrix;
+        uniform float viewportWidth;
+        uniform float viewportHeight;
+        uniform float lineWidth;
+        uniform vec3 eyePosition;
+
+        varying float vSide;
+
+        void main() {
+            // Conditional visibility: draw only when the two control points sit
+            // on the same side of the edge as seen from the eye. Anchored on
+            // cp1 to match the CPU reference (Render.Scene.conditionalLineVisible).
+            vec3 edge  = cp2 - cp1;
+            vec3 toEye = eyePosition - cp1;
+            float s1 = dot(cross(edge, cc1 - cp1), toEye);
+            float s2 = dot(cross(edge, cc2 - cp1), toEye);
+            if (s1 * s2 <= 0.0) {
+                gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+                vSide = side;
+                return;
+            }
+
+            vec4 clip0 = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+            vec4 clip1 = projectionMatrix * viewMatrix * modelMatrix * vec4(other, 1.0);
+
+            vec2 dir = clip1.xy / clip1.w - clip0.xy / clip0.w;
+            float len = length(dir);
+            if (len > 0.0001) {
+                dir = dir / len;
+            } else {
+                dir = vec2(1.0, 0.0);
+            }
+
+            vec2 perp = vec2(-dir.y, dir.x);
+
+            vec2 offset = perp * (lineWidth / vec2(viewportWidth, viewportHeight)) * clip0.w;
+
+            gl_Position = clip0 + vec4(offset * side, 0.0, 0.0);
+            vSide = side;
+        }
+    |]
+
+
+{-| Conditional-edge fragment shader.
+
+Identical falloff to `fragmentShader`; a separate declaration only so its
+uniform type unifies with `conditionalVertexShader`'s `ConditionalUniforms`.
+
+-}
+conditionalFragmentShader : Shader {} ConditionalUniforms Varyings
+conditionalFragmentShader =
+    [glsl|
+        precision mediump float;
+        uniform vec3 edgeColor;
+
+        varying float vSide;
+
+        void main() {
             float alpha = 1.0 - smoothstep(0.7, 1.0, abs(vSide));
             gl_FragColor = vec4(clamp(edgeColor, 0.0, 1.0), alpha);
         }

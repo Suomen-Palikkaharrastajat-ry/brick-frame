@@ -9,6 +9,8 @@ export default defineConfig(({ mode }) => {
   const base = configuredBase.endsWith('/') ? configuredBase : `${configuredBase}/`
 
   return {
+    // node_modules is a read-only Nix-store symlink; keep Vite's dep cache off it.
+    cacheDir: '.vite',
     publicDir: 'public',
     plugins: [
       elmTailwind(),

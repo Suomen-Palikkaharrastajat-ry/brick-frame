@@ -1,6 +1,12 @@
 HLINT ?= hlint
 FOURMOLU ?= fourmolu
 GENERATOR_NIX ?= generator-nix
+# node_modules is a read-only Nix-store symlink, so Vite's default ESM config
+# loader (which bundles the config into node_modules/.vite-temp) can't write and
+# throws. --configLoader native loads the config via a plain import() instead.
+# The dep-optimization cache is redirected off node_modules via cacheDir in the
+# vite config files.
+VITE ?= vite --configLoader native
 LDRAW_SYNC_URL ?= https://library.ldraw.org/library/updates/complete.zip
 LDRAW_SYNC_DIR ?= elm-app/public/ldraw
 LDRAW_SYNC_LOCK ?= ldraw-sync.lock.json
@@ -30,12 +36,6 @@ shell: ## Enter devenv shell
 develop: devenv.local.nix devenv.local.yaml ## Bootstrap devenv shell + VS Code
 	devenv shell --profile=devcontainer -- code .
 
-devenv.local.nix:
-	cp devenv.local.nix.example devenv.local.nix
-
-devenv.local.yaml:
-	cp devenv.local.yaml.example devenv.local.yaml
-
 # ── Elm frontend ──────────────────────────────────────────────────────────────
 
 .PHONY: all
@@ -63,7 +63,7 @@ elm-app/src/.data-nix-stamp:
 
 .PHONY: elm-dev
 elm-dev: elm-app/src/Data.elm ## Start Elm + Vite dev server (hot reload)
-	cd elm-app && vite
+	cd elm-app && $(VITE)
 
 .PHONY: elm-tailwind-gen
 elm-tailwind-gen: elm-app/.elm-tailwind/.stamp ## Generate typed Tailwind Elm modules into elm-app/.elm-tailwind/
@@ -74,22 +74,22 @@ elm-app/.elm-tailwind/.stamp: elm-app/elm.json elm-app/vite.config.mjs elm-app/m
 	touch $@
 
 build/.elm-stamp: elm-app/.elm-tailwind/.stamp $(ELM_APP_SOURCES) $(ELM_PACKAGE_SOURCES) elm-app/elm.json elm-app/vite.config.mjs elm-app/index.html elm-app/main.js elm-app/main.css
-	cd elm-app && vite build
+	cd elm-app && $(VITE) build
 	touch $@
 
 build/.elm-stamp-ci: elm-app/src/.data-nix-stamp elm-app/.elm-tailwind/.stamp $(ELM_APP_SOURCES) $(ELM_PACKAGE_SOURCES) elm-app/elm.json elm-app/vite.config.mjs elm-app/index.html elm-app/main.js elm-app/main.css
-	cd elm-app && vite build
+	cd elm-app && $(VITE) build
 	touch $@
 
 .PHONY: elm-build
 elm-build: build/.elm-stamp ## Production build of Elm SPA → build/
 
 build/.wc-stamp: elm-app/src/Data.elm elm-app/elm.json elm-app/vite.web-components.config.mjs elm-app/src/Main.elm elm-app/src/Ports.elm elm-app/geometry-worker.js elm-app/main.css $(WC_SOURCES)
-	cd elm-app && vite build --config vite.web-components.config.mjs
+	cd elm-app && $(VITE) build --config vite.web-components.config.mjs
 	touch $@
 
 build/.wc-stamp-ci: elm-app/src/.data-nix-stamp elm-app/elm.json elm-app/vite.web-components.config.mjs elm-app/src/Main.elm elm-app/src/Ports.elm elm-app/geometry-worker.js elm-app/main.css $(WC_SOURCES)
-	cd elm-app && vite build --config vite.web-components.config.mjs
+	cd elm-app && $(VITE) build --config vite.web-components.config.mjs
 	touch $@
 
 .PHONY: wc-build
@@ -130,13 +130,13 @@ dist-ci: build/.elm-stamp-ci build/.wc-stamp-ci ## CI build: generator (Nix bina
 watch: ## Watch Haskell sources and run Vite dev server
 	make generate
 	find src generator brick-frame.cabal -name "*.hs" -o -name "*.cabal" | entr -s 'make generate' &
-	cd elm-app && elm-tailwind-classes gen && vite
+	cd elm-app && elm-tailwind-classes gen && $(VITE)
 
 .PHONY: watch-docs
 watch-docs: ## Start Vite for web-components docs playground watch mode
 	$(MAKE) generate
 	@echo "Open http://localhost:5173/docs/index.watch.html"
-	cd elm-app && vite
+	cd elm-app && $(VITE)
 
 .PHONY: sync-ldraw
 sync-ldraw: ## Sync official LDraw library into local assets + write manifest

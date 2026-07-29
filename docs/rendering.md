@@ -210,8 +210,13 @@ mesh.
 
 The Haskell generator emits `Data.lodParts : Dict String String` containing
 simplified versions of the embedded gear parts (every other geometry line
-kept). These are available for distance-based LOD switching, though the main
-app currently uses full-detail meshes for all gear rendering.
+kept). At gear-mesh build time (`buildGearMeshes`) each gear gets **both** a
+full and a simplified mesh, uploaded once. Each frame `renderGearEntities`
+selects between them per gear based on the gear's distance from the camera,
+using `Gear.Lod.chooseLod`. The switch has hysteresis (separate switch-to-
+simplified and switch-back-to-full distances, both scaled by pitch radius) so a
+gear hovering near the boundary does not flicker; the chosen level is kept in
+`model.gearLods` and refreshed after every update.
 
 ## Limitations
 
