@@ -80,6 +80,9 @@ camera =
     , target = vec3 0 0 0
     , dragging = False
     , lastMousePos = Nothing
+    , minDistance = 0.5
+    , maxDistance = 2000
+    , viewportHeight = 600
     }
 
 

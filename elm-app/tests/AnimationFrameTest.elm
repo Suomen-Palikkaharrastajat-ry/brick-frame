@@ -28,6 +28,7 @@ testFlags =
     , lightStrength = Nothing
     , vibrance = Nothing
     , edgeWidth = Nothing
+    , supportsPointerEvents = True
     }
 
 

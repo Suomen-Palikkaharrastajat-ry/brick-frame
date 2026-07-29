@@ -31,7 +31,9 @@ generatedDirectories =
 -- Individual generated files that should not be linted.
 generatedFiles : List String
 generatedFiles =
-    [ "src/Data.elm" ]
+    [ "src/Data.elm"
+    , "../packages/brick-frame-simulator/src/LDraw/ColorData.elm"
+    ]
 
 
 config : List Rule

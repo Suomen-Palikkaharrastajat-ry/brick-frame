@@ -224,7 +224,7 @@ Used to convert a world radius into a pixel radius.
 -}
 fovY : Float
 fovY =
-    45.0 * pi / 180.0
+    degrees Camera.fovYDegrees
 
 
 {-| Converts LDraw Y-down space to the Y-up convention used for rendering.

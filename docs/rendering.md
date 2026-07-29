@@ -151,15 +151,51 @@ There are still no point lights, spotlights, shadows, or reflections.
 
 | Field | Meaning |
 |-------|---------|
-| `azimuth` | Horizontal angle around Y axis (radians) |
+| `azimuth` | Horizontal angle around Y axis (radians, wrapped to (-π, π]) |
 | `elevation` | Vertical angle from XZ plane (radians, clamped ±π/2) |
-| `distance` | Orbit radius in LDU (clamped 0.5–2000) |
+| `distance` | Orbit radius in LDU (clamped to `minDistance`…`maxDistance`) |
 | `target` | World-space orbit centre (default origin) |
+| `minDistance` / `maxDistance` | Interactive zoom range, sized to the model |
+| `viewportHeight` | Canvas height in CSS px; orbit and pan sensitivity derive from it |
 
-Mouse drag updates `azimuth` and `elevation` at 0.005 rad/px. Scroll wheel
-scales `distance` by `1 + delta × 0.001`.
+Projection: `Mat4.makePerspective Camera.fovYDegrees aspect near far` (FOV 45°).
+`Camera.fovYDegrees` is the single source for the FOV — the projection matrix,
+the frustum cull in `Main.isSphereVisible`, `Render.Instanced`'s pixel-radius
+LOD, and the pan scale all read it.
 
-Projection: `Mat4.makePerspective 45 aspect near far` (FOV 45°).
+### Sensitivity
+
+Every interaction constant is relative to the viewport rather than a fixed
+pixels-to-units number, following three.js `OrbitControls`:
+
+| Gesture | Formula |
+|---------|---------|
+| Orbit | `2π × Δpx / viewportHeight` — a full-height drag is one full turn |
+| Pan | `2 × Δpx × distance × tan(fov/2) / viewportHeight` — the point under the cursor stays under the cursor |
+| Wheel zoom | `0.95 ^ (\|delta\| × 0.01)`, applied as a ratio — reciprocal, so out-then-in returns to the same distance |
+| Pinch zoom | `Camera.zoomByRatio (lastSeparation / newSeparation)` — exact, no pixel constant |
+
+Fixed constants were only correct at one canvas size: panning overshot the
+cursor by ~2.7× on a tall desktop window while orbiting was ~3× too slow on a
+short phone canvas. The old linear zoom factor `1 + delta × 0.001` was not
+reciprocal and went negative below `delta = -1000`, snapping the camera to its
+minimum distance.
+
+`Main.wheelDeltaDecoder` normalises `deltaMode` before the delta reaches the
+camera (line mode × 16, page mode × 100, `ctrlKey` trackpad pinch × 10).
+Without it Firefox, which reports lines, zoomed ~30× slower than Chrome.
+
+### Zoom range
+
+`minDistance`/`maxDistance` are set from the model's bounding sphere by
+`Main.applyZoomRange`: `0.5` LDU in, and eight times the framed distance out
+(`zoomOutHeadroom`). They are applied on every load, whether or not the camera
+is being re-framed, because a `#d=` link restores a manual camera that still
+needs a range wide enough to reach it.
+
+A fixed `0.5–2000` clamp used to fight auto-fit, which frames a city-scale
+model from several thousand LDU out: the first wheel tick or pinch collapsed the
+view to 2000 LDU and there was no way back.
 
 Clip planes scale with orbit distance rather than being fixed:
 `Camera.nearPlane` is `distance / 1000` and `Camera.farPlane` is
@@ -172,7 +208,34 @@ depth-buffer precision — constant at any model scale.
 
 - **Desktop:** drag to orbit, `Shift + drag` to pan, wheel to zoom.
 - **Touch:** 1-finger orbit, 2-finger pan + pinch zoom.
+- **Fit view:** the ⛶ button in the viewer control pad re-frames the model
+  (`FitView` → `frameModelBounds`). Without it the camera was a one-way door:
+  the first interaction switches `cameraMode` to `CameraManual` and auto-fit
+  never runs again, so a model lost off-screen needed a page reload.
 - **Control panel:** top-right motor/gear panel is collapsible (`Minimize` / `Maximize`).
+
+### Touch event handling
+
+Only **one** of the Touch or Pointer listener families is bound to the canvas,
+chosen by the `supportsPointerEvents` flag (`Main.touchListeners`). iOS Safari
+dispatches both for the same finger, and `activeTouches` is keyed by touch
+`identifier` in one path and `pointerId` in the other, so binding both made the
+two sets of bookkeeping fight.
+
+Fingers are read from `event.targetTouches`, not `event.touches` — the latter
+counts every finger on the screen, so a thumb resting on the controls panel
+forced the canvas into a pinch gesture.
+
+A two-finger gesture starts as pure pan and only engages zoom once the fingers
+have moved `pinchZoomDeadZone` (12 px) apart or together, latching for the rest
+of the gesture. Zoom and pan are then both applied — pan first, so the
+distance-dependent pan scale is taken once per frame.
+
+`Ports.setUrlHash` is issued at gesture *end*, not on every move, and the JS
+side coalesces writes to one `history.replaceState` per animation frame inside a
+`try/catch`. Safari rate-limits `replaceState` (~100 calls / 30 s) and then
+throws `SecurityError`, which from a port subscriber escapes into Elm's effect
+dispatch.
 
 ## Gear rendering
 
@@ -317,8 +380,12 @@ refine towards.
 - **Co-axial rotation is top-level only.** Top-level `SubFileRef` nodes that
   share an axle with a detected gear are rendered with rotation. Parts nested
   inside sub-assemblies are still baked into the static scene and do not rotate.
-- **Known iOS interaction issue (open).** On some iOS devices, after touch
-  camera gestures (pan/zoom/orbit), playback controls can still toggle
-  play/pause UI state while visible gear animation no longer advances until a
-  reload. Touch hardening and pointer fallbacks are in place, but this device/
-  browser-specific failure mode is not fully eliminated yet.
+- **Known iOS interaction issue (unverified on device).** On some iOS devices,
+  after touch camera gestures, playback controls could still toggle play/pause
+  UI state while the visible gear animation no longer advanced until a reload —
+  the signature of the `onAnimationFrame` subscription no longer being
+  delivered. Three mechanisms that would each produce it have since been fixed:
+  the `history.replaceState` flood (now coalesced and guarded), the
+  Touch/Pointer double-tracking (now one family only), and an unreachable
+  touch-state reset in `MouseUp` that could leave `activeTouches` permanently
+  non-empty. Kept listed until confirmed on an affected device.

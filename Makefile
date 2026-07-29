@@ -50,12 +50,16 @@ brick-data-generator: $(HS_SOURCES)
 	cabal build generator
 	cp $$(cabal list-bin generator) $@
 
-.PHONY: generate
-generate: elm-app/src/Data.elm ## Run Haskell generator to produce elm-app/src/Data.elm
+GENERATED_ELM := elm-app/src/Data.elm packages/brick-frame-simulator/src/LDraw/ColorData.elm
 
-elm-app/src/Data.elm: brick-data-generator
+.PHONY: generate
+generate: elm-app/src/Data.elm ## Run Haskell generator to produce generated Elm data modules
+
+# Both generated modules come out of a single generator run; Data.elm stands in
+# for the pair as the make target.
+elm-app/src/Data.elm: brick-data-generator elm-app/public/ldraw/LDConfig.ldr
 	./brick-data-generator
-	cd elm-app && elm-format --yes src/Data.elm
+	cd elm-app && elm-format --yes $(patsubst elm-app/%,%,$(filter elm-app/%,$(GENERATED_ELM))) $(addprefix ../,$(filter-out elm-app/%,$(GENERATED_ELM)))
 
 elm-app/src/.data-nix-stamp:
 	$(GENERATOR_NIX)
@@ -96,7 +100,7 @@ build/.wc-stamp-ci: elm-app/src/.data-nix-stamp elm-app/elm.json elm-app/vite.we
 wc-build: build/.wc-stamp ## Production build of Web Components bundle
 
 .PHONY: elm-test
-elm-test: elm-tailwind-gen ## Run Elm unit tests
+elm-test: elm-tailwind-gen elm-app/src/Data.elm ## Run Elm unit tests
 	cd elm-app && elm-test
 
 .PHONY: elm-check
@@ -171,7 +175,7 @@ test: check ## Run all tests
 	$(MAKE) test-lib
 
 .PHONY: test-lib
-test-lib: ## Run brick-frame-simulator library unit tests
+test-lib: elm-app/src/Data.elm ## Run brick-frame-simulator library unit tests
 	cd packages/brick-frame-simulator && elm-test
 
 .PHONY: repl

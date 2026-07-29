@@ -404,14 +404,33 @@ function faceNormal(p1, p2, p3) {
   return normalizeSafe(cross(sub(p2, p1), sub(p3, p1)))
 }
 
+// Codes that resolved to the magenta fallback during the current flatten.
+// Reported once at the end rather than per vertex — this runs millions of times.
+const unknownColorCodes = new Set()
+
 function resolveColor(parentColor, lineColor, colorTable) {
+  // Studio exports may use -1 for current color (inherit) and -2 for edge color.
   if (lineColor === 24 || lineColor === -2) {
     return [0, 0, 0, 1]
   }
-  const code = (lineColor === 16 || lineColor === -1) ? parentColor : lineColor
+  const raw = (lineColor === 16 || lineColor === -1) ? parentColor : lineColor
+  // Studio encodes some colors as 100000 + ldrawCode; strip the offset.
+  const code = raw >= 100000 ? raw - 100000 : raw
   const mapped = colorTable[String(code)]
-  if (!mapped) return [1, 0, 1, 1]
+  if (!mapped) {
+    unknownColorCodes.add(code)
+    return [1, 0, 1, 1]
+  }
   return [mapped.r, mapped.g, mapped.b, mapped.alpha]
+}
+
+function reportUnknownColorCodes() {
+  if (unknownColorCodes.size === 0) return
+  const codes = [...unknownColorCodes].sort((a, b) => a - b)
+  console.warn(
+    `LDraw: ${codes.length} unrecognised colour code(s) rendered as magenta: ${codes.join(', ')}`,
+  )
+  unknownColorCodes.clear()
 }
 
 function hasBfcCertify(lines) {
@@ -493,6 +512,7 @@ function flattenGeometryPayload(payloadText) {
   // windingFlipped=true: same as the geometry worker — compensates for toYUp's Y-negation
   // which is a det=-1 reflection that inverts every triangle's winding order.
   flattenLines(lines, cache, parentColor, identityTransform(), colorTable, acc, true)
+  reportUnknownColorCodes()
 
   return {
     ok: true,
@@ -611,6 +631,9 @@ export function initBricksRuntime(options) {
       lightStrength: sanitizedLightStrength,
       vibrance: sanitizedVibrance,
       edgeWidth: sanitizedEdgeWidth,
+      // Attach only one of the touch/pointer listener families. Binding both
+      // double-tracks fingers on iOS Safari, which fires both.
+      supportsPointerEvents: typeof window !== 'undefined' && 'PointerEvent' in window,
     },
   })
 
@@ -854,12 +877,33 @@ export function initBricksRuntime(options) {
   })
 
   if (syncUrlHash && typeof window !== 'undefined') {
+    // Safari rate-limits history.replaceState (~100 calls / 30s) and then throws
+    // SecurityError. Thrown out of a port subscriber that escapes into Elm's
+    // effect dispatch, so writes are coalesced to one per frame and the call is
+    // guarded: a dropped URL update must never take the app down with it.
+    let pendingHash = null
+    let hashFrame = null
+
+    const flushHash = () => {
+      hashFrame = null
+      const withPrefix = pendingHash
+      pendingHash = null
+      if (withPrefix === null || window.location.hash === withPrefix) return
+      try {
+        window.history.replaceState(null, '', withPrefix)
+      } catch (_) {
+        // Rate-limited or blocked; the hash is a convenience, not state we need.
+      }
+    }
+
     app.ports.setUrlHash.subscribe((hash) => {
       const normalized = String(hash ?? '')
-      const withPrefix = normalized.startsWith('#') ? normalized : `#${normalized}`
-      if (window.location.hash !== withPrefix) {
-        window.history.replaceState(null, '', withPrefix)
-      }
+      pendingHash = normalized.startsWith('#') ? normalized : `#${normalized}`
+      if (hashFrame !== null) return
+      hashFrame =
+        typeof window.requestAnimationFrame === 'function'
+          ? window.requestAnimationFrame(flushHash)
+          : setTimeout(flushHash, 16)
     })
   }
 

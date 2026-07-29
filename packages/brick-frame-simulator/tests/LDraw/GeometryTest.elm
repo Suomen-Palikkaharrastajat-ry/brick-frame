@@ -5,6 +5,7 @@ module LDraw.GeometryTest exposing (suite)
 
 import Dict
 import Expect
+import LDraw.Colors as Colors
 import LDraw.Geometry exposing (flatten)
 import LDraw.Resolve exposing (PartStatus(..))
 import LDraw.Types exposing (LDrawLine(..))
@@ -254,10 +255,18 @@ suite =
                     in
                     case result.triangles of
                         ( v, _, _ ) :: _ ->
-                            -- Blue = { r=0, g=0.333, b=0.749, alpha=1 }
-                            -- Check that red channel is approximately 0 (not magenta fallback)
-                            Vec4.getX v.color
-                                |> Expect.within (Expect.Absolute 0.05) 0.0
+                            -- Compared against the resolver rather than a literal,
+                            -- so the assertion tracks the generated LDConfig table.
+                            let
+                                blue =
+                                    Colors.resolveColor 15 1
+                            in
+                            Expect.all
+                                [ \col -> Expect.within (Expect.Absolute 1.0e-5) blue.r (Vec4.getX col)
+                                , \col -> Expect.within (Expect.Absolute 1.0e-5) blue.g (Vec4.getY col)
+                                , \col -> Expect.within (Expect.Absolute 1.0e-5) blue.b (Vec4.getZ col)
+                                ]
+                                v.color
 
                         [] ->
                             Expect.fail "Expected a triangle"

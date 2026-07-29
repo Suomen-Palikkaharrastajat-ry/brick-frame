@@ -167,8 +167,9 @@ flatten work.
 | `LDraw.Types` | LDraw AST types | `LDrawLine`, `SubFileRef`, `Triangle`, … |
 | `LDraw.Resolve` | HTTP part cache | `PartCache`, `pendingParts`, `fetchPart` |
 | `LDraw.Colors` | Color code → RGBA | `resolveColor`, `toVec4` |
+| `LDraw.ColorData` | Generated LDraw colour table (do not edit) | `colorTable` |
 | `LDraw.Geometry` | Flatten part tree → vertex buffers | `flatten`, `FlatGeometry` |
-| `Render.Camera` | Orbit camera | `init`, `viewMatrix`, `projectionMatrix`, `onMouseMove`, `onWheel` |
+| `Render.Camera` | Orbit camera | `init`, `viewMatrix`, `projectionMatrix`, `onMouseMove`, `onPan`, `onWheel`, `zoomByRatio`, `orbitBy`, `setZoomRange`, `setViewportHeight`, `fovYDegrees` |
 | `Render.Mesh` | Vertex type aliases | `Vertex`, `EdgeVertex` |
 | `Render.Shader` | Lightweight plastic GLSL shaders | `vertexShader`, `fragmentShader` |
 | `Render.EdgeShader` | Edge line GLSL shaders | `vertexShader`, `fragmentShader` |
@@ -336,6 +337,29 @@ allEntities = entities ++ gearEntities
 See `Main.elm` around `renderGearEntities` for the complete rotation matrix
 construction and frustum culling pattern.
 
+### Camera setup
+
+`Render.Camera.Camera` carries three fields beyond the orbit parameters, and a
+host application is responsible for keeping them current:
+
+| Field | Set via | Why |
+|-------|---------|-----|
+| `viewportHeight` | `Camera.setViewportHeight` on every resize | Orbit and pan sensitivity are relative to canvas height |
+| `minDistance` / `maxDistance` | `Camera.setZoomRange` once the model bounds are known | The usable zoom range depends on model size; leaving the defaults caps a large model at 2000 LDU |
+
+```elm
+camera : Camera.Camera
+camera =
+    Camera.init
+        |> Camera.setViewportHeight (toFloat canvasHeight)
+        |> Camera.setZoomRange 0.5 (framedDistance * 8)
+```
+
+Wheel deltas must be normalised for `deltaMode` before reaching
+`Camera.onWheel`; see `Main.wheelDeltaDecoder`. Pinch gestures should use
+`Camera.zoomByRatio` with the ratio of successive finger separations rather than
+converting pixels into a synthetic wheel delta.
+
 ---
 
 ## Data.elm exports
@@ -344,7 +368,7 @@ construction and frustum culling pattern.
 
 | Export | Type | Description |
 |--------|------|-------------|
-| `ldrawColors` | `Dict Int { r, g, b, alpha }` | Known LDraw/LEGO color codes used by the simulator |
+| `ldrawColors` | `Dict Int { r, g, b, alpha }` | Every official LDraw colour, parsed from `elm-app/public/ldraw/LDConfig.ldr` |
 | `embeddedParts` | `Dict String String` | Pre-loaded LDraw part text for core gears and their dependencies |
 | `lodParts` | `Dict String String` | Simplified (LOD) versions of embedded parts |
 | `gearParts` | `List { partFile, teeth, pitchRadius }` | Known gear specs |

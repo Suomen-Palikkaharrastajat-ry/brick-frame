@@ -1,4 +1,4 @@
-module Lib (generateElmModule) where
+module Lib (generateColorDataModule, generateElmModule) where
 
 import Data.Bifunctor (second)
 import Data.Maybe (mapMaybe)
@@ -7,6 +7,7 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
+import Data.Text.Read qualified as Text
 import Numeric (showFFloat)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
@@ -23,103 +24,75 @@ data LDrawColor = LDrawColor
     }
     deriving (Show)
 
--- Standard LDraw color definitions.
--- Source: https://www.ldraw.org/article/547.html
-ldrawColors :: [LDrawColor]
-ldrawColors =
-    [ LDrawColor 0 "Black" 0.067 0.067 0.067 1.0
-    , LDrawColor 1 "Blue" 0.000 0.333 0.749 1.0
-    , LDrawColor 2 "Green" 0.145 0.478 0.243 1.0
-    , LDrawColor 3 "Dark Turquoise" 0.000 0.514 0.561 1.0
-    , LDrawColor 4 "Red" 0.788 0.102 0.035 1.0
-    , LDrawColor 5 "Dark Pink" 0.784 0.184 0.439 1.0
-    , LDrawColor 6 "Brown" 0.357 0.212 0.067 1.0
-    , LDrawColor 7 "Light Grey" 0.608 0.631 0.608 1.0
-    , LDrawColor 8 "Dark Grey" 0.392 0.373 0.353 1.0
-    , LDrawColor 9 "Light Blue" 0.682 0.831 0.933 1.0
-    , LDrawColor 10 "Bright Green" 0.294 0.780 0.231 1.0
-    , LDrawColor 11 "Light Turquoise" 0.000 0.659 0.682 1.0
-    , LDrawColor 12 "Salmon" 0.988 0.565 0.478 1.0
-    , LDrawColor 13 "Pink" 0.988 0.671 0.749 1.0
-    , LDrawColor 14 "Yellow" 0.980 0.784 0.039 1.0
-    , LDrawColor 15 "White" 1.000 1.000 1.000 1.0
-    , LDrawColor 17 "Light Green" 0.710 0.902 0.710 1.0
-    , LDrawColor 18 "Light Yellow" 0.988 0.929 0.624 1.0
-    , LDrawColor 19 "Tan" 0.902 0.835 0.612 1.0
-    , LDrawColor 20 "Light Violet" 0.812 0.729 0.878 1.0
-    , LDrawColor 22 "Purple" 0.373 0.082 0.490 1.0
-    , LDrawColor 23 "Dark Blue Violet" 0.122 0.141 0.620 1.0
-    , LDrawColor 25 "Orange" 0.988 0.502 0.122 1.0
-    , LDrawColor 26 "Magenta" 0.627 0.000 0.502 1.0
-    , LDrawColor 27 "Lime" 0.749 0.878 0.118 1.0
-    , LDrawColor 28 "Dark Tan" 0.639 0.537 0.337 1.0
-    , LDrawColor 29 "Bright Pink" 0.988 0.671 0.780 1.0
-    , LDrawColor 30 "Medium Lavender" 0.667 0.525 0.718 1.0
-    , LDrawColor 31 "Lavender" 0.792 0.714 0.847 1.0
-    , LDrawColor 36 "Very Light Orange" 0.988 0.769 0.518 1.0
-    , LDrawColor 38 "Dark Orange" 0.651 0.251 0.047 1.0
-    , LDrawColor 40 "Trans Black" 0.243 0.243 0.243 0.5
-    , LDrawColor 41 "Trans Red" 0.902 0.071 0.008 0.5
-    , LDrawColor 42 "Trans Neon Green" 0.773 0.988 0.000 0.5
-    , LDrawColor 43 "Trans Light Blue" 0.537 0.851 0.988 0.5
-    , LDrawColor 44 "Trans Light Purple" 0.682 0.525 0.741 0.5
-    , LDrawColor 45 "Trans Dark Pink" 0.878 0.400 0.573 0.5
-    , LDrawColor 46 "Trans Yellow" 0.988 0.855 0.165 0.5
-    , LDrawColor 47 "Trans White" 0.878 0.878 0.878 0.5
-    , LDrawColor 48 "Trans Dark Green" 0.208 0.537 0.165 0.5
-    , LDrawColor 55 "Trans Pink" 0.988 0.592 0.675 0.5
-    , LDrawColor 57 "Trans Orange" 0.988 0.502 0.122 0.5
-    , LDrawColor 68 "Very Light Orange" 0.988 0.769 0.518 1.0
-    , LDrawColor 69 "Bright Purple" 0.584 0.106 0.624 1.0
-    , LDrawColor 70 "Reddish Brown" 0.408 0.188 0.067 1.0
-    , LDrawColor 71 "Light Bluish Grey" 0.694 0.722 0.749 1.0
-    , LDrawColor 72 "Dark Bluish Grey" 0.400 0.427 0.451 1.0
-    , LDrawColor 73 "Medium Blue" 0.486 0.631 0.808 1.0
-    , LDrawColor 74 "Medium Green" 0.467 0.733 0.396 1.0
-    , LDrawColor 77 "Pink" 0.988 0.671 0.749 1.0
-    , LDrawColor 78 "Light Flesh" 0.988 0.847 0.663 1.0
-    , LDrawColor 84 "Medium Dark Flesh" 0.710 0.396 0.184 1.0
-    , LDrawColor 85 "Dark Purple" 0.243 0.090 0.294 1.0
-    , LDrawColor 86 "Dark Flesh" 0.580 0.286 0.114 1.0
-    , LDrawColor 89 "Blue Violet" 0.251 0.341 0.659 1.0
-    , LDrawColor 92 "Flesh" 0.851 0.549 0.302 1.0
-    , LDrawColor 100 "Light Salmon" 0.988 0.729 0.639 1.0
-    , LDrawColor 110 "Violet" 0.247 0.247 0.600 1.0
-    , LDrawColor 112 "Medium Violet" 0.412 0.412 0.682 1.0
-    , LDrawColor 115 "Medium Lime" 0.624 0.765 0.176 1.0
-    , LDrawColor 118 "Aqua" 0.667 0.902 0.843 1.0
-    , LDrawColor 120 "Light Lime" 0.812 0.902 0.494 1.0
-    , LDrawColor 125 "Light Orange" 0.988 0.671 0.369 1.0
-    , LDrawColor 128 "Dark Orange" 0.651 0.251 0.047 1.0
-    , LDrawColor 151 "Very Light Bluish Grey" 0.859 0.875 0.878 1.0
-    , LDrawColor 191 "Bright Light Orange" 0.988 0.671 0.047 1.0
-    , LDrawColor 212 "Bright Light Blue" 0.624 0.812 0.988 1.0
-    , LDrawColor 216 "Rust" 0.671 0.165 0.082 1.0
-    , LDrawColor 226 "Bright Light Yellow" 0.988 0.929 0.447 1.0
-    , LDrawColor 232 "Sky Blue" 0.533 0.753 0.878 1.0
-    , LDrawColor 251 "Flat Silver" 0.537 0.529 0.533 1.0
-    , LDrawColor 256 "Rubber Black" 0.067 0.067 0.067 1.0
-    , LDrawColor 272 "Dark Blue" 0.000 0.173 0.475 1.0
-    , LDrawColor 288 "Dark Green" 0.055 0.267 0.090 1.0
-    , LDrawColor 308 "Dark Brown" 0.188 0.114 0.055 1.0
-    , LDrawColor 320 "Dark Red" 0.486 0.000 0.027 1.0
-    , LDrawColor 321 "Dark Azure" 0.000 0.549 0.773 1.0
-    , LDrawColor 322 "Medium Azure" 0.341 0.710 0.867 1.0
-    , LDrawColor 323 "Light Aqua" 0.788 0.945 0.886 1.0
-    , LDrawColor 326 "Yellowish Green" 0.835 0.929 0.576 1.0
-    , LDrawColor 329 "White Glow" 1.000 1.000 0.902 1.0
-    , LDrawColor 334 "Pearl Gold" 0.769 0.608 0.224 1.0
-    , LDrawColor 335 "Sand Red" 0.694 0.490 0.459 1.0
-    , LDrawColor 366 "Earth Orange" 0.671 0.376 0.071 1.0
-    , LDrawColor 371 "Medium Tan" 0.800 0.639 0.451 1.0
-    , LDrawColor 373 "Sand Purple" 0.580 0.486 0.592 1.0
-    , LDrawColor 378 "Sand Green" 0.482 0.608 0.518 1.0
-    , LDrawColor 379 "Sand Blue" 0.427 0.518 0.616 1.0
-    , LDrawColor 383 "Chrome Silver" 0.878 0.878 0.878 1.0
-    , LDrawColor 462 "Light Orange" 0.988 0.671 0.369 1.0
-    , LDrawColor 484 "Dark Orange" 0.651 0.251 0.047 1.0
-    , LDrawColor 503 "Very Light Grey" 0.878 0.878 0.867 1.0
-    ]
+-- Colours are read from the official LDraw configuration file that ships with
+-- the synced LDraw assets, rather than being maintained by hand here. That file
+-- carries all 300+ official codes; a hand-kept subset silently rendered every
+-- unlisted code as magenta.
+ldConfigPath :: FilePath
+ldConfigPath = "elm-app/public/ldraw/LDConfig.ldr"
+
+-- Parse `0 !COLOUR <Name> CODE <n> VALUE #RRGGBB [EDGE ...] [ALPHA 0-255] ...`
+-- lines. Keyword order after the name is not fixed, so each keyword is located
+-- by scanning the token list rather than by position.
+parseLdConfig :: FilePath -> IO [LDrawColor]
+parseLdConfig path = do
+    exists <- doesFileExist path
+    if not exists
+        then
+            fail ("generator: LDraw colour config not found at " <> path)
+        else do
+            contents <- Text.readFile path
+            let colors = mapMaybe parseColorLine (Text.lines contents)
+            if null colors
+                then
+                    fail ("generator: no !COLOUR definitions found in " <> path)
+                else
+                    pure colors
+
+parseColorLine :: Text -> Maybe LDrawColor
+parseColorLine line =
+    case Text.words line of
+        ("0" : "!COLOUR" : name : rest) -> do
+            code <- keywordValue "CODE" rest >>= readInt
+            (r, g, b) <- keywordValue "VALUE" rest >>= parseHexRgb
+            let alpha =
+                    case keywordValue "ALPHA" rest >>= readInt of
+                        Just a -> fromIntegral a / 255
+                        Nothing -> 1.0
+            Just (LDrawColor code name r g b alpha)
+        _ ->
+            Nothing
+
+-- The token immediately following `keyword`, if present.
+keywordValue :: Text -> [Text] -> Maybe Text
+keywordValue keyword tokens =
+    case dropWhile (/= keyword) tokens of
+        (_ : value : _) -> Just value
+        _ -> Nothing
+
+readInt :: Text -> Maybe Int
+readInt text =
+    case Text.decimal text of
+        Right (value, rest) | Text.null rest -> Just value
+        _ -> Nothing
+
+parseHexRgb :: Text -> Maybe (Float, Float, Float)
+parseHexRgb value = do
+    digits <- Text.stripPrefix "#" value
+    if Text.length digits /= 6
+        then
+            Nothing
+        else do
+            r <- hexByte (Text.take 2 digits)
+            g <- hexByte (Text.take 2 (Text.drop 2 digits))
+            b <- hexByte (Text.take 2 (Text.drop 4 digits))
+            pure (r, g, b)
+
+hexByte :: Text -> Maybe Float
+hexByte text =
+    case Text.hexadecimal text of
+        Right (value, rest) | Text.null rest -> Just (fromIntegral (value :: Int) / 255)
+        _ -> Nothing
 
 -- ── Gear data ─────────────────────────────────────────────────────────────────
 
@@ -160,6 +133,7 @@ knownExampleModels =
 generateElmModule :: IO Text
 generateElmModule = do
     embeddedParts <- collectEmbeddedParts
+    ldrawColors <- parseLdConfig ldConfigPath
     let lodParts = map (second simplifyPartText) embeddedParts
     pure $
         Text.unlines
@@ -215,6 +189,34 @@ generateElmModule = do
             , "exampleModels ="
             , "    [ " <> Text.intercalate "\n    , " (map exampleModelEntry knownExampleModels)
             , "    ]"
+            ]
+
+-- The simulator package renders through its own copy of the colour table, so it
+-- gets the same generated data rather than a second hand-kept list that can
+-- drift out of sync with Data.elm.
+generateColorDataModule :: IO Text
+generateColorDataModule = do
+    ldrawColors <- parseLdConfig ldConfigPath
+    pure $
+        Text.unlines
+            [ "module LDraw.ColorData exposing (colorTable)"
+            , ""
+            , "{-| LDraw colour code → RGBA, generated from " <> Text.pack ldConfigPath <> "."
+            , ""
+            , "Do not edit by hand — run `make generate`."
+            , ""
+            , "-}"
+            , ""
+            , "import Dict exposing (Dict)"
+            , ""
+            , ""
+            , "{-| Every official LDraw colour, as linear RGBA in [0.0, 1.0]."
+            , "-}"
+            , "colorTable : Dict Int { r : Float, g : Float, b : Float, alpha : Float }"
+            , "colorTable ="
+            , "    Dict.fromList"
+            , "        [ " <> Text.intercalate "\n        , " (map colorEntry ldrawColors)
+            , "        ]"
             ]
 
 colorEntry :: LDrawColor -> Text

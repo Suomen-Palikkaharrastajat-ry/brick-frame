@@ -19,6 +19,11 @@ function createShadowStyles() {
   position: relative;
   width: 100%;
   font-family: Outfit, system-ui, sans-serif;
+  /* Camera gestures own every touch inside the element; without these the host
+     page scrolls or rubber-bands while the user is orbiting. main.css sets the
+     same on the standalone app, but shadow DOM does not inherit it. */
+  touch-action: none;
+  overscroll-behavior: none;
 }
 
 :host([hidden]) {
@@ -29,6 +34,8 @@ function createShadowStyles() {
   width: 100%;
   height: 100%;
   min-height: var(--bricks-min-height, ${DEFAULT_HEIGHT});
+  touch-action: none;
+  overscroll-behavior: none;
 }
 
 input[type="range"] {

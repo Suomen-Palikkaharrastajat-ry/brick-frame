@@ -83,6 +83,10 @@ function faceNormal(p1, p2, p3) {
   return normalizeSafe(cross(sub(p2, p1), sub(p3, p1)))
 }
 
+// Codes that resolved to the magenta fallback during the current flatten.
+// Reported once at the end rather than per vertex — this runs millions of times.
+const unknownColorCodes = new Set()
+
 function resolveColor(parentColor, lineColor, colorTable) {
   // Studio exports may use -1 for current color (inherit) and -2 for edge color.
   if (lineColor === 24 || lineColor === -2) {
@@ -92,8 +96,20 @@ function resolveColor(parentColor, lineColor, colorTable) {
   // Studio encodes some colors as 100000 + ldrawCode; strip the offset.
   const code = raw >= 100000 ? raw - 100000 : raw
   const mapped = colorTable[String(code)]
-  if (!mapped) return [1, 0, 1, 1]
+  if (!mapped) {
+    unknownColorCodes.add(code)
+    return [1, 0, 1, 1]
+  }
   return [mapped.r, mapped.g, mapped.b, mapped.alpha]
+}
+
+function reportUnknownColorCodes() {
+  if (unknownColorCodes.size === 0) return
+  const codes = [...unknownColorCodes].sort((a, b) => a - b)
+  console.warn(
+    `LDraw: ${codes.length} unrecognised colour code(s) rendered as magenta: ${codes.join(', ')}`,
+  )
+  unknownColorCodes.clear()
 }
 
 function hasBfcCertify(lines) {
@@ -199,6 +215,7 @@ self.onmessage = (event) => {
     // Start with windingFlipped=false: [x, -y, -z] has det=+1 (rotation, not a
     // reflection), so triangle winding is preserved and no initial compensation needed.
     flattenLines(lines, cache, parentColor, identityTransform(), colorTable, acc, false)
+    reportUnknownColorCodes()
 
     self.postMessage(
       JSON.stringify({

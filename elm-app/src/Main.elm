@@ -62,6 +62,7 @@ type alias Flags =
     , lightStrength : Maybe Float
     , vibrance : Maybe Float
     , edgeWidth : Maybe Float
+    , supportsPointerEvents : Bool
     }
 
 
@@ -105,7 +106,34 @@ type alias TouchPoint =
 type TouchGesture
     = NoTouchGesture
     | SingleTouchGesture Int
-    | PinchGesture Int Int Float Float Float
+    | PinchGesture PinchState
+
+
+{-| Two-finger gesture state.
+
+`startDistance` and `zoomEngaged` implement the zoom dead-zone: a two-finger
+drag is treated as pure pan until the fingers have deliberately changed
+separation, after which zoom stays engaged for the rest of the gesture. Without
+it, ordinary finger jitter during a pan bled into the zoom level.
+
+-}
+type alias PinchState =
+    { idA : Int
+    , idB : Int
+    , distance : Float
+    , midX : Float
+    , midY : Float
+    , startDistance : Float
+    , zoomEngaged : Bool
+    }
+
+
+{-| How far the fingers must change separation, in pixels, before a two-finger
+gesture starts zooming as well as panning.
+-}
+pinchZoomDeadZone : Float
+pinchZoomDeadZone =
+    12.0
 
 
 type HeldControl
@@ -125,6 +153,7 @@ type alias Model =
     , partsTotal : Int
     , scene : Maybe Scene
     , instancedScene : Maybe InstancedScene
+    , modelBounds : Maybe ModelBounds
     , submodelNames : Set String
     , refineFrames : Int
     , errorMsg : Maybe String
@@ -152,6 +181,7 @@ type alias Model =
     , loadingProgressPct : Float
     , loadingProgressTick : Maybe Time.Posix
     , viewerControlsEnabled : Bool
+    , supportsPointerEvents : Bool
     , requestedMotorIndex : Maybe Int
     , heldControl : HeldControl
     , heldControlTick : Maybe Time.Posix
@@ -264,6 +294,7 @@ init flags =
       , partsTotal = 0
       , scene = Nothing
       , instancedScene = Nothing
+      , modelBounds = Nothing
       , submodelNames = Set.empty
       , refineFrames = 0
       , errorMsg = Nothing
@@ -296,6 +327,7 @@ init flags =
       , loadingProgressPct = 0.0
       , loadingProgressTick = Nothing
       , viewerControlsEnabled = flags.controlsEnabled
+      , supportsPointerEvents = flags.supportsPointerEvents
       , requestedMotorIndex =
             if flags.initialMotorIndex < 0 then
                 Nothing
@@ -420,6 +452,7 @@ type Msg
     | RotateCameraBy Float Float
     | StartHoldRotate Float Float
     | EndHoldRotate
+    | FitView
     | ToggleControlsPanel
     | KeyPressed String
 
@@ -599,7 +632,15 @@ updateInner : Msg -> Model -> ( Model, Cmd Msg )
 updateInner msg model =
     case msg of
         WindowResize w h ->
-            ( { model | width = w, height = h }, Cmd.none )
+            ( { model
+                | width = w
+                , height = h
+
+                -- Orbit and pan sensitivity are relative to canvas height.
+                , camera = Camera.setViewportHeight (toFloat h) model.camera
+              }
+            , Cmd.none
+            )
 
         MouseDown x y shiftHeld ->
             if touchInputActive model then
@@ -656,7 +697,19 @@ updateInner msg model =
 
         MouseUp x y ->
             if touchInputActive model then
-                ( model, Cmd.none )
+                -- A real mouseup while touch state is live means that state is
+                -- stale: a touchend or pointerup went missing (backgrounded tab,
+                -- a touchcancel that still listed fingers). Clearing it here is
+                -- the only way out — the reset below is unreachable in exactly
+                -- this case, which used to leave mouse input dead for the rest
+                -- of the session.
+                ( { model
+                    | touchGesture = NoTouchGesture
+                    , activeTouches = Dict.empty
+                    , camera = Camera.onMouseUp model.camera
+                  }
+                , Cmd.none
+                )
 
             else
                 let
@@ -708,10 +761,7 @@ updateInner msg model =
                     beginTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
             in
             ( nextModel
-            , Cmd.batch
-                [ Ports.setUrlHash (encodeHash nextModel)
-                , cameraChangedIfNeededCmd model.camera nextModel.camera
-                ]
+            , cameraChangedIfNeededCmd model.camera nextModel.camera
             )
 
         TouchMove touches ->
@@ -723,10 +773,7 @@ updateInner msg model =
                     advanceTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
             in
             ( nextModel
-            , Cmd.batch
-                [ Ports.setUrlHash (encodeHash nextModel)
-                , cameraChangedIfNeededCmd model.camera nextModel.camera
-                ]
+            , cameraChangedIfNeededCmd model.camera nextModel.camera
             )
 
         TouchEnd touches ->
@@ -753,10 +800,7 @@ updateInner msg model =
                     beginTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
             in
             ( nextModel
-            , Cmd.batch
-                [ Ports.setUrlHash (encodeHash nextModel)
-                , cameraChangedIfNeededCmd model.camera nextModel.camera
-                ]
+            , cameraChangedIfNeededCmd model.camera nextModel.camera
             )
 
         PointerTouchMove touchPoint ->
@@ -769,6 +813,27 @@ updateInner msg model =
                         advanceTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
                 in
                 ( nextModel
+                , cameraChangedIfNeededCmd model.camera nextModel.camera
+                )
+
+            else
+                ( model, Cmd.none )
+
+        PointerTouchEnd touchId ->
+            -- Guarded like PointerTouchMove: iOS Safari fires both Touch and
+            -- Pointer events, and the dict is keyed by whichever family opened
+            -- the gesture. Removing an unknown id used to be a no-op that still
+            -- ran endTouchGesture over the remaining fingers, restarting a
+            -- single-touch drag from stale coordinates.
+            if Dict.member touchId model.activeTouches then
+                let
+                    nextTouches =
+                        Dict.remove touchId model.activeTouches
+
+                    nextModel =
+                        endTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
+                in
+                ( nextModel
                 , Cmd.batch
                     [ Ports.setUrlHash (encodeHash nextModel)
                     , cameraChangedIfNeededCmd model.camera nextModel.camera
@@ -777,21 +842,6 @@ updateInner msg model =
 
             else
                 ( model, Cmd.none )
-
-        PointerTouchEnd touchId ->
-            let
-                nextTouches =
-                    Dict.remove touchId model.activeTouches
-
-                nextModel =
-                    endTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
-            in
-            ( nextModel
-            , Cmd.batch
-                [ Ports.setUrlHash (encodeHash nextModel)
-                , cameraChangedIfNeededCmd model.camera nextModel.camera
-                ]
-            )
 
         RequestFileUpload ->
             ( model, Ports.requestFileUpload () )
@@ -1071,10 +1121,7 @@ updateInner msg model =
                     model.camera
 
                 nextCamera =
-                    { baseCamera
-                        | azimuth = baseCamera.azimuth + azimuthDelta
-                        , elevation = clamp (-pi / 2 + 0.01) (pi / 2 - 0.01) (baseCamera.elevation + elevationDelta)
-                    }
+                    Camera.orbitBy azimuthDelta elevationDelta baseCamera
 
                 nextModel =
                     { model | camera = nextCamera, cameraMode = CameraManual }
@@ -1100,6 +1147,18 @@ updateInner msg model =
                 , heldControlTick = Nothing
               }
             , Cmd.none
+            )
+
+        FitView ->
+            let
+                nextModel =
+                    frameModelBounds model
+            in
+            ( nextModel
+            , Cmd.batch
+                [ Ports.setUrlHash (encodeHash nextModel)
+                , cameraChangedIfNeededCmd model.camera nextModel.camera
+                ]
             )
 
         ToggleControlsPanel ->
@@ -1142,11 +1201,10 @@ applyHeldControl now model =
                         model.camera
 
                     nextCamera =
-                        { baseCamera
-                            | azimuth = baseCamera.azimuth + (azimuthStep * speedFactor * dtSeconds)
-                            , elevation =
-                                clamp (-pi / 2 + 0.01) (pi / 2 - 0.01) (baseCamera.elevation + (elevationStep * speedFactor * dtSeconds))
-                        }
+                        Camera.orbitBy
+                            (azimuthStep * speedFactor * dtSeconds)
+                            (elevationStep * speedFactor * dtSeconds)
+                            baseCamera
 
                     nextModel =
                         { model
@@ -1233,6 +1291,7 @@ resetForLoad url m =
         | loadPhase = FetchingTopLevel url
         , scene = Nothing
         , instancedScene = Nothing
+        , modelBounds = Nothing
         , submodelNames = Set.empty
         , errorMsg = Nothing
         , topLevelLines = []
@@ -1272,16 +1331,9 @@ beginTouchGesture : List TouchPoint -> Model -> Model
 beginTouchGesture touches model =
     case touches of
         p1 :: p2 :: _ ->
-            let
-                dist =
-                    touchDistance p1 p2
-
-                ( midX, midY ) =
-                    touchMidpoint p1 p2
-            in
             { model
                 | camera = Camera.onMouseUp model.camera
-                , touchGesture = PinchGesture p1.id p2.id dist midX midY
+                , touchGesture = PinchGesture (beginPinch p1 p2)
                 , cameraMode = CameraManual
                 , clickStart = Nothing
                 , dragTravel = 0.0
@@ -1322,34 +1374,43 @@ advanceTouchGesture touches model =
                 Nothing ->
                     beginTouchGesture touches { model | camera = Camera.onMouseUp model.camera }
 
-        PinchGesture idA idB lastDist lastMidX lastMidY ->
-            case ( findTouch idA touches, findTouch idB touches ) of
+        PinchGesture pinch ->
+            case ( findTouch pinch.idA touches, findTouch pinch.idB touches ) of
                 ( Just a, Just b ) ->
                     let
-                        newDist =
+                        newDistance =
                             touchDistance a b
 
                         ( midX, midY ) =
                             touchMidpoint a b
 
-                        zoomDelta =
-                            -(newDist - lastDist) * 0.8
+                        zoomEngaged =
+                            pinch.zoomEngaged
+                                || abs (newDistance - pinch.startDistance)
+                                > pinchZoomDeadZone
 
-                        panDx =
-                            midX - lastMidX
-
-                        panDy =
-                            midY - lastMidY
+                        -- Pan first, so the pixels-to-world scale is taken at a
+                        -- single distance for the whole frame.
+                        cameraAfterPan =
+                            Camera.onPan (midX - pinch.midX) (midY - pinch.midY) model.camera
 
                         cameraAfterZoom =
-                            Camera.onWheel zoomDelta model.camera
+                            if zoomEngaged && newDistance > 0 && pinch.distance > 0 then
+                                Camera.zoomByRatio (pinch.distance / newDistance) cameraAfterPan
 
-                        cameraAfterPan =
-                            Camera.onPan panDx panDy cameraAfterZoom
+                            else
+                                cameraAfterPan
                     in
                     { model
-                        | camera = cameraAfterPan
-                        , touchGesture = PinchGesture idA idB newDist midX midY
+                        | camera = cameraAfterZoom
+                        , touchGesture =
+                            PinchGesture
+                                { pinch
+                                    | distance = newDistance
+                                    , midX = midX
+                                    , midY = midY
+                                    , zoomEngaged = zoomEngaged
+                                }
                         , cameraMode = CameraManual
                     }
 
@@ -1383,16 +1444,9 @@ endTouchGesture remainingTouches model =
             }
 
         p1 :: p2 :: _ ->
-            let
-                dist =
-                    touchDistance p1 p2
-
-                ( midX, midY ) =
-                    touchMidpoint p1 p2
-            in
             { model
                 | camera = Camera.onMouseUp model.camera
-                , touchGesture = PinchGesture p1.id p2.id dist midX midY
+                , touchGesture = PinchGesture (beginPinch p1 p2)
                 , cameraMode = CameraManual
                 , clickStart = Nothing
                 , dragTravel = 0.0
@@ -1471,8 +1525,41 @@ touchMidpoint p1 p2 =
     )
 
 
-autoFitCamera : Int -> Int -> List LDrawLine -> PartCache -> Camera -> Camera
-autoFitCamera width height lines cache currentCamera =
+{-| Start a two-finger gesture as pure pan; zoom engages once the fingers move
+past `pinchZoomDeadZone`.
+-}
+beginPinch : TouchPoint -> TouchPoint -> PinchState
+beginPinch p1 p2 =
+    let
+        distance =
+            touchDistance p1 p2
+
+        ( midX, midY ) =
+            touchMidpoint p1 p2
+    in
+    { idA = p1.id
+    , idB = p2.id
+    , distance = distance
+    , midX = midX
+    , midY = midY
+    , startDistance = distance
+    , zoomEngaged = False
+    }
+
+
+{-| A model's bounding sphere, kept so the view can be re-framed on demand
+without re-flattening the geometry.
+-}
+type alias ModelBounds =
+    { center : Vec3.Vec3
+    , radius : Float
+    }
+
+
+{-| Bounding sphere of the baked geometry path.
+-}
+modelBoundsFromLines : List LDrawLine -> PartCache -> Maybe ModelBounds
+modelBoundsFromLines lines cache =
     let
         geom =
             Geometry.flatten lines cache 15 Mat4.identity
@@ -1486,7 +1573,7 @@ autoFitCamera width height lines cache currentCamera =
     in
     case points of
         [] ->
-            currentCamera
+            Nothing
 
         p0 :: rest ->
             let
@@ -1528,7 +1615,37 @@ autoFitCamera width height lines cache currentCamera =
                 radius =
                     max 1 (sqrt (extentX * extentX + extentY * extentY + extentZ * extentZ) / 2)
             in
-            cameraForBounds width height center radius currentCamera
+            Just { center = center, radius = radius }
+
+
+{-| Bounding sphere of the instanced path, from the placement spheres that
+`Instanced.build` has already measured.
+-}
+modelBoundsFromInstanced : InstancedScene -> ModelBounds
+modelBoundsFromInstanced instanced =
+    { center = Vec3.scale 0.5 (Vec3.add instanced.boundsMin instanced.boundsMax)
+    , radius = max 1 (0.5 * Vec3.length (Vec3.sub instanced.boundsMax instanced.boundsMin))
+    }
+
+
+{-| Re-frame the stored model bounds, as the fit-view control does.
+
+Without this the camera is a one-way door: the first drag switches to
+`CameraManual` and auto-fit never runs again, so a user who loses a large model
+off-screen has to reload the page to get it back.
+
+-}
+frameModelBounds : Model -> Model
+frameModelBounds model =
+    case model.modelBounds of
+        Just bounds ->
+            { model
+                | camera = cameraForBounds model.width model.height bounds.center bounds.radius model.camera
+                , cameraMode = CameraAutoFit
+            }
+
+        Nothing ->
+            model
 
 
 {-| Frame a bounding sphere: orbit far enough back that it fits the narrower of
@@ -1541,28 +1658,53 @@ measure it.
 -}
 cameraForBounds : Int -> Int -> Vec3.Vec3 -> Float -> Camera -> Camera
 cameraForBounds width height center radius currentCamera =
+    { currentCamera
+        | target = center
+        , distance = framedDistance width height radius
+        , azimuth = 0.75
+        , elevation = 0.6
+    }
+        |> applyZoomRange width height radius
+
+
+{-| Orbit distance at which a bounding sphere of `radius` fills the viewport.
+-}
+framedDistance : Int -> Int -> Float -> Float
+framedDistance width height radius =
     let
         aspect =
             toFloat width / max 1 (toFloat height)
 
         fovY =
-            45 * pi / 180
+            degrees Camera.fovYDegrees
 
         fovX =
             2 * atan (tan (fovY / 2) * aspect)
 
         limitingHalfFov =
             max 0.15 (min (fovX / 2) (fovY / 2))
-
-        distanceForSphere =
-            radius / sin limitingHalfFov
     in
-    { currentCamera
-        | target = center
-        , distance = clamp 8 maxAutoFitDistance (distanceForSphere * 1.25)
-        , azimuth = 0.75
-        , elevation = 0.6
-    }
+    clamp 8 maxAutoFitDistance (radius / sin limitingHalfFov * 1.25)
+
+
+{-| Size the interactive zoom range to the model, and record the canvas height.
+
+Applied whether or not the camera is being re-framed, because the limits are a
+property of the model rather than of the current view: a shared `#d=` link
+restores a manual camera, and it still needs a range that reaches it. A fixed
+ceiling used to snap a city-scale model from its framed distance down to the
+limit on the very first wheel tick, with no way back out.
+
+-}
+applyZoomRange : Int -> Int -> Float -> Camera -> Camera
+applyZoomRange width height radius currentCamera =
+    let
+        framed =
+            framedDistance width height radius
+    in
+    currentCamera
+        |> Camera.setViewportHeight (toFloat height)
+        |> Camera.setZoomRange 0.5 (max 2000 (framed * zoomOutHeadroom))
 
 
 {-| Upper bound on the auto-fit orbit distance, in LDU.
@@ -1575,6 +1717,17 @@ longer a fixed far plane for this to stay under.
 maxAutoFitDistance : Float
 maxAutoFitDistance =
     200000
+
+
+{-| How far past its framed distance a model can be zoomed out, as a multiple.
+
+Enough to pull well back from a city-scale layout and see it in context, while
+still stopping short of the point where the model is a speck.
+
+-}
+zoomOutHeadroom : Float
+zoomOutHeadroom =
+    8
 
 
 {-| Shared handler for HTTP-fetched and file-uploaded LDraw text.
@@ -1652,6 +1805,7 @@ handleTopLevelText text model =
                 , partsLoaded = 0
                 , scene = Nothing
                 , instancedScene = Nothing
+                , modelBounds = Nothing
                 , errorMsg = Nothing
                 , gearGraph = Nothing
                 , gearMeshes = Dict.empty
@@ -1729,23 +1883,23 @@ finishLoadingInstanced placements model =
         instanced =
             Instanced.build model.partCache placements
 
+        bounds =
+            modelBoundsFromInstanced instanced
+
         nextCamera =
             case model.cameraMode of
                 CameraAutoFit ->
-                    cameraForBounds model.width
-                        model.height
-                        (Vec3.scale 0.5 (Vec3.add instanced.boundsMin instanced.boundsMax))
-                        (max 1 (0.5 * Vec3.length (Vec3.sub instanced.boundsMax instanced.boundsMin)))
-                        model.camera
+                    cameraForBounds model.width model.height bounds.center bounds.radius model.camera
 
                 CameraManual ->
-                    model.camera
+                    applyZoomRange model.width model.height bounds.radius model.camera
 
         updatedModel =
             { model
                 | camera = nextCamera
                 , scene = Nothing
                 , instancedScene = Just instanced
+                , modelBounds = Just bounds
                 , loadPhase = Ready
                 , gearGraph = Nothing
                 , gearMeshes = Dict.empty
@@ -1777,12 +1931,18 @@ finishLoadingInstanced placements model =
 finishLoadingBaked : Model -> ( Model, Cmd Msg )
 finishLoadingBaked model =
     let
-        nextCamera =
-            case model.cameraMode of
-                CameraAutoFit ->
-                    autoFitCamera model.width model.height model.topLevelLines model.partCache model.camera
+        bounds =
+            modelBoundsFromLines model.topLevelLines model.partCache
 
-                CameraManual ->
+        nextCamera =
+            case ( model.cameraMode, bounds ) of
+                ( CameraAutoFit, Just b ) ->
+                    cameraForBounds model.width model.height b.center b.radius model.camera
+
+                ( CameraManual, Just b ) ->
+                    applyZoomRange model.width model.height b.radius model.camera
+
+                _ ->
                     model.camera
 
         gearInstances =
@@ -1890,6 +2050,7 @@ finishLoadingBaked model =
     in
     ( { model
         | camera = nextCamera
+        , modelBounds = bounds
         , scene = Nothing
         , loadPhase = FlatteningGeometry
         , gearGraph = Just graph
@@ -2404,7 +2565,7 @@ renderGearEntities camera styleInput aspect model =
                     Camera.viewMatrix camera
 
                 projMat =
-                    Camera.projectionMatrix aspect 0.1 2000.0
+                    Camera.projectionMatrix aspect (Camera.nearPlane camera) (Camera.farPlane camera)
 
                 viewPos =
                     Camera.position camera
@@ -3034,7 +3195,7 @@ renderComponentEntities camera styleInput aspect model =
             Camera.viewMatrix camera
 
         projMat =
-            Camera.projectionMatrix aspect 0.1 2000.0
+            Camera.projectionMatrix aspect (Camera.nearPlane camera) (Camera.farPlane camera)
 
         viewPos =
             Camera.position camera
@@ -3087,7 +3248,7 @@ renderComponentArrows camera aspect model =
             Camera.viewMatrix camera
 
         projMat =
-            Camera.projectionMatrix aspect 0.1 2000.0
+            Camera.projectionMatrix aspect (Camera.nearPlane camera) (Camera.farPlane camera)
     in
     model.componentRenders
         |> List.filter (\c -> isSphereVisible camera aspect c.center 14.0)
@@ -3183,13 +3344,13 @@ isSphereVisible camera aspect center radius =
                     Vec3.dot toCenter up
 
                 nearPlane =
-                    0.1
+                    Camera.nearPlane camera
 
                 farPlane =
-                    2000.0
+                    Camera.farPlane camera
 
                 tanHalfFov =
-                    tan (45 * pi / 180 / 2)
+                    tan (degrees Camera.fovYDegrees / 2)
 
                 maxX =
                     z * tanHalfFov * aspect + radius
@@ -3352,7 +3513,7 @@ screenRayFromMouse mouseX mouseY model =
                         widthF / heightF
 
                     tanHalfFov =
-                        tan (45 * pi / 180 / 2)
+                        tan (degrees Camera.fovYDegrees / 2)
 
                     dirRaw =
                         Vec3.add
@@ -3469,9 +3630,56 @@ subscriptions model =
         ]
 
 
+{-| Wheel `deltaY`, normalised to pixel units.
+
+Browsers report scroll amounts in three different units, and only Chrome uses
+pixels: Firefox reports lines (~3 per notch) and some setups report pages. Left
+unnormalised, the same gesture zoomed roughly 30x slower in Firefox. `ctrlKey`
+marks a trackpad pinch, which arrives as very small deltas.
+
+Scale factors match three.js `OrbitControls`.
+
+-}
+wheelDeltaDecoder : Decode.Decoder Float
+wheelDeltaDecoder =
+    Decode.map3
+        (\delta mode ctrlKey ->
+            let
+                unitScale =
+                    case mode of
+                        1 ->
+                            16.0
+
+                        2 ->
+                            100.0
+
+                        _ ->
+                            1.0
+
+                pinchScale =
+                    if ctrlKey then
+                        10.0
+
+                    else
+                        1.0
+            in
+            delta * unitScale * pinchScale
+        )
+        (Decode.field "deltaY" Decode.float)
+        (Decode.oneOf [ Decode.field "deltaMode" Decode.int, Decode.succeed 0 ])
+        (Decode.oneOf [ Decode.field "ctrlKey" Decode.bool, Decode.succeed False ])
+
+
+{-| Fingers currently touching **this canvas**.
+
+`targetTouches` rather than `touches`: the latter counts every finger on the
+screen, so resting a thumb on the controls panel forced the canvas into a pinch
+gesture.
+
+-}
 touchesDecoder : Decode.Decoder (List TouchPoint)
 touchesDecoder =
-    Decode.field "touches" (Decode.list touchPointDecoder)
+    Decode.field "targetTouches" (Decode.list touchPointDecoder)
 
 
 touchPointDecoder : Decode.Decoder TouchPoint
@@ -3592,31 +3800,37 @@ viewCanvas model =
                     []
     in
     WebGL.toHtml
-        [ Attr.width model.width
-        , Attr.height model.height
-        , Attr.style "display" "block"
-        , Attr.style "width" "100%"
-        , Attr.style "height" "100%"
-        , Attr.style "touch-action" "none"
-        , Html.Events.on "mousedown"
+        ([ Attr.width model.width
+         , Attr.height model.height
+         , Attr.style "display" "block"
+         , Attr.style "width" "100%"
+         , Attr.style "height" "100%"
+         , Attr.style "touch-action" "none"
+         , Html.Events.on "mousedown"
             (Decode.map3 MouseDown
                 (Decode.field "clientX" Decode.float)
                 (Decode.field "clientY" Decode.float)
                 (Decode.field "shiftKey" Decode.bool)
             )
-        , Html.Events.preventDefaultOn "wheel"
-            (Decode.map (\delta -> ( Wheel delta, True ))
-                (Decode.field "deltaY" Decode.float)
-            )
-        , Html.Events.preventDefaultOn "touchstart"
-            (Decode.map (\touches -> ( TouchStart touches, True )) touchesDecoder)
-        , Html.Events.preventDefaultOn "touchmove"
-            (Decode.map (\touches -> ( TouchMove touches, True )) touchesDecoder)
-        , Html.Events.preventDefaultOn "touchend"
-            (Decode.map (\touches -> ( TouchEnd touches, True )) touchesDecoder)
-        , Html.Events.preventDefaultOn "touchcancel"
-            (Decode.map (\touches -> ( TouchEnd touches, True )) touchesDecoder)
-        , Html.Events.preventDefaultOn "pointerdown"
+         , Html.Events.preventDefaultOn "wheel"
+            (Decode.map (\delta -> ( Wheel delta, True )) wheelDeltaDecoder)
+         ]
+            ++ touchListeners model
+        )
+        entities
+
+
+{-| Canvas listeners for finger input — one family, never both.
+
+iOS Safari dispatches Touch **and** Pointer events for the same finger. With
+both bound, `activeTouches` was keyed by touch `identifier` from one path and
+`pointerId` from the other, and the two sets of bookkeeping fought each other.
+
+-}
+touchListeners : Model -> List (Html.Attribute Msg)
+touchListeners model =
+    if model.supportsPointerEvents then
+        [ Html.Events.preventDefaultOn "pointerdown"
             (Decode.map (\touch -> ( PointerTouchStart touch, True )) pointerTouchPointDecoder)
         , Html.Events.preventDefaultOn "pointermove"
             (Decode.map (\touch -> ( PointerTouchMove touch, True )) pointerTouchPointDecoder)
@@ -3625,7 +3839,17 @@ viewCanvas model =
         , Html.Events.preventDefaultOn "pointercancel"
             (Decode.map (\touchId -> ( PointerTouchEnd touchId, True )) pointerTouchIdDecoder)
         ]
-        entities
+
+    else
+        [ Html.Events.preventDefaultOn "touchstart"
+            (Decode.map (\touches -> ( TouchStart touches, True )) touchesDecoder)
+        , Html.Events.preventDefaultOn "touchmove"
+            (Decode.map (\touches -> ( TouchMove touches, True )) touchesDecoder)
+        , Html.Events.preventDefaultOn "touchend"
+            (Decode.map (\touches -> ( TouchEnd touches, True )) touchesDecoder)
+        , Html.Events.preventDefaultOn "touchcancel"
+            (Decode.map (\touches -> ( TouchEnd touches, True )) touchesDecoder)
+        ]
 
 
 viewOverlay : Model -> Html Msg
@@ -4072,7 +4296,7 @@ viewViewerControls model =
         , Attr.style "border-radius" "8px"
         , Attr.style "box-shadow" "0 10px 32px color-mix(in srgb, var(--color-brand) 8%, transparent)"
         ]
-        [ div [] []
+        [ viewerFitViewButton
         , viewerRotateButton (featherIcon "chevron-up") (StartHoldRotate 0 -step)
         , div [] []
         , viewerRotateButton (featherIcon "chevron-left") (StartHoldRotate step 0)
@@ -4086,6 +4310,31 @@ viewViewerControls model =
         , viewerRotateButton (featherIcon "chevron-down") (StartHoldRotate 0 step)
         , div [] []
         ]
+
+
+{-| Re-frame the whole model. The only way back to the auto-fit view once the
+user has orbited away from it.
+-}
+viewerFitViewButton : Html Msg
+viewerFitViewButton =
+    button
+        [ Html.Events.onClick FitView
+        , onTouchTap FitView
+        , Attr.title "Fit model to view"
+        , Attr.attribute "aria-label" "Fit model to view"
+        , Attr.style "width" "36px"
+        , Attr.style "height" "32px"
+        , Attr.style "padding" "0"
+        , Attr.style "background" Theme.panelSubtleBackground
+        , Attr.style "color" Theme.textPrimary
+        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "border-radius" "4px"
+        , Attr.style "cursor" "pointer"
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "center"
+        ]
+        [ featherIcon "maximize" ]
 
 
 viewerRotateButton : Html Msg -> Msg -> Html Msg
@@ -4176,6 +4425,9 @@ featherIcon name =
 
                 "pause" ->
                     FeatherIcons.pause
+
+                "maximize" ->
+                    FeatherIcons.maximize
 
                 _ ->
                     FeatherIcons.play

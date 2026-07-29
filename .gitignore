@@ -1,4 +1,5 @@
 # --- Environment / local ---
+/example.io
 .env
 .devcontainer.json
 .devenv*
@@ -27,6 +28,7 @@ build/
 
 # --- Generated output ---
 elm-app/src/Data.elm
+packages/brick-frame-simulator/src/LDraw/ColorData.elm
 elm-app/src/.data-nix-stamp
 
 # --- Editor & OS ---
