@@ -40,6 +40,7 @@ The viewer element accepts:
 - `camera-target-x`
 - `camera-target-y`
 - `camera-target-z`
+- `camera-navigation` (`orbit` — the default — or `walk` for a street-level view)
 
 Runtime methods are also available:
 
@@ -94,7 +95,8 @@ Events emitted by the wrapper:
 - `play-state-changed`
 - `simulation-ready`
 - `simulation-unavailable`
-- `camera-changed`
+- `camera-changed` — payload carries `azimuth`, `elevation`, `azimuthDeg`,
+  `elevationDeg`, `distance`, `targetX/Y/Z` and `navigation` (`"orbit"`/`"walk"`)
 
 ## Setup
 
@@ -169,7 +171,7 @@ flatten work.
 | `LDraw.Colors` | Color code → RGBA | `resolveColor`, `toVec4` |
 | `LDraw.ColorData` | Generated LDraw colour table (do not edit) | `colorTable` |
 | `LDraw.Geometry` | Flatten part tree → vertex buffers | `flatten`, `FlatGeometry` |
-| `Render.Camera` | Orbit camera | `init`, `viewMatrix`, `projectionMatrix`, `onMouseMove`, `onPan`, `onWheel`, `zoomByRatio`, `orbitBy`, `setZoomRange`, `setViewportHeight`, `fovYDegrees` |
+| `Render.Camera` | Orbit and walk camera | `init`, `viewMatrix`, `projectionMatrix`, `onMouseMove`, `onPan`, `onWheel`, `zoomByRatio`, `orbitBy`, `lookAround`, `moveBy`, `dollyBy`, `enterWalk`, `walkSpeed`, `setNavigation`, `setSceneRadius`, `setZoomRange`, `setViewportHeight`, `fovYDegrees` |
 | `Render.Mesh` | Vertex type aliases | `Vertex`, `EdgeVertex` |
 | `Render.Shader` | Lightweight plastic GLSL shaders | `vertexShader`, `fragmentShader` |
 | `Render.EdgeShader` | Edge line GLSL shaders | `vertexShader`, `fragmentShader` |
@@ -346,14 +348,25 @@ host application is responsible for keeping them current:
 |-------|---------|-----|
 | `viewportHeight` | `Camera.setViewportHeight` on every resize | Orbit and pan sensitivity are relative to canvas height |
 | `minDistance` / `maxDistance` | `Camera.setZoomRange` once the model bounds are known | The usable zoom range depends on model size; leaving the defaults caps a large model at 2000 LDU |
+| `sceneRadius` | `Camera.setSceneRadius` once the model bounds are known | **Leaving this at 0 clips geometry further than ten orbit distances away.** It also sets the walking speed |
 
 ```elm
 camera : Camera.Camera
 camera =
     Camera.init
         |> Camera.setViewportHeight (toFloat canvasHeight)
+        |> Camera.setSceneRadius modelRadius
         |> Camera.setZoomRange 0.5 (framedDistance * 8)
 ```
+
+### Walk mode
+
+`Camera.enterWalk groundY` switches to first-person navigation at street level;
+`Camera.setNavigation Camera.Orbit` returns. In walk mode, route drags through
+`Camera.lookAround` instead of `Camera.orbitBy`, and wheel/pinch through
+`Camera.dollyBy` instead of `Camera.zoomByRatio` — `Camera.onMouseMove` already
+dispatches on `navigation` for you. Movement is `Camera.moveBy`, scaled by
+`Camera.walkSpeed` and the frame time. There is no collision detection.
 
 Wheel deltas must be normalised for `deltaMode` before reaching
 `Camera.onWheel`; see `Main.wheelDeltaDecoder`. Pinch gestures should use

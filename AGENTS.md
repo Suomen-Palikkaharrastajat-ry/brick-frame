@@ -65,7 +65,9 @@ In-depth documentation for agents and contributors:
 - **Desktop camera controls:** Drag = orbit, `Shift + drag` = pan, wheel = zoom.
 - **Touch controls:** 1-finger orbit, 2-finger pan + pinch (zoom engages past a 12 px dead-zone). Exactly one of the Touch or Pointer listener families is bound, chosen by the `supportsPointerEvents` flag.
 - **Fit view:** the ⛶ button in the viewer control pad re-frames the model; it is the only way back to auto-fit after a manual camera move.
-- **Camera sensitivity is viewport-relative**, not fixed constants — see docs/rendering.md § Camera. Zoom limits come from the model's bounding sphere (`Main.applyZoomRange`), so never reintroduce a hard-coded distance clamp.
+- **Two navigation modes:** `Camera.navigation` is `Orbit` or `Walk`. Walk is first-person at street level (`G`, or the person button) — drags pivot about the eye, WASD walks, wheel dollies. Free-fly, no collision. Both modes keep `position = target + eyeOffset`, so culling/picking/LOD are mode-agnostic; keep it that way.
+- **Camera sensitivity is viewport-relative**, not fixed constants — see docs/rendering.md § Camera. Zoom limits come from the model's bounding sphere (`Main.applyZoomRange`), so never reintroduce a hard-coded distance clamp. The same goes for the far plane: it reads `sceneRadius`, because orbit distance alone gives 400 LDU of view when the eye is inside a city.
+- **Keyboard shortcuts** live in `elm-app/src/UI/Shortcuts.elm` as pure functions returning an `Action` that `Main.msgForAction` maps. `?` shows a reference built from `Shortcuts.helpRows`. Never bind a key without going through `Shortcuts.actionFor` — it holds the guard that stops document-global keydowns hijacking host page form fields.
 - **Known mobile issue (unverified on device):** the iOS animation-freeze report has three plausible causes fixed (replaceState flood, Touch/Pointer double-tracking, unreachable touch-state reset). Still listed in docs/rendering.md limitations until confirmed on hardware.
 
 ## Development Environment

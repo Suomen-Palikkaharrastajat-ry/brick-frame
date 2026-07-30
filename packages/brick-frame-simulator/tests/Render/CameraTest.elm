@@ -1,10 +1,10 @@
 module Render.CameraTest exposing (suite)
 
-{-| Unit tests for orbit camera interaction math.
+{-| Unit tests for camera interaction math.
 
 These pin the properties that make navigation feel right — reciprocal zoom,
-viewport-relative sensitivity, and cursor-tracking pan — rather than the
-constants themselves.
+viewport-relative sensitivity, cursor-tracking pan, and a walk mode that pivots
+about the eye — rather than the constants themselves.
 
 -}
 
@@ -14,6 +14,13 @@ import Render.Camera as Camera exposing (Camera)
 import Test exposing (Test, describe, test)
 
 
+{-| Bounding-sphere radius of the sample city model, in LDU.
+-}
+cityRadius : Float
+cityRadius =
+    2295
+
+
 {-| A camera framing a city-scale model, as `cameraForBounds` would leave it.
 -}
 bigModelCamera : Camera
@@ -21,7 +28,15 @@ bigModelCamera =
     Camera.init
         |> Camera.setViewportHeight 900
         |> Camera.setZoomRange 0.5 60000
+        |> Camera.setSceneRadius cityRadius
         |> (\cam -> { cam | distance = 7500 })
+
+
+{-| The same model, entered at street level.
+-}
+walkCamera : Camera
+walkCamera =
+    Camera.enterWalk 0 bigModelCamera
 
 
 dragging : Camera -> Camera
@@ -204,5 +219,165 @@ suite =
                     in
                     Camera.farPlane cam
                         |> Expect.greaterThan (Vec3.length (Camera.position cam))
+            , test "the far plane spans the model from inside it" <|
+                \_ ->
+                    -- Regression: farPlane was max 100 (distance * 10), so a 40 LDU
+                    -- street-level eye height gave 400 LDU on a 4590 LDU-wide city
+                    -- — twenty studs of street, then nothing.
+                    Camera.farPlane { bigModelCamera | distance = 40 }
+                        |> Expect.greaterThan (2 * cityRadius)
+            , test "a zero scene radius reproduces the distance-only planes" <|
+                \_ ->
+                    let
+                        cam =
+                            Camera.setSceneRadius 0 { bigModelCamera | distance = 7500 }
+                    in
+                    Expect.all
+                        [ \c -> Expect.within (Expect.Relative 1.0e-9) (7500 * 10) (Camera.farPlane c)
+                        , \c -> Expect.within (Expect.Relative 1.0e-9) (7500 / 1000) (Camera.nearPlane c)
+                        ]
+                        cam
+            , test "the scene radius never shrinks the orbit far plane" <|
+                \_ ->
+                    let
+                        far r =
+                            Camera.farPlane (Camera.setSceneRadius r bigModelCamera)
+                    in
+                    far cityRadius
+                        |> Expect.atLeast (far 0)
+            ]
+        , describe "walk mode"
+            [ test "entering walk puts the eye at eye height above the ground" <|
+                \_ ->
+                    Camera.position (Camera.enterWalk 120 bigModelCamera)
+                        |> Vec3.getY
+                        |> Expect.within (Expect.Absolute 1.0e-6) (120 + Camera.walkEyeHeight)
+            , test "entering walk levels the horizon and keeps the heading" <|
+                \_ ->
+                    Expect.all
+                        [ \c -> Expect.within (Expect.Absolute 1.0e-9) 0 c.elevation
+                        , \c -> Expect.within (Expect.Absolute 1.0e-9) bigModelCamera.azimuth c.azimuth
+                        , \c -> Expect.equal Camera.Walk c.navigation
+                        ]
+                        walkCamera
+            , test "entering walk keeps the eye over what was being looked at" <|
+                \_ ->
+                    let
+                        eye =
+                            Camera.position walkCamera
+                    in
+                    Expect.all
+                        [ \p -> Expect.within (Expect.Absolute 1.0e-6) (Vec3.getX bigModelCamera.target) (Vec3.getX p)
+                        , \p -> Expect.within (Expect.Absolute 1.0e-6) (Vec3.getZ bigModelCamera.target) (Vec3.getZ p)
+                        ]
+                        eye
+            , test "looking around holds the eye still" <|
+                \_ ->
+                    -- The whole point of walk mode: turning your head must not slide
+                    -- you sideways the way orbiting around a point ahead does.
+                    let
+                        before =
+                            Camera.position walkCamera
+
+                        after =
+                            Camera.position (Camera.lookAround 1.0 0.3 walkCamera)
+                    in
+                    Vec3.distance before after
+                        |> Expect.lessThan 1.0e-6
+            , test "looking around still changes the view direction" <|
+                \_ ->
+                    let
+                        forwardOf cam =
+                            Vec3.normalize (Vec3.sub cam.target (Camera.position cam))
+                    in
+                    Vec3.distance (forwardOf walkCamera) (forwardOf (Camera.lookAround 1.0 0 walkCamera))
+                        |> Expect.greaterThan 0.1
+            , test "orbiting holds the target still" <|
+                \_ ->
+                    Vec3.distance (Camera.orbitBy 1.0 0.3 bigModelCamera).target bigModelCamera.target
+                        |> Expect.lessThan 1.0e-9
+            , test "a drag right turns the same way in both modes" <|
+                \_ ->
+                    let
+                        turn cam =
+                            let
+                                dragged =
+                                    Camera.onMouseMove 200 100 (dragging cam)
+                            in
+                            dragged.azimuth - cam.azimuth
+                    in
+                    -- Same sign and magnitude; only the pivot differs.
+                    turn walkCamera
+                        |> Expect.within (Expect.Relative 1.0e-9) (turn { bigModelCamera | distance = walkCamera.distance })
+            ]
+        , describe "movement"
+            [ test "moving forward follows the heading along the ground" <|
+                \_ ->
+                    let
+                        climbing =
+                            Camera.lookAround 0 1.2 walkCamera
+
+                        travelled =
+                            Vec3.sub (Camera.moveBy { forward = 100, right = 0, up = 0 } climbing).target climbing.target
+                    in
+                    -- Looking up and walking forward must not lift you off the ground.
+                    Expect.all
+                        [ \v -> Expect.within (Expect.Absolute 1.0e-9) 0 (Vec3.getY v)
+                        , \v -> Expect.within (Expect.Relative 1.0e-9) 100 (Vec3.length v)
+                        ]
+                        travelled
+            , test "movement is proportional to the requested distance" <|
+                \_ ->
+                    let
+                        travel amount =
+                            Vec3.distance
+                                (Camera.moveBy { forward = amount, right = 0, up = 0 } walkCamera).target
+                                walkCamera.target
+                    in
+                    travel 200
+                        |> Expect.within (Expect.Relative 1.0e-9) (2 * travel 100)
+            , test "strafing is perpendicular to walking" <|
+                \_ ->
+                    let
+                        step d =
+                            Vec3.normalize (Vec3.sub (Camera.moveBy d walkCamera).target walkCamera.target)
+                    in
+                    Vec3.dot
+                        (step { forward = 1, right = 0, up = 0 })
+                        (step { forward = 0, right = 1, up = 0 })
+                        |> Expect.within (Expect.Absolute 1.0e-9) 0
+            , test "vertical movement is along world up" <|
+                \_ ->
+                    Vec3.sub (Camera.moveBy { forward = 0, right = 0, up = 50 } walkCamera).target walkCamera.target
+                        |> Expect.equal (vec3 0 50 0)
+            , test "moving leaves the orbit parameters alone" <|
+                \_ ->
+                    let
+                        moved =
+                            Camera.moveBy { forward = 100, right = 50, up = 10 } walkCamera
+                    in
+                    Expect.all
+                        [ \c -> Expect.within (Expect.Absolute 1.0e-9) walkCamera.azimuth c.azimuth
+                        , \c -> Expect.within (Expect.Absolute 1.0e-9) walkCamera.elevation c.elevation
+                        , \c -> Expect.within (Expect.Absolute 1.0e-9) walkCamera.distance c.distance
+                        ]
+                        moved
+            , test "dollying moves forward along the heading" <|
+                \_ ->
+                    Expect.equal
+                        (Camera.dollyBy 100 walkCamera).target
+                        (Camera.moveBy { forward = 100, right = 0, up = 0 } walkCamera).target
+            , test "walk speed scales with the model" <|
+                \_ ->
+                    let
+                        speed r =
+                            Camera.walkSpeed (Camera.setSceneRadius r bigModelCamera)
+                    in
+                    speed (2 * cityRadius)
+                        |> Expect.within (Expect.Relative 1.0e-9) (2 * speed cityRadius)
+            , test "walk speed has a floor for small models" <|
+                \_ ->
+                    Camera.walkSpeed (Camera.setSceneRadius 10 bigModelCamera)
+                        |> Expect.greaterThan 0
             ]
         ]

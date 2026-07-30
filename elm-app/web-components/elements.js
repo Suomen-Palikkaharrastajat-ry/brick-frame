@@ -64,6 +64,7 @@ class BaseBricksElement extends HTMLElement {
       'camera-target-x',
       'camera-target-y',
       'camera-target-z',
+      'camera-navigation',
       'ambient-strength',
       'light-strength',
       'vibrance',
@@ -143,6 +144,7 @@ class BaseBricksElement extends HTMLElement {
       || name === 'camera-target-x'
       || name === 'camera-target-y'
       || name === 'camera-target-z'
+      || name === 'camera-navigation'
       || name === 'ambient-strength'
       || name === 'light-strength'
       || name === 'vibrance'
@@ -182,6 +184,10 @@ class BaseBricksElement extends HTMLElement {
     if (Number.isFinite(maybeTargetZ)) {
       params.push(`tz=${String(maybeTargetZ)}`)
     }
+    // Only 'walk' is meaningful; 'orbit' is the default the viewer already uses.
+    if (String(this.getAttribute('camera-navigation') ?? '').trim().toLowerCase() === 'walk') {
+      params.push('nav=walk')
+    }
 
     return params.join('&')
   }
@@ -218,6 +224,7 @@ class BaseBricksElement extends HTMLElement {
       'camera-target-x',
       'camera-target-y',
       'camera-target-z',
+      'camera-navigation',
     ])
     const parts = []
     for (const attr of this.attributes) {
@@ -231,6 +238,8 @@ class BaseBricksElement extends HTMLElement {
       'camera-target-x': cameraPayload?.targetX,
       'camera-target-y': cameraPayload?.targetY,
       'camera-target-z': cameraPayload?.targetZ,
+      // Omitted when orbiting, which is the element's default.
+      'camera-navigation': cameraPayload?.navigation === 'walk' ? 'walk' : null,
     }
     for (const [name, value] of Object.entries(camValues)) {
       if (value != null) {

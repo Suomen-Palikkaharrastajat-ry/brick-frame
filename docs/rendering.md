@@ -147,7 +147,7 @@ There are still no point lights, spotlights, shadows, or reflections.
 
 ## Camera
 
-`Render.Camera` implements a spherical orbit camera:
+`Render.Camera` implements a spherical camera with two navigation modes:
 
 | Field | Meaning |
 |-------|---------|
@@ -157,6 +157,33 @@ There are still no point lights, spotlights, shadows, or reflections.
 | `target` | World-space orbit centre (default origin) |
 | `minDistance` / `maxDistance` | Interactive zoom range, sized to the model |
 | `viewportHeight` | Canvas height in CSS px; orbit and pan sensitivity derive from it |
+| `navigation` | `Orbit` or `Walk` — what a drag pivots around |
+| `sceneRadius` | Model bounding-sphere radius in LDU; feeds the far plane and walk speed |
+
+### Navigation modes
+
+Both modes maintain `position = target + eyeOffset(azimuth, elevation, distance)`.
+Only the pivot differs, which is what keeps the change small: the view matrix,
+frustum culling, gear picking and the instanced LOD are all indifferent to which
+mode is active, because a walking camera still has a valid target in front of it.
+
+| | `Orbit` | `Walk` |
+|---|---|---|
+| Drag, arrows, chevron buttons | eye swings around `target` (`orbitBy`) | `target` swings around the eye (`lookAround`) |
+| Wheel / pinch | changes `distance` | `dollyBy` — moves you forwards and backwards |
+| WASD | pans `target` | walks along the heading |
+
+`Camera.enterWalk groundY` drops the eye to `walkEyeHeight` (40 LDU, roughly
+minifig eye level) above the model's lowest point, directly below whatever was
+being looked at, with the horizon levelled and the heading kept. Ground level
+comes from `ModelBounds.minCorner` — see `Main.groundLevel`.
+
+`Camera.walkSpeed` is `max 20 (sceneRadius / 8)` LDU/s, so the same key crosses a
+gear assembly and a city at comparable apparent pace. `Shift` multiplies by four.
+
+There is **no collision detection**: walk mode passes through geometry.
+`Camera.moveBy` uses the *horizontal* heading, so looking up and walking forward
+does not lift you off the ground.
 
 Projection: `Mat4.makePerspective Camera.fovYDegrees aspect near far` (FOV 45°).
 `Camera.fovYDegrees` is the single source for the FOV — the projection matrix,
@@ -174,6 +201,14 @@ pixels-to-units number, following three.js `OrbitControls`:
 | Pan | `2 × Δpx × distance × tan(fov/2) / viewportHeight` — the point under the cursor stays under the cursor |
 | Wheel zoom | `0.95 ^ (\|delta\| × 0.01)`, applied as a ratio — reciprocal, so out-then-in returns to the same distance |
 | Pinch zoom | `Camera.zoomByRatio (lastSeparation / newSeparation)` — exact, no pixel constant |
+| Arrow keys | `keyboardTurnRate` (1.2 rad/s), integrated over frame time |
+| Chevron buttons | `0.08 × speedFactor` (6.0), integrated over frame time |
+| WASD | `Camera.walkSpeed × speedMultiplier`, integrated over frame time |
+
+Held keys are integrated per animation frame rather than counted as key-repeat
+events, so movement speed does not depend on the operating system's repeat rate.
+`Main.applyHeldKeys` shares `heldControlTick` with the on-screen rotate buttons
+so there is one notion of frame time.
 
 Fixed constants were only correct at one canvas size: panning overshot the
 cursor by ~2.7× on a tall desktop window while orbiting was ~3× too slow on a
@@ -197,12 +232,30 @@ A fixed `0.5–2000` clamp used to fight auto-fit, which frames a city-scale
 model from several thousand LDU out: the first wheel tick or pinch collapsed the
 view to 2000 LDU and there was no way back.
 
-Clip planes scale with orbit distance rather than being fixed:
-`Camera.nearPlane` is `distance / 1000` and `Camera.farPlane` is
-`distance × 10`. A city-scale model is framed from several thousand LDU out, so
-the previous constant `0.1–2000` range clipped it away entirely; tying both
-planes to orbit distance also keeps the near:far ratio — and with it
-depth-buffer precision — constant at any model scale.
+### Clip planes
+
+```
+farPlane  = max 100 (max (distance × 10) (distance + 2.5 × sceneRadius))
+nearPlane = max 0.1 (farPlane / 10000)
+```
+
+The first far-plane term covers orbiting; a city-scale model is framed from
+several thousand LDU out, so a constant `0.1–2000` range clipped it away
+entirely. The second covers standing **inside** the model, where the orbit
+distance says nothing about how far the geometry is: at a 40 LDU street-level eye
+height the first term alone gives a 400 LDU far plane on a model 3370 LDU wide —
+twenty studs of street and then blackness. That is not merely a clip, because the
+same expression feeds `Instanced.visiblePlacements`, `Instanced.proxyEntities`
+and `Main.isSphereVisible`, so the far city was never submitted at all.
+
+`sceneRadius` defaults to 0, which reduces the far plane to the first term
+exactly, so a host that never calls `Camera.setSceneRadius` keeps the previous
+behaviour. `Main.applyZoomRange` is the only place it is set.
+
+Deriving `nearPlane` from `farPlane` pins the near:far ratio — and with it
+depth-buffer precision — at 10000 regardless of model scale or eye position. In
+the orbit case `farPlane` is `distance × 10`, so this is `distance / 1000`, the
+same figure as before.
 
 ## Interaction controls
 
@@ -211,8 +264,56 @@ depth-buffer precision — constant at any model scale.
 - **Fit view:** the ⛶ button in the viewer control pad re-frames the model
   (`FitView` → `frameModelBounds`). Without it the camera was a one-way door:
   the first interaction switches `cameraMode` to `CameraManual` and auto-fit
-  never runs again, so a model lost off-screen needed a page reload.
+  never runs again, so a model lost off-screen needed a page reload. Fitting also
+  returns to `Orbit`.
+- **Street level:** the person button in the control pad, or `G`, toggles walk
+  mode (`ToggleWalkMode` → `Main.toggleWalkMode`). Needs loaded model bounds to
+  know where the ground is, so it is a no-op on an empty viewer.
 - **Control panel:** top-right motor/gear panel is collapsible (`Minimize` / `Maximize`).
+
+### Keyboard shortcuts
+
+Every rotation goes through `Main.applyLook`, which dispatches on
+`Camera.navigation`, so the arrow keys and the on-screen chevron buttons turn
+your head while walking rather than orbiting a point in front of you. That is the
+only `Camera.orbitBy` call site in `Main` — keep it that way.
+
+`UI.Shortcuts` owns the whole mapping as pure functions, returning its own
+`Action` type that `Main.msgForAction` translates — `Main.update` is not exposed,
+so this is the only way key dispatch gets test coverage. `Shortcuts.helpRows`
+also backs the `?` overlay, so the reference cannot drift from the bindings.
+
+| Key | Action |
+|---|---|
+| `W` `A` `S` `D` | Walk along the heading, or pan the target |
+| `Q` `E` | Down / up |
+| `Shift` (held) | Move four times faster |
+| `↑` `↓` `←` `→` | Look, or orbit |
+| `+` `-` | Zoom |
+| `F`, `Home` | Fit whole model |
+| `G` | Street level on / off |
+| `1`–`6` | Front, back, left, right, top, isometric |
+| `?` | Shortcut reference |
+| `Esc` | Close the reference, then leave street level |
+| `Space` | Play / pause |
+
+Two guards matter. `Shortcuts.isTextEntryTarget` rejects events whose target is
+an `INPUT`, `TEXTAREA`, `SELECT`, `OPTION`, `BUTTON` or contenteditable element:
+the keydown subscription is document-global, so without it typing a space into a
+host page's URL field toggled playback in the embedded viewer, and Space on a
+focused button toggled twice (once natively, once through the handler).
+`actionFor` also declines anything held with Ctrl, Cmd or Alt so browser
+shortcuts still work — `Shift` is deliberately not in that list.
+
+`Browser.Events.onVisibilityChange` clears the held-key set, because a keyup lost
+to a tab switch would otherwise leave the camera walking forever.
+
+### View presets
+
+`Main.applyViewPreset` reuses `cameraForBounds` for the target and distance —
+both come from the bounding *sphere* and so are independent of viewing angle —
+then overrides the angles from `viewPresetAngles`. `TopView` stops just short of
+straight down, matching the camera's own elevation clamp.
 
 ### Touch event handling
 

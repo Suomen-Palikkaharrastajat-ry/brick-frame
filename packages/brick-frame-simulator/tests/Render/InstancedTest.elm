@@ -74,15 +74,17 @@ placements =
 -}
 camera : Camera.Camera
 camera =
-    { azimuth = 0
-    , elevation = 0
-    , distance = 200
-    , target = vec3 0 0 0
-    , dragging = False
-    , lastMousePos = Nothing
-    , minDistance = 0.5
-    , maxDistance = 2000
-    , viewportHeight = 600
+    -- Built from `Camera.init` rather than spelled out, so adding a camera field
+    -- does not break this fixture.
+    let
+        base =
+            Camera.init
+    in
+    { base
+        | azimuth = 0
+        , elevation = 0
+        , distance = 200
+        , target = vec3 0 0 0
     }
 
 
