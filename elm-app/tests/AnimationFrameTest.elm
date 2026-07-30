@@ -6,6 +6,7 @@ module AnimationFrameTest exposing (suite)
 
 import Expect
 import Main exposing (Flags, HeldControl(..), LoadPhase(..))
+import Set
 import Test exposing (Test, describe, test)
 
 
@@ -63,4 +64,16 @@ suite =
                 Main.needsAnimationFrame
                     { idleModel | heldControl = HoldRotate 1 0 }
                     |> Expect.equal True
+        , test "held movement key → True" <|
+            \_ ->
+                Main.needsAnimationFrame
+                    { idleModel | heldKeys = Set.singleton "w" }
+                    |> Expect.equal True
+        , test "held speed modifier alone → False" <|
+            \_ ->
+                -- Shift changes nothing on its own, so it must not keep the
+                -- render loop awake.
+                Main.needsAnimationFrame
+                    { idleModel | heldKeys = Set.singleton "Shift" }
+                    |> Expect.equal False
         ]

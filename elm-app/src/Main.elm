@@ -42,6 +42,7 @@ import Set exposing (Set)
 import Task
 import Time
 import UI.FileUpload as FileUpload
+import UI.Shortcuts as Shortcuts
 import UI.Theme as Theme
 import WebGL
 import WebGL.Settings.DepthTest as DepthTest
@@ -89,6 +90,49 @@ type alias PlaybackState =
 type CameraMode
     = CameraAutoFit
     | CameraManual
+
+
+{-| A canonical viewpoint, reachable from the number keys.
+
+Each frames the whole model from a fixed direction; `IsometricView` is the
+three-quarter view auto-fit uses.
+
+-}
+type ViewPreset
+    = FrontView
+    | BackView
+    | LeftView
+    | RightView
+    | TopView
+    | IsometricView
+
+
+{-| Azimuth and elevation for a preset, in radians.
+
+`TopView` stops just short of straight down, matching the camera's own elevation
+clamp.
+
+-}
+viewPresetAngles : ViewPreset -> ( Float, Float )
+viewPresetAngles preset =
+    case preset of
+        FrontView ->
+            ( 0, 0 )
+
+        BackView ->
+            ( pi, 0 )
+
+        LeftView ->
+            ( -pi / 2, 0 )
+
+        RightView ->
+            ( pi / 2, 0 )
+
+        TopView ->
+            ( 0, pi / 2 - 0.01 )
+
+        IsometricView ->
+            ( 0.75, 0.6 )
 
 
 type UiMode
@@ -185,6 +229,9 @@ type alias Model =
     , requestedMotorIndex : Maybe Int
     , heldControl : HeldControl
     , heldControlTick : Maybe Time.Posix
+    , heldKeys : Set String
+    , heldKeysTick : Maybe Time.Posix
+    , showShortcutHelp : Bool
     , useWindowResize : Bool
     , renderStyle : Style.Style
     }
@@ -258,6 +305,7 @@ init flags =
                         (Maybe.withDefault (Vec3.getX baseCamera.target) initialHash.targetX)
                         (Maybe.withDefault (Vec3.getY baseCamera.target) initialHash.targetY)
                         (Maybe.withDefault (Vec3.getZ baseCamera.target) initialHash.targetZ)
+                , navigation = Maybe.withDefault baseCamera.navigation initialHash.navigation
             }
 
         maxRpmValue =
@@ -336,6 +384,9 @@ init flags =
                 Just flags.initialMotorIndex
       , heldControl = NoHeldControl
       , heldControlTick = Nothing
+      , heldKeys = Set.empty
+      , heldKeysTick = Nothing
+      , showShortcutHelp = False
       , useWindowResize = flags.useWindowResize
       , renderStyle = buildRenderStyle flags.ambientStrength flags.lightStrength flags.vibrance flags.edgeWidth
       }
@@ -453,8 +504,13 @@ type Msg
     | StartHoldRotate Float Float
     | EndHoldRotate
     | FitView
+    | ToggleWalkMode
+    | SetViewPreset ViewPreset
     | ToggleControlsPanel
-    | KeyPressed String
+    | KeyPressed Shortcuts.KeyEvent
+    | KeyReleased String
+    | AllKeysReleased
+    | ToggleShortcutHelp
 
 
 runtimeEventCmd : String -> List ( String, Encode.Value ) -> Cmd Msg
@@ -498,6 +554,7 @@ cameraChangedEventCmd camera =
         , ( "targetX", Encode.float (Vec3.getX camera.target) )
         , ( "targetY", Encode.float (Vec3.getY camera.target) )
         , ( "targetZ", Encode.float (Vec3.getZ camera.target) )
+        , ( "navigation", Encode.string (navigationToString camera.navigation) )
         ]
 
 
@@ -526,6 +583,8 @@ cameraMoved before after =
         /= Vec3.getY after.target
         || Vec3.getZ before.target
         /= Vec3.getZ after.target
+        || before.navigation
+        /= after.navigation
 
 
 partsProgressPct : Int -> Int -> Float
@@ -741,7 +800,7 @@ updateInner msg model =
             let
                 nextModel =
                     { model
-                        | camera = Camera.onWheel delta model.camera
+                        | camera = applyWheel delta model.camera
                         , cameraMode = CameraManual
                     }
             in
@@ -962,8 +1021,14 @@ updateInner msg model =
                     else
                         ( { model | loadingProgressTick = Nothing }, Cmd.none )
 
-                ( heldModel, heldCmd ) =
+                ( buttonModel, buttonCmd ) =
                     applyHeldControl now progressModel
+
+                ( heldModel, keyCmd ) =
+                    applyHeldKeys now buttonModel
+
+                heldCmd =
+                    Cmd.batch [ buttonCmd, keyCmd ]
             in
             if heldModel.playback.running then
                 let
@@ -1121,7 +1186,7 @@ updateInner msg model =
                     model.camera
 
                 nextCamera =
-                    Camera.orbitBy azimuthDelta elevationDelta baseCamera
+                    applyLook azimuthDelta elevationDelta baseCamera
 
                 nextModel =
                     { model | camera = nextCamera, cameraMode = CameraManual }
@@ -1161,19 +1226,238 @@ updateInner msg model =
                 ]
             )
 
+        ToggleWalkMode ->
+            let
+                nextModel =
+                    toggleWalkMode model
+            in
+            ( nextModel
+            , Cmd.batch
+                [ Ports.setUrlHash (encodeHash nextModel)
+                , cameraChangedIfNeededCmd model.camera nextModel.camera
+                ]
+            )
+
+        SetViewPreset preset ->
+            let
+                nextModel =
+                    applyViewPreset preset model
+            in
+            ( nextModel
+            , Cmd.batch
+                [ Ports.setUrlHash (encodeHash nextModel)
+                , cameraChangedIfNeededCmd model.camera nextModel.camera
+                ]
+            )
+
         ToggleControlsPanel ->
             ( { model | controlsCollapsed = not model.controlsCollapsed }, Cmd.none )
 
-        KeyPressed key ->
-            case key of
-                " " ->
-                    update ToggleMotor model
+        KeyPressed event ->
+            if Shortcuts.isTextEntryTarget event then
+                -- Someone is typing into a host page's form field. The keydown
+                -- subscription is document-global, so without this a space in a
+                -- URL box toggles playback in the embedded viewer.
+                ( model, Cmd.none )
 
-                "Spacebar" ->
-                    update ToggleMotor model
+            else
+                let
+                    heldModel =
+                        { model | heldKeys = Set.insert (Shortcuts.normalizeKey event.key) model.heldKeys }
+                in
+                -- A held key repeats at the OS rate; movement is integrated per
+                -- frame instead, so only the first press does discrete work.
+                if event.repeat then
+                    ( heldModel, Cmd.none )
 
-                _ ->
-                    ( model, Cmd.none )
+                else
+                    case Shortcuts.actionFor (shortcutContext model) event of
+                        Just action ->
+                            updateInner (msgForAction action) heldModel
+
+                        Nothing ->
+                            ( heldModel, Cmd.none )
+
+        KeyReleased key ->
+            ( { model | heldKeys = Set.remove (Shortcuts.normalizeKey key) model.heldKeys }
+            , Cmd.none
+            )
+
+        AllKeysReleased ->
+            -- A key-up lost to a window blur or tab switch would otherwise leave
+            -- the camera walking forever.
+            ( { model | heldKeys = Set.empty }, Cmd.none )
+
+        ToggleShortcutHelp ->
+            ( { model | showShortcutHelp = not model.showShortcutHelp }, Cmd.none )
+
+
+{-| What `Escape` and `?` need to know to pick between their meanings.
+-}
+shortcutContext : Model -> { helpVisible : Bool, walking : Bool }
+shortcutContext model =
+    { helpVisible = model.showShortcutHelp
+    , walking = model.camera.navigation == Camera.Walk
+    }
+
+
+{-| Map a shortcut to the message it stands for.
+
+`UI.Shortcuts` names its own actions so it stays free of `Msg`; this is the seam.
+
+-}
+msgForAction : Shortcuts.Action -> Msg
+msgForAction action =
+    case action of
+        Shortcuts.TogglePlayback ->
+            ToggleMotor
+
+        Shortcuts.FitView ->
+            FitView
+
+        Shortcuts.ToggleWalk ->
+            ToggleWalkMode
+
+        Shortcuts.LeaveWalk ->
+            ToggleWalkMode
+
+        Shortcuts.ToggleHelp ->
+            ToggleShortcutHelp
+
+        Shortcuts.CloseHelp ->
+            ToggleShortcutHelp
+
+        Shortcuts.ZoomIn ->
+            Wheel -keyboardZoomStep
+
+        Shortcuts.ZoomOut ->
+            Wheel keyboardZoomStep
+
+        Shortcuts.PresetFront ->
+            SetViewPreset FrontView
+
+        Shortcuts.PresetBack ->
+            SetViewPreset BackView
+
+        Shortcuts.PresetLeft ->
+            SetViewPreset LeftView
+
+        Shortcuts.PresetRight ->
+            SetViewPreset RightView
+
+        Shortcuts.PresetTop ->
+            SetViewPreset TopView
+
+        Shortcuts.PresetIsometric ->
+            SetViewPreset IsometricView
+
+
+{-| Wheel delta one `+`/`-` press is worth — two notches of a mouse wheel.
+-}
+keyboardZoomStep : Float
+keyboardZoomStep =
+    200.0
+
+
+{-| Move and look according to the keys currently held down.
+
+Shares `heldControlTick` with the on-screen rotate buttons so there is a single
+notion of frame time, and integrates over it rather than counting key repeats —
+so movement speed is independent of the OS repeat rate.
+
+-}
+applyHeldKeys : Time.Posix -> Model -> ( Model, Cmd Msg )
+applyHeldKeys now model =
+    if not (Shortcuts.hasContinuousInput model.heldKeys) then
+        ( { model | heldKeysTick = Nothing }, Cmd.none )
+
+    else
+        let
+            dtSeconds =
+                case model.heldKeysTick of
+                    Just prev ->
+                        -- Capped: flattening geometry blocks the main thread, and
+                        -- an uncapped delta would spend the whole stall as one
+                        -- stride and teleport you across the model.
+                        clamp 0 maxHeldKeyStep (toFloat (Time.posixToMillis now - Time.posixToMillis prev) / 1000.0)
+
+                    Nothing ->
+                        0.016
+        in
+        if dtSeconds <= 0 then
+            ( { model | heldKeysTick = Just now }, Cmd.none )
+
+        else
+            let
+                movement =
+                    Shortcuts.movementFor model.heldKeys
+
+                look =
+                    Shortcuts.lookFor model.heldKeys
+
+                stride =
+                    Camera.walkSpeed model.camera
+                        * Shortcuts.speedMultiplier model.heldKeys
+                        * dtSeconds
+
+                turn =
+                    keyboardTurnRate * dtSeconds
+
+                nextCamera =
+                    model.camera
+                        |> Camera.moveBy
+                            { forward = movement.forward * stride
+                            , right = movement.right * stride
+                            , up = movement.up * stride
+                            }
+                        |> applyLook (look.azimuth * turn) (look.elevation * turn)
+
+                nextModel =
+                    { model
+                        | camera = nextCamera
+                        , cameraMode = CameraManual
+                        , heldKeysTick = Just now
+                    }
+            in
+            ( nextModel
+            , Cmd.batch
+                [ Ports.setUrlHash (encodeHash nextModel)
+                , cameraChangedIfNeededCmd model.camera nextModel.camera
+                ]
+            )
+
+
+{-| Rotate the way a drag would in the active navigation mode.
+
+Every rotation in this module goes through here — the arrow keys, the on-screen
+chevron buttons and `RotateCameraBy` — so this is the only `Camera.orbitBy` call
+site. Reaching for `orbitBy` directly is what made the chevron buttons swing the
+eye in a small circle instead of turning the head while walking, which on a touch
+device left dragging as the only way to turn.
+
+-}
+applyLook : Float -> Float -> Camera -> Camera
+applyLook azimuthDelta elevationDelta camera =
+    case camera.navigation of
+        Camera.Orbit ->
+            Camera.orbitBy azimuthDelta elevationDelta camera
+
+        Camera.Walk ->
+            Camera.lookAround azimuthDelta elevationDelta camera
+
+
+{-| Arrow-key turn rate, in radians per second.
+-}
+keyboardTurnRate : Float
+keyboardTurnRate =
+    1.2
+
+
+{-| Longest frame time a single held-key step may integrate over, in seconds.
+-}
+maxHeldKeyStep : Float
+maxHeldKeyStep =
+    0.1
 
 
 applyHeldControl : Time.Posix -> Model -> ( Model, Cmd Msg )
@@ -1201,7 +1485,7 @@ applyHeldControl now model =
                         model.camera
 
                     nextCamera =
-                        Camera.orbitBy
+                        applyLook
                             (azimuthStep * speedFactor * dtSeconds)
                             (elevationStep * speedFactor * dtSeconds)
                             baseCamera
@@ -1396,7 +1680,7 @@ advanceTouchGesture touches model =
 
                         cameraAfterZoom =
                             if zoomEngaged && newDistance > 0 && pinch.distance > 0 then
-                                Camera.zoomByRatio (pinch.distance / newDistance) cameraAfterPan
+                                applyPinchZoom (pinch.distance / newDistance) cameraAfterPan
 
                             else
                                 cameraAfterPan
@@ -1547,13 +1831,72 @@ beginPinch p1 p2 =
     }
 
 
-{-| A model's bounding sphere, kept so the view can be re-framed on demand
-without re-flattening the geometry.
+{-| A model's extents, kept so the view can be re-framed on demand without
+re-flattening the geometry.
+
+`minCorner`/`maxCorner` are the axis-aligned box; `groundLevel` reads the floor
+off it for street-level positioning. `center`/`radius` are the bounding sphere
+used for framing and for the far plane.
+
 -}
 type alias ModelBounds =
-    { center : Vec3.Vec3
+    { minCorner : Vec3.Vec3
+    , maxCorner : Vec3.Vec3
+    , center : Vec3.Vec3
     , radius : Float
     }
+
+
+{-| The model's lowest point — where the ground is, in render space.
+-}
+groundLevel : ModelBounds -> Float
+groundLevel bounds =
+    Vec3.getY bounds.minCorner
+
+
+{-| Wheel zoom, interpreted for the active navigation mode.
+
+Orbiting pulls the eye towards the pivot. Walking has no pivot to pull towards —
+shrinking the orbit distance would slide you out of the street rather than along
+it — so the wheel moves you forwards and backwards instead.
+
+-}
+applyWheel : Float -> Camera -> Camera
+applyWheel delta camera =
+    case camera.navigation of
+        Camera.Orbit ->
+            Camera.onWheel delta camera
+
+        Camera.Walk ->
+            Camera.dollyBy (-delta * 0.01 * Camera.walkSpeed camera * walkWheelSeconds) camera
+
+
+{-| Pinch zoom, interpreted for the active navigation mode.
+
+`ratio` is the same figure `Camera.zoomByRatio` takes: below 1 means zoom in.
+
+-}
+applyPinchZoom : Float -> Camera -> Camera
+applyPinchZoom ratio camera =
+    case camera.navigation of
+        Camera.Orbit ->
+            Camera.zoomByRatio ratio camera
+
+        Camera.Walk ->
+            -- A ratio is scale-free, so turn it into a stride: pinching out by a
+            -- factor of two walks one second forwards.
+            Camera.dollyBy ((1 - ratio) * Camera.walkSpeed camera * walkWheelSeconds) camera
+
+
+{-| How many seconds of walking one full wheel notch is worth.
+
+A whole second of travel per notch overshoots badly at street level — on a
+city-scale model that is fourteen studs from one flick of the finger.
+
+-}
+walkWheelSeconds : Float
+walkWheelSeconds =
+    0.25
 
 
 {-| Bounding sphere of the baked geometry path.
@@ -1615,7 +1958,12 @@ modelBoundsFromLines lines cache =
                 radius =
                     max 1 (sqrt (extentX * extentX + extentY * extentY + extentZ * extentZ) / 2)
             in
-            Just { center = center, radius = radius }
+            Just
+                { minCorner = Vec3.vec3 bounds.minX bounds.minY bounds.minZ
+                , maxCorner = Vec3.vec3 bounds.maxX bounds.maxY bounds.maxZ
+                , center = center
+                , radius = radius
+                }
 
 
 {-| Bounding sphere of the instanced path, from the placement spheres that
@@ -1623,7 +1971,9 @@ modelBoundsFromLines lines cache =
 -}
 modelBoundsFromInstanced : InstancedScene -> ModelBounds
 modelBoundsFromInstanced instanced =
-    { center = Vec3.scale 0.5 (Vec3.add instanced.boundsMin instanced.boundsMax)
+    { minCorner = instanced.boundsMin
+    , maxCorner = instanced.boundsMax
+    , center = Vec3.scale 0.5 (Vec3.add instanced.boundsMin instanced.boundsMax)
     , radius = max 1 (0.5 * Vec3.length (Vec3.sub instanced.boundsMax instanced.boundsMin))
     }
 
@@ -1640,8 +1990,67 @@ frameModelBounds model =
     case model.modelBounds of
         Just bounds ->
             { model
-                | camera = cameraForBounds model.width model.height bounds.center bounds.radius model.camera
+                | camera =
+                    cameraForBounds model.width model.height bounds.center bounds.radius model.camera
+                        -- Framing the whole model is an outside-in view; walking
+                        -- with a 7500 LDU pivot in front of you is not.
+                        |> Camera.setNavigation Camera.Orbit
                 , cameraMode = CameraAutoFit
+            }
+
+        Nothing ->
+            model
+
+
+{-| Drop to street level, or step back out to orbit.
+
+Needs the model bounds to know where the ground is, so it is a no-op before a
+model has loaded.
+
+-}
+toggleWalkMode : Model -> Model
+toggleWalkMode model =
+    case ( model.camera.navigation, model.modelBounds ) of
+        ( Camera.Orbit, Just bounds ) ->
+            { model
+                | camera = Camera.enterWalk (groundLevel bounds) model.camera
+                , cameraMode = CameraManual
+            }
+
+        ( Camera.Walk, _ ) ->
+            -- Leaving walk mode keeps the viewpoint; only the drag pivot changes.
+            { model
+                | camera = Camera.setNavigation Camera.Orbit model.camera
+                , cameraMode = CameraManual
+            }
+
+        ( Camera.Orbit, Nothing ) ->
+            model
+
+
+{-| Frame the model from a canonical direction.
+
+Reuses `cameraForBounds` for the target and distance — those come from the
+bounding _sphere_ and so are independent of the viewing angle — then overrides
+the angles.
+
+-}
+applyViewPreset : ViewPreset -> Model -> Model
+applyViewPreset preset model =
+    case model.modelBounds of
+        Just bounds ->
+            let
+                ( azimuth, elevation ) =
+                    viewPresetAngles preset
+
+                framed =
+                    cameraForBounds model.width model.height bounds.center bounds.radius model.camera
+            in
+            { model
+                | camera =
+                    { framed | azimuth = azimuth, elevation = elevation }
+                        |> Camera.setNavigation Camera.Orbit
+                , cameraMode = CameraManual
             }
 
         Nothing ->
@@ -1687,13 +2096,18 @@ framedDistance width height radius =
     clamp 8 maxAutoFitDistance (radius / sin limitingHalfFov * 1.25)
 
 
-{-| Size the interactive zoom range to the model, and record the canvas height.
+{-| Size the interactive zoom range to the model, and record the canvas height
+and model radius.
 
-Applied whether or not the camera is being re-framed, because the limits are a
-property of the model rather than of the current view: a shared `#d=` link
+Applied whether or not the camera is being re-framed, because all three are
+properties of the model rather than of the current view: a shared `#d=` link
 restores a manual camera, and it still needs a range that reaches it. A fixed
 ceiling used to snap a city-scale model from its framed distance down to the
 limit on the very first wheel tick, with no way back out.
+
+The scene radius is what keeps the far plane honest once the camera is _inside_
+the model — see `Render.Camera.farPlane`. This is the only place it is set, so
+walk mode inherits it for free.
 
 -}
 applyZoomRange : Int -> Int -> Float -> Camera -> Camera
@@ -1704,6 +2118,7 @@ applyZoomRange width height radius currentCamera =
     in
     currentCamera
         |> Camera.setViewportHeight (toFloat height)
+        |> Camera.setSceneRadius radius
         |> Camera.setZoomRange 0.5 (max 2000 (framed * zoomOutHeadroom))
 
 
@@ -3589,6 +4004,7 @@ needsAnimationFrame model =
         || (model.loadPhase == FlatteningGeometry)
         || model.refineFrames
         > 0
+        || Shortcuts.hasContinuousInput model.heldKeys
         || (case model.heldControl of
                 NoHeldControl ->
                     False
@@ -3611,7 +4027,12 @@ subscriptions model =
                 (Decode.field "clientX" Decode.float)
                 (Decode.field "clientY" Decode.float)
             )
-        , Browser.Events.onKeyDown (Decode.map KeyPressed (Decode.field "key" Decode.string))
+        , Browser.Events.onKeyDown (Decode.map KeyPressed keyEventDecoder)
+        , Browser.Events.onKeyUp (Decode.map KeyReleased (Decode.field "key" Decode.string))
+
+        -- Losing focus swallows the matching keyup, which would leave a held
+        -- movement key stuck down for the rest of the session.
+        , Browser.Events.onVisibilityChange (\_ -> AllKeysReleased)
         , if model.useWindowResize then
             Browser.Events.onResize WindowResize
 
@@ -3668,6 +4089,44 @@ wheelDeltaDecoder =
         (Decode.field "deltaY" Decode.float)
         (Decode.oneOf [ Decode.field "deltaMode" Decode.int, Decode.succeed 0 ])
         (Decode.oneOf [ Decode.field "ctrlKey" Decode.bool, Decode.succeed False ])
+
+
+{-| Everything `UI.Shortcuts` needs from a keyboard event.
+
+`target.tagName` and `target.isContentEditable` drive the typing guard. Both are
+read defensively — a synthetic event, or one whose target is the document rather
+than an element, has neither.
+
+-}
+keyEventDecoder : Decode.Decoder Shortcuts.KeyEvent
+keyEventDecoder =
+    Decode.map8
+        (\key shift ctrl meta alt repeat targetTag targetEditable ->
+            { key = key
+            , shift = shift
+            , ctrl = ctrl
+            , meta = meta
+            , alt = alt
+            , repeat = repeat
+            , targetTag = targetTag
+            , targetEditable = targetEditable
+            }
+        )
+        (Decode.field "key" Decode.string)
+        (optionalFlag "shiftKey")
+        (optionalFlag "ctrlKey")
+        (optionalFlag "metaKey")
+        (optionalFlag "altKey")
+        (optionalFlag "repeat")
+        (Decode.oneOf [ Decode.at [ "target", "tagName" ] Decode.string, Decode.succeed "" ])
+        (Decode.oneOf [ Decode.at [ "target", "isContentEditable" ] Decode.bool, Decode.succeed False ])
+
+
+{-| A boolean event field, defaulting to `False` when absent.
+-}
+optionalFlag : String -> Decode.Decoder Bool
+optionalFlag field =
+    Decode.oneOf [ Decode.field field Decode.bool, Decode.succeed False ]
 
 
 {-| Fingers currently touching **this canvas**.
@@ -3878,7 +4337,114 @@ viewOverlay model =
         , Attr.style "bottom" "0"
         , Attr.style "pointer-events" "none"
         ]
-        ([ viewStatus model ] ++ modeOverlays)
+        ([ viewStatus model ]
+            ++ modeOverlays
+            -- Shortcuts work in both UI modes, so the reference does too.
+            ++ (if model.showShortcutHelp then
+                    [ viewShortcutHelp ]
+
+                else
+                    []
+               )
+        )
+
+
+{-| The keyboard shortcut reference.
+
+Content comes from `UI.Shortcuts.helpRows` so it cannot drift away from the
+bindings it documents.
+
+-}
+viewShortcutHelp : Html Msg
+viewShortcutHelp =
+    div
+        [ Attr.style "position" "absolute"
+        , Attr.style "top" "50%"
+        , Attr.style "left" "50%"
+        , Attr.style "transform" "translate(-50%, -50%)"
+        , Attr.style "max-width" "min(560px, calc(100% - 24px))"
+        , Attr.style "max-height" "calc(100% - 24px)"
+        , Attr.style "overflow" "auto"
+        , Attr.style "pointer-events" "auto"
+        , Attr.style "padding" "16px 20px"
+        , Attr.style "background" Theme.panelSurface
+        , Attr.style "color" Theme.textPrimary
+        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "border-radius" "8px"
+        , Attr.style "box-shadow" "0 10px 32px color-mix(in srgb, var(--color-brand) 16%, transparent)"
+        , Attr.style "font-size" "12px"
+        , Attr.attribute "role" "dialog"
+        , Attr.attribute "aria-label" "Keyboard shortcuts"
+        ]
+        (div
+            [ Attr.style "display" "flex"
+            , Attr.style "align-items" "center"
+            , Attr.style "justify-content" "space-between"
+            , Attr.style "gap" "12px"
+            , Attr.style "margin-bottom" "12px"
+            ]
+            [ div
+                [ Attr.style "font-weight" "600"
+                , Attr.style "font-size" "13px"
+                ]
+                [ text "Keyboard shortcuts" ]
+            , button
+                [ Html.Events.onClick ToggleShortcutHelp
+                , onTouchTap ToggleShortcutHelp
+                , Attr.title "Close"
+                , Attr.attribute "aria-label" "Close"
+                , Attr.style "padding" "2px 4px"
+                , Attr.style "background" "transparent"
+                , Attr.style "color" Theme.textMuted
+                , Attr.style "border" "none"
+                , Attr.style "cursor" "pointer"
+                , Attr.style "display" "flex"
+                ]
+                [ featherIcon "x" ]
+            ]
+            :: List.map viewShortcutGroup Shortcuts.helpRows
+            ++ [ div
+                    [ Attr.style "margin-top" "12px"
+                    , Attr.style "color" Theme.textMuted
+                    ]
+                    [ text "Street level flies through walls — there is no collision." ]
+               ]
+        )
+
+
+{-| One headed group of the shortcut reference.
+-}
+viewShortcutGroup : ( String, List ( String, String ) ) -> Html Msg
+viewShortcutGroup ( heading, rows ) =
+    div [ Attr.style "margin-bottom" "10px" ]
+        (div
+            [ Attr.style "color" Theme.textMuted
+            , Attr.style "text-transform" "uppercase"
+            , Attr.style "letter-spacing" "0.06em"
+            , Attr.style "font-size" "10px"
+            , Attr.style "margin-bottom" "4px"
+            ]
+            [ text heading ]
+            :: List.map viewShortcutRow rows
+        )
+
+
+{-| One key/description line of the shortcut reference.
+-}
+viewShortcutRow : ( String, String ) -> Html Msg
+viewShortcutRow ( keys, description ) =
+    div
+        [ Attr.style "display" "flex"
+        , Attr.style "gap" "12px"
+        , Attr.style "line-height" "1.8"
+        ]
+        [ div
+            [ Attr.style "flex" "0 0 110px"
+            , Attr.style "font-family" "monospace"
+            ]
+            [ text keys ]
+        , div [] [ text description ]
+        ]
 
 
 viewDebug : Model -> Html Msg
@@ -4298,7 +4864,7 @@ viewViewerControls model =
         ]
         [ viewerFitViewButton
         , viewerRotateButton (featherIcon "chevron-up") (StartHoldRotate 0 -step)
-        , div [] []
+        , viewerWalkButton model
         , viewerRotateButton (featherIcon "chevron-left") (StartHoldRotate step 0)
         , if model.simulationAvailable then
             viewerCenterPlayButton model
@@ -4308,8 +4874,92 @@ viewViewerControls model =
         , viewerRotateButton (featherIcon "chevron-right") (StartHoldRotate -step 0)
         , div [] []
         , viewerRotateButton (featherIcon "chevron-down") (StartHoldRotate 0 step)
-        , div [] []
+        , viewerHelpButton model
         ]
+
+
+{-| Drop to street level, or step back out.
+
+Shown as engaged while walking, following the play button's precedent, because
+the same drag means two different things depending on the mode.
+
+-}
+viewerWalkButton : Model -> Html Msg
+viewerWalkButton model =
+    let
+        walking =
+            model.camera.navigation == Camera.Walk
+
+        label =
+            if walking then
+                "Leave street level"
+
+            else
+                "View from street level"
+    in
+    button
+        (Html.Events.onClick ToggleWalkMode
+            :: onTouchTap ToggleWalkMode
+            :: Attr.title label
+            :: Attr.attribute "aria-label" label
+            :: Attr.attribute "aria-pressed"
+                (if walking then
+                    "true"
+
+                 else
+                    "false"
+                )
+            :: viewerButtonStyles walking
+        )
+        [ featherIcon "user" ]
+
+
+{-| Show or hide the keyboard shortcut list.
+-}
+viewerHelpButton : Model -> Html Msg
+viewerHelpButton model =
+    button
+        (Html.Events.onClick ToggleShortcutHelp
+            :: onTouchTap ToggleShortcutHelp
+            :: Attr.title "Keyboard shortcuts"
+            :: Attr.attribute "aria-label" "Keyboard shortcuts"
+            :: viewerButtonStyles model.showShortcutHelp
+        )
+        [ featherIcon "help-circle" ]
+
+
+{-| Shared styling for the viewer pad's toggle buttons.
+
+`active` swaps in the brand colours, so a mode that changes what the mouse does
+is visible at a glance.
+
+-}
+viewerButtonStyles : Bool -> List (Html.Attribute Msg)
+viewerButtonStyles active =
+    [ Attr.style "width" "36px"
+    , Attr.style "height" "32px"
+    , Attr.style "padding" "0"
+    , Attr.style "background"
+        (if active then
+            Theme.brandYellow
+
+         else
+            Theme.panelSubtleBackground
+        )
+    , Attr.style "color"
+        (if active then
+            Theme.brand
+
+         else
+            Theme.textPrimary
+        )
+    , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+    , Attr.style "border-radius" "4px"
+    , Attr.style "cursor" "pointer"
+    , Attr.style "display" "flex"
+    , Attr.style "align-items" "center"
+    , Attr.style "justify-content" "center"
+    ]
 
 
 {-| Re-frame the whole model. The only way back to the auto-fit view once the
@@ -4428,6 +5078,15 @@ featherIcon name =
 
                 "maximize" ->
                     FeatherIcons.maximize
+
+                "user" ->
+                    FeatherIcons.user
+
+                "help-circle" ->
+                    FeatherIcons.helpCircle
+
+                "x" ->
+                    FeatherIcons.x
 
                 _ ->
                     FeatherIcons.play
@@ -4592,6 +5251,7 @@ type alias HashState =
     , targetX : Maybe Float
     , targetY : Maybe Float
     , targetZ : Maybe Float
+    , navigation : Maybe Camera.Navigation
     }
 
 
@@ -4629,6 +5289,7 @@ decodeHash rawHash =
     , targetX = getFloat "tx"
     , targetY = getFloat "ty"
     , targetZ = getFloat "tz"
+    , navigation = Dict.get "nav" entries |> Maybe.andThen navigationFromString
     }
 
 
@@ -4645,6 +5306,8 @@ hasExplicitHashCamera state =
         || state.targetY
         /= Nothing
         || state.targetZ
+        /= Nothing
+        || state.navigation
         /= Nothing
 
 
@@ -4667,6 +5330,44 @@ encodeHashString camera =
         ++ String.fromFloat (Vec3.getY camera.target)
         ++ "&tz="
         ++ String.fromFloat (Vec3.getZ camera.target)
+        -- Orbit is the default, so only walk needs saying. Keeps the common
+        -- case's URLs as short as they were.
+        ++ (case camera.navigation of
+                Camera.Orbit ->
+                    ""
+
+                Camera.Walk ->
+                    "&nav=walk"
+           )
+
+
+{-| Navigation mode name used in the URL hash, the `camera-changed` payload and
+the `camera-navigation` attribute.
+-}
+navigationToString : Camera.Navigation -> String
+navigationToString navigation =
+    case navigation of
+        Camera.Orbit ->
+            "orbit"
+
+        Camera.Walk ->
+            "walk"
+
+
+{-| Parse a navigation mode name, ignoring case. Unknown values are `Nothing`, so
+a typo falls back to auto-fit orbit rather than silently walking.
+-}
+navigationFromString : String -> Maybe Camera.Navigation
+navigationFromString raw =
+    case String.toLower (String.trim raw) of
+        "walk" ->
+            Just Camera.Walk
+
+        "orbit" ->
+            Just Camera.Orbit
+
+        _ ->
+            Nothing
 
 
 {-| Wrap angle to [−180, 180) degrees for display.

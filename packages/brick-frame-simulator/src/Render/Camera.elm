@@ -1,8 +1,13 @@
 module Render.Camera exposing
     ( Camera
+    , Navigation(..)
+    , dollyBy
+    , enterWalk
     , farPlane
     , fovYDegrees
     , init
+    , lookAround
+    , moveBy
     , nearPlane
     , onMouseDown
     , onMouseMove
@@ -12,13 +17,26 @@ module Render.Camera exposing
     , orbitBy
     , position
     , projectionMatrix
+    , setNavigation
+    , setSceneRadius
     , setViewportHeight
     , setZoomRange
     , viewMatrix
+    , walkEyeHeight
+    , walkSpeed
     , zoomByRatio
     )
 
-{-| Orbit camera state and controls for interactive scene navigation.
+{-| Camera state and controls for interactive scene navigation.
+
+
+## Navigation modes
+
+`Orbit` swings the eye around a fixed `target`; `Walk` holds the eye still and
+swings the target around it, first-person style, with `moveBy` translating the
+pair. Both maintain `position = target + eyeOffset`, so the view matrix, culling,
+picking and level of detail never need to know which is active. Use `enterWalk`
+to drop to street level; there is no collision detection.
 
 
 ## Clip planes
@@ -26,7 +44,9 @@ module Render.Camera exposing
 `nearPlane` and `farPlane` scale with the orbit distance rather than being
 fixed. A city-scale model sits thousands of LDU from its centre, so constant
 planes either clip the whole model away or waste the depth buffer's precision
-on empty space in front of it.
+on empty space in front of it. `sceneRadius` extends the far plane for the case
+the orbit distance cannot describe: standing *inside* the model, where the
+geometry is far away but the pivot is not.
 
 
 ## Sensitivity
@@ -68,7 +88,27 @@ type alias Camera =
     , minDistance : Float
     , maxDistance : Float
     , viewportHeight : Float
+    , navigation : Navigation
+    , sceneRadius : Float
     }
+
+
+{-| How pointer drags are interpreted.
+
+  - `Orbit` — the eye swings around a fixed `target`. Good for inspecting a model
+    from the outside.
+  - `Walk` — the eye stays put and the `target` swings around it, first-person
+    style, with `moveBy` translating the pair together. Good for standing on a
+    street inside a city-scale model.
+
+Both keep the same `position = target + eyeOffset` relation, so everything
+downstream — view matrix, frustum culling, picking, level of detail — is
+indifferent to which is active.
+
+-}
+type Navigation
+    = Orbit
+    | Walk
 
 
 {-| Initial camera: positioned above and to the side of the origin.
@@ -88,6 +128,8 @@ init =
     , minDistance = 0.5
     , maxDistance = 2000.0
     , viewportHeight = 600.0
+    , navigation = Orbit
+    , sceneRadius = 0.0
     }
 
 
@@ -128,10 +170,37 @@ setViewportHeight height cam =
     { cam | viewportHeight = max 1 height }
 
 
-{-| World-space position of the camera eye.
+{-| Record the radius of the model's bounding sphere, in LDU.
+
+Feeds the far plane (see `farPlane`) and the walk speed. A host that leaves it at
+zero can still orbit, but geometry further than ten orbit distances away will be
+clipped.
+
 -}
-position : Camera -> Vec3
-position cam =
+setSceneRadius : Float -> Camera -> Camera
+setSceneRadius radius cam =
+    { cam | sceneRadius = max 0 radius }
+
+
+{-| Switch between orbit and walk navigation, leaving the viewpoint alone.
+
+To *enter* walk mode at street level, use `enterWalk` instead — it also places
+the eye on the ground and levels the horizon.
+
+-}
+setNavigation : Navigation -> Camera -> Camera
+setNavigation navigation cam =
+    { cam | navigation = navigation }
+
+
+{-| Offset from `target` to the eye, in world space.
+
+Both navigation modes maintain `position = target + eyeOffset`; they differ only
+in which of the two they hold fixed while the angles change.
+
+-}
+eyeOffset : Camera -> Vec3
+eyeOffset cam =
     let
         x =
             cam.distance * sin cam.azimuth * cos cam.elevation
@@ -142,7 +211,14 @@ position cam =
         z =
             cam.distance * cos cam.azimuth * cos cam.elevation
     in
-    Vec3.add cam.target (vec3 x y z)
+    vec3 x y z
+
+
+{-| World-space position of the camera eye.
+-}
+position : Camera -> Vec3
+position cam =
+    Vec3.add cam.target (eyeOffset cam)
 
 
 {-| View matrix: world → camera space.
@@ -165,27 +241,37 @@ projectionMatrix aspect near far =
     Mat4.makePerspective fovYDegrees aspect near far
 
 
-{-| Near clip distance for the current orbit distance.
+{-| Near clip distance.
 
-Kept at a fixed ratio of the orbit distance so the near:far ratio — and with it
-depth-buffer precision — stays constant no matter how large the model is.
+Derived from the far plane so the near:far ratio — and with it depth-buffer
+precision — stays constant no matter how large the model is or where the eye is.
+In the orbit case `farPlane` is `distance * 10`, so this is `distance / 1000`.
 
 -}
 nearPlane : Camera -> Float
 nearPlane cam =
-    max 0.1 (cam.distance / 1000)
+    max 0.1 (farPlane cam / 10000)
 
 
-{-| Far clip distance for the current orbit distance.
+{-| Far clip distance.
 
-Auto-fit places the camera roughly 2.6 model radii from the target, so ten
-times the orbit distance clears the far side of any framed model with room to
-spare.
+Two terms, whichever is larger:
+
+  - `distance * 10` covers the orbit case. Auto-fit places the camera roughly
+    2.6 model radii from the target, so ten times the orbit distance clears the
+    far side of any framed model with room to spare.
+  - `distance + 2.5 * sceneRadius` covers standing *inside* the model, where the
+    orbit distance says nothing about how far away the geometry is. Walking a
+    city at a 40 LDU eye height would otherwise get a 400 LDU far plane on a
+    model thousands of LDU across — twenty studs of street and then nothing.
+
+`sceneRadius` defaults to 0, which reduces this to the first term exactly, so a
+host that never sets it keeps the previous behaviour.
 
 -}
 farPlane : Camera -> Float
 farPlane cam =
-    max 100 (cam.distance * 10)
+    max 100 (max (cam.distance * 10) (cam.distance + 2.5 * cam.sceneRadius))
 
 
 {-| Begin a drag. Call on mousedown over the canvas.
@@ -215,17 +301,15 @@ onMouseMove x y cam =
                 dy =
                     (y - ly) * radiansPerPixel
 
-                newAzimuth =
-                    wrapAngle (cam.azimuth - dx)
+                rotated =
+                    case cam.navigation of
+                        Orbit ->
+                            orbitBy -dx dy cam
 
-                newElevation =
-                    clamp (-pi / 2 + 0.01) (pi / 2 - 0.01) (cam.elevation + dy)
+                        Walk ->
+                            lookAround -dx dy cam
             in
-            { cam
-                | azimuth = newAzimuth
-                , elevation = newElevation
-                , lastMousePos = Just ( x, y )
-            }
+            { rotated | lastMousePos = Just ( x, y ) }
 
         _ ->
             cam
@@ -243,6 +327,25 @@ orbitBy azimuthDelta elevationDelta cam =
         | azimuth = wrapAngle (cam.azimuth + azimuthDelta)
         , elevation = clamp (-pi / 2 + 0.01) (pi / 2 - 0.01) (cam.elevation + elevationDelta)
     }
+
+
+{-| Turn the head: apply the same angle deltas as `orbitBy`, but hold the eye
+still and swing `target` around it instead.
+
+The sign convention is identical to `orbitBy`, so a drag to the right turns you
+right and a drag downwards looks down in both modes.
+
+-}
+lookAround : Float -> Float -> Camera -> Camera
+lookAround azimuthDelta elevationDelta cam =
+    let
+        eye =
+            position cam
+
+        rotated =
+            orbitBy azimuthDelta elevationDelta cam
+    in
+    { rotated | target = Vec3.sub eye (eyeOffset rotated) }
 
 
 {-| Fold an angle into (-pi, pi].
@@ -314,6 +417,113 @@ zoomByRatio ratio cam =
 
     else
         { cam | distance = clamp cam.minDistance cam.maxDistance (cam.distance * ratio) }
+
+
+{-| Ground-plane movement basis for the current heading.
+
+Derived from `azimuth` alone, so it is exact, cheap, and — unlike zeroing the Y
+component of the view direction — never degenerates when looking straight up or
+down. Both vectors are unit length and horizontal.
+
+-}
+walkBasis : Camera -> { forward : Vec3, right : Vec3 }
+walkBasis cam =
+    { forward = vec3 -(sin cam.azimuth) 0 -(cos cam.azimuth)
+    , right = vec3 (cos cam.azimuth) 0 -(sin cam.azimuth)
+    }
+
+
+{-| Translate the whole camera, in LDU.
+
+`target` moves and the eye follows, because the eye is derived from it. `forward`
+and `right` follow the horizontal heading, so looking up and walking forward does
+not lift you off the ground; `up` is world Y.
+
+There is no collision detection — this walks through walls.
+
+-}
+moveBy : { forward : Float, right : Float, up : Float } -> Camera -> Camera
+moveBy delta cam =
+    let
+        basis =
+            walkBasis cam
+
+        offset =
+            Vec3.add
+                (Vec3.add
+                    (Vec3.scale delta.forward basis.forward)
+                    (Vec3.scale delta.right basis.right)
+                )
+                (vec3 0 delta.up 0)
+    in
+    { cam | target = Vec3.add cam.target offset }
+
+
+{-| Move along the horizontal heading, in LDU. Positive is forwards.
+
+What the wheel and pinch gestures do in walk mode, where changing the orbit
+distance would slide you out of the street rather than move you along it.
+
+-}
+dollyBy : Float -> Camera -> Camera
+dollyBy amount cam =
+    moveBy { forward = amount, right = 0, up = 0 } cam
+
+
+{-| Walking speed in LDU per second.
+
+Scaled to the model so the same key feels right on a gear assembly and on a city:
+`example.io` (radius ~2295 LDU) gives ~287 LDU/s, crossing its 169-stud footprint
+in about twelve seconds. Small models get the floor instead of a speed that would
+throw them off the edge immediately.
+
+-}
+walkSpeed : Camera -> Float
+walkSpeed cam =
+    max 20 (cam.sceneRadius / 8)
+
+
+{-| Eye height above ground in walk mode, in LDU — roughly minifig eye level.
+-}
+walkEyeHeight : Float
+walkEyeHeight =
+    40.0
+
+
+{-| Drop to street level and switch to walk navigation.
+
+`groundY` is the model's lowest point. The eye lands directly below whatever was
+being looked at, at `walkEyeHeight` above the ground, with the horizon levelled
+and the heading preserved — so entering walk mode keeps you facing the way you
+already were.
+
+-}
+enterWalk : Float -> Camera -> Camera
+enterWalk groundY cam =
+    let
+        levelled =
+            { cam
+                | navigation = Walk
+                , elevation = 0
+                , distance = clamp cam.minDistance cam.maxDistance walkFocalDistance
+            }
+
+        eye =
+            vec3 (Vec3.getX cam.target) (groundY + walkEyeHeight) (Vec3.getZ cam.target)
+    in
+    { levelled | target = Vec3.sub eye (eyeOffset levelled) }
+
+
+{-| Orbit distance held in walk mode, in LDU.
+
+Nothing visual depends on it — look pivots about the eye and movement translates —
+but it still sets the shift-drag pan scale, so it wants to be on the order of the
+things you are walking between rather than the whole model.
+
+-}
+walkFocalDistance : Float
+walkFocalDistance =
+    60.0
 
 
 {-| Pan camera target in screen-space pixels.
