@@ -3,6 +3,10 @@ name: Deploy
 on:
   push:
     branches: [main]
+  # Pull requests run the same build job — checks, tests and the full dist
+  # build — but stop short of the pages upload and deploy jobs below.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -107,13 +111,16 @@ jobs:
           key: ${{ steps.elm-cache-restore.outputs.cache-primary-key }}
 
       - uses: actions/configure-pages@v5
+        if: github.event_name != 'pull_request'
 
       - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
         with:
           path: ./build
 
   deploy:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
