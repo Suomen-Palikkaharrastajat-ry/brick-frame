@@ -4,7 +4,29 @@ let
     let
       hpkgs = pkgs.haskell.packages.ghc96;
       npmTools = pkgs.callPackage ./pkgs/npm-tools.nix { };
-      brickFramePackage = hpkgs.callCabal2nix "brick-frame" ./. { };
+      # Only the Haskell package's own inputs, so that generating the source
+      # snapshot does not depend on the rest of the tree. In particular
+      # elm-app/public/ldraw holds ~36k synced LDraw files that appear midway
+      # through the CI job; including them would change this derivation between
+      # steps and force a rebuild plus a huge store copy on every shell entry.
+      generatorSource = pkgs.lib.fileset.toSource {
+        root = ./.;
+        fileset = pkgs.lib.fileset.unions [
+          ./brick-frame.cabal
+          ./cabal.project
+          ./src
+          ./generator
+          ./tests
+        ];
+      };
+
+      # The test suite reads elm-app/public/ldraw/LDConfig.ldr, which is not in
+      # git — it arrives via `make sync-ldraw` and is absent when this
+      # derivation is realized. CI runs the real suite with `make test` (i.e.
+      # `cabal test`) after the sync step instead.
+      brickFramePackage = pkgs.haskell.lib.dontCheck (
+        hpkgs.callCabal2nix "brick-frame" generatorSource { }
+      );
       generatorCommand = pkgs.writeShellScriptBin "generator-nix" ''
         exec ${brickFramePackage}/bin/generator "$@"
       '';
