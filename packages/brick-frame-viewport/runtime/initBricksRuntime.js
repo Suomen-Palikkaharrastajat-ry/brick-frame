@@ -566,7 +566,8 @@ function createExternalGeometryWorker(workerUrl) {
  * lives outside Elm: loading files (.ldr/.mpd/.dat and Studio .io archives), the
  * geometry worker, the URL hash, drag-and-drop, resize and runtime events.
  *
- * Options beyond the obvious: `studioUrl` makes the viewer offer an "Edit in
+ * Options beyond the obvious: `extraFlags` adds application-specific flags;
+ * `studioUrl` makes the viewer offer an "Edit in
  * studio" link; `loadModelInJs` loads `defaultModel` in JavaScript and hands the
  * text to Elm through `fileContentReceived`.
  *
@@ -592,6 +593,7 @@ export function initBricksRuntime(options) {
     initialMotorIndex = -1,
     initialRpm = 0,
     studioUrl = '',
+    extraFlags = {},
     loadModelInJs = false,
     workerMode = defaultWorkerMode,
     workerUrl = defaultWorkerUrl,
@@ -656,6 +658,7 @@ export function initBricksRuntime(options) {
       // Attach only one of the touch/pointer listener families. Binding both
       // double-tracks fingers on iOS Safari, which fires both.
       studioUrl: String(studioUrl ?? ''),
+      ...extraFlags,
       supportsPointerEvents: typeof window !== 'undefined' && 'PointerEvent' in window,
     },
   })

@@ -11,6 +11,7 @@ module Viewport exposing
     , beginFlatten
     , cameraChangedPayload
     , cameraMoved
+    , captureDrag
     , init
     , loadDocument
     , needsAnimationFrame
@@ -159,6 +160,9 @@ type alias Model =
     , document : Maybe Document
     , sync : Maybe Sync.State
     , dragTravel : Float
+    , captured : Bool
+    , mousePressed : Bool
+    , lastPointer : ( Float, Float )
     , cameraMode : CameraMode
     , touchGesture : TouchGesture
     , activeTouches : Dict Int TouchPoint
@@ -271,6 +275,9 @@ init config =
       , document = Nothing
       , sync = Nothing
       , dragTravel = 0.0
+      , captured = False
+      , mousePressed = False
+      , lastPointer = ( 0, 0 )
       , cameraMode = initialCameraMode
       , touchGesture = NoTouchGesture
       , activeTouches = Dict.empty
@@ -355,8 +362,14 @@ type Msg
 
   - `CameraSettled` — the camera came to rest (or moved discretely); a good time
     to write the URL hash. Not sent on every drag step.
-  - `Clicked` — a press-release that did not drag, in canvas pixels. The host
-    decides what is under it.
+  - `Clicked` — a mouse press-release that did not drag, in canvas pixels, and
+    whether Shift was held. The host decides what is under it.
+  - `Tapped` — the same for a one-finger touch.
+  - `PressStarted` — a mouse button or a single finger went down at this point.
+    The camera has started to follow it; call `captureDrag` to take the gesture
+    for the host instead (to drag a handle, say).
+  - `DragMoved` / `DragEnded` — while a gesture is captured, where it is now and
+    where it ended. The camera does not move.
   - `LoadStarted` — a new model replaces the old one; drop anything derived from
     the previous one.
   - `PartsReady` — all parts are loaded and the model is small enough to bake.
@@ -372,7 +385,11 @@ type Msg
 -}
 type Event
     = CameraSettled
-    | Clicked Float Float
+    | Clicked Float Float Bool
+    | Tapped Float Float
+    | PressStarted Float Float
+    | DragMoved Float Float
+    | DragEnded Float Float
     | LoadStarted
     | PartsReady
     | LargeModel Int
@@ -506,14 +523,19 @@ updateInner msg model =
                     , dragTravel = 0.0
                     , cameraMode = CameraManual
                     , mousePanDragging = shiftHeld
+                    , mousePressed = True
+                    , lastPointer = ( x, y )
                   }
                 , Cmd.none
-                , []
+                , [ PressStarted x y ]
                 )
 
         MouseMove x y ->
             if touchInputActive model then
                 ( model, Cmd.none, [] )
+
+            else if model.captured then
+                ( { model | lastPointer = ( x, y ) }, Cmd.none, [ DragMoved x y ] )
 
             else
                 let
@@ -542,6 +564,7 @@ updateInner msg model =
                     | camera = nextCamera
                     , dragTravel = model.dragTravel + stepDist
                     , cameraMode = CameraManual
+                    , lastPointer = ( x, y )
                   }
                 , Cmd.none
                 , []
@@ -564,17 +587,28 @@ updateInner msg model =
                 , []
                 )
 
+            else if not model.mousePressed then
+                -- The release belongs to a press that did not start on the canvas
+                -- (a toolbar button, say). The subscription is document-wide, so
+                -- without this every such click looked like a click on the model.
+                ( model, Cmd.none, [] )
+
             else
                 ( { model
                     | camera = Camera.onMouseUp model.camera
                     , dragTravel = 0.0
+                    , captured = False
+                    , mousePressed = False
                     , touchGesture = NoTouchGesture
                     , activeTouches = Dict.empty
                     , mousePanDragging = False
                   }
                 , Cmd.none
-                , if model.dragTravel < 3.0 then
-                    [ Clicked x y ]
+                , if model.captured then
+                    [ DragEnded x y ]
+
+                  else if model.dragTravel < 3.0 then
+                    [ Clicked x y model.mousePanDragging ]
 
                   else
                     [ CameraSettled ]
@@ -590,55 +624,20 @@ updateInner msg model =
             )
 
         TouchStart touches ->
-            let
-                nextTouches =
-                    touchDictFromList touches
-            in
-            ( beginTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
-            , Cmd.none
-            , []
-            )
+            touchesDown (touchDictFromList touches) model
 
         TouchMove touches ->
-            let
-                nextTouches =
-                    touchDictFromList touches
-            in
-            ( advanceTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
-            , Cmd.none
-            , []
-            )
+            touchesMoved (touchDictFromList touches) model
 
         TouchEnd touches ->
-            let
-                nextTouches =
-                    touchDictFromList touches
-            in
-            ( endTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
-            , Cmd.none
-            , [ CameraSettled ]
-            )
+            touchesUp (touchDictFromList touches) model
 
         PointerTouchStart touchPoint ->
-            let
-                nextTouches =
-                    Dict.insert touchPoint.id touchPoint model.activeTouches
-            in
-            ( beginTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
-            , Cmd.none
-            , []
-            )
+            touchesDown (Dict.insert touchPoint.id touchPoint model.activeTouches) model
 
         PointerTouchMove touchPoint ->
             if Dict.member touchPoint.id model.activeTouches then
-                let
-                    nextTouches =
-                        Dict.insert touchPoint.id touchPoint model.activeTouches
-                in
-                ( advanceTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
-                , Cmd.none
-                , []
-                )
+                touchesMoved (Dict.insert touchPoint.id touchPoint model.activeTouches) model
 
             else
                 ( model, Cmd.none, [] )
@@ -650,14 +649,7 @@ updateInner msg model =
             -- ran endTouchGesture over the remaining fingers, restarting a
             -- single-touch drag from stale coordinates.
             if Dict.member touchId model.activeTouches then
-                let
-                    nextTouches =
-                        Dict.remove touchId model.activeTouches
-                in
-                ( endTouchGesture (touchesFromDict nextTouches) { model | activeTouches = nextTouches }
-                , Cmd.none
-                , [ CameraSettled ]
-                )
+                touchesUp (Dict.remove touchId model.activeTouches) model
 
             else
                 ( model, Cmd.none, [] )
@@ -1039,6 +1031,122 @@ handlePartResult name result model =
 
         else
             ( updatedModel, fetchPending model.resolverConfig allPending, [] )
+
+
+{-| Fingers went down. One finger starts a press the host may capture; a second
+finger ends any capture and becomes a camera gesture.
+-}
+touchesDown : Dict Int TouchPoint -> Model -> ( Model, Cmd Msg, List Event )
+touchesDown touches model =
+    let
+        list =
+            touchesFromDict touches
+
+        begun =
+            beginTouchGesture list { model | activeTouches = touches }
+    in
+    case list of
+        [ p ] ->
+            ( { begun | lastPointer = ( p.x, p.y ) }, Cmd.none, [ PressStarted p.x p.y ] )
+
+        _ :: _ :: _ ->
+            if model.captured then
+                ( { begun | captured = False }, Cmd.none, [ DragEnded (Tuple.first model.lastPointer) (Tuple.second model.lastPointer) ] )
+
+            else
+                ( begun, Cmd.none, [] )
+
+        [] ->
+            ( begun, Cmd.none, [] )
+
+
+touchesMoved : Dict Int TouchPoint -> Model -> ( Model, Cmd Msg, List Event )
+touchesMoved touches model =
+    let
+        list =
+            touchesFromDict touches
+    in
+    case ( model.captured, list ) of
+        ( True, p :: _ ) ->
+            ( { model | activeTouches = touches, lastPointer = ( p.x, p.y ) }
+            , Cmd.none
+            , [ DragMoved p.x p.y ]
+            )
+
+        ( False, [ p ] ) ->
+            -- Travel is kept for one finger so a tap can be told from a drag.
+            let
+                ( lx, ly ) =
+                    model.lastPointer
+
+                travel =
+                    case model.touchGesture of
+                        SingleTouchGesture _ ->
+                            model.dragTravel + sqrt (((p.x - lx) * (p.x - lx)) + ((p.y - ly) * (p.y - ly)))
+
+                        _ ->
+                            model.dragTravel
+
+                moved =
+                    advanceTouchGesture list { model | activeTouches = touches }
+            in
+            ( { moved | dragTravel = travel, lastPointer = ( p.x, p.y ) }, Cmd.none, [] )
+
+        _ ->
+            ( advanceTouchGesture list { model | activeTouches = touches }, Cmd.none, [] )
+
+
+{-| Fingers came up. A captured gesture ends with them; a one-finger gesture that
+barely moved is a tap.
+-}
+touchesUp : Dict Int TouchPoint -> Model -> ( Model, Cmd Msg, List Event )
+touchesUp touches model =
+    let
+        list =
+            touchesFromDict touches
+
+        ended =
+            endTouchGesture list { model | activeTouches = touches }
+
+        ( x, y ) =
+            model.lastPointer
+
+        wasTap =
+            List.isEmpty list
+                && model.dragTravel
+                < tapSlop
+                && (case model.touchGesture of
+                        SingleTouchGesture _ ->
+                            True
+
+                        _ ->
+                            False
+                   )
+    in
+    if model.captured then
+        ( { ended | captured = False }, Cmd.none, [ DragEnded x y ] )
+
+    else if wasTap then
+        ( ended, Cmd.none, [ Tapped x y, CameraSettled ] )
+
+    else
+        ( ended, Cmd.none, [ CameraSettled ] )
+
+
+{-| How far, in pixels, a finger may wander and still count as a tap.
+-}
+tapSlop : Float
+tapSlop =
+    8.0
+
+
+{-| Take the current mouse or touch gesture for the host: the camera stops
+following it, and the host receives `DragMoved` and `DragEnded` instead. Call
+from the handler of `PressStarted`.
+-}
+captureDrag : Model -> Model
+captureDrag model =
+    { model | captured = True, camera = Camera.onMouseUp model.camera }
 
 
 beginTouchGesture : List TouchPoint -> Model -> Model

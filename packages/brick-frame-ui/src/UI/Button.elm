@@ -1,4 +1,4 @@
-module UI.Button exposing (link, secondary)
+module UI.Button exposing (link, secondary, toggle)
 
 {-| Toolbar buttons in the panel style shared by the viewer and the studio.
 -}
@@ -30,6 +30,31 @@ secondaryStyle =
 secondary : msg -> String -> Html msg
 secondary msg label =
     button (Html.Events.onClick msg :: secondaryStyle) [ text label ]
+
+
+{-| A toolbar button that shows whether it is switched on, in the brand colours.
+`enabled = False` greys it out and stops it sending.
+-}
+toggle : { active : Bool, enabled : Bool } -> msg -> String -> Html msg
+toggle { active, enabled } msg label =
+    let
+        base =
+            if active then
+                [ Attr.style "background" Theme.brandYellow, Attr.style "color" Theme.brand ]
+
+            else
+                []
+
+        disabled =
+            if enabled then
+                []
+
+            else
+                [ Attr.disabled True, Attr.style "opacity" "0.45", Attr.style "cursor" "default" ]
+    in
+    button
+        (Html.Events.onClick msg :: secondaryStyle ++ base ++ disabled)
+        [ text label ]
 
 
 {-| A toolbar button that is a link, styled like `secondary`.

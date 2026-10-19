@@ -1,10 +1,13 @@
 port module Ports exposing
-    ( fileContentReceived
+    ( downloadFile
+    , fileContentReceived
     , fileLoadError
     , geometryFlattenFailed
     , geometryFlattened
     , requestFileUpload
     , requestGeometryFlatten
+    , saveDraft
+    , saveRequested
     , setUrlHash
     , viewportResized
     )
@@ -57,3 +60,19 @@ port viewportResized : ({ width : Int, height : Int } -> msg) -> Sub msg
 {-| Update the browser URL hash.
 -}
 port setUrlHash : String -> Cmd msg
+
+
+{-| Hand the browser a file to save: a name, a media type and the text.
+-}
+port downloadFile : { filename : String, mime : String, text : String } -> Cmd msg
+
+
+{-| Offer the current document to be remembered as a draft. The JavaScript side
+debounces and stores it, and gives it back as the `draft` flag next time.
+-}
+port saveDraft : String -> Cmd msg
+
+
+{-| The browser asked to save (Ctrl+S), which the page intercepts.
+-}
+port saveRequested : (() -> msg) -> Sub msg

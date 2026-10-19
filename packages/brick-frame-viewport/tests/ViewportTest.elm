@@ -114,7 +114,7 @@ suite =
                         |> Tuple.first
                         |> update (MouseUp 10 20)
                         |> Tuple.second
-                        |> Expect.equal [ Clicked 10 20 ]
+                        |> Expect.equal [ Clicked 10 20 False ]
             , test "press, drag and release settles the camera instead" <|
                 \_ ->
                     idle
@@ -136,10 +136,12 @@ suite =
                     update (MouseDown 10 20 False) touching
                         |> Tuple.first
                         |> Expect.equal touching
-            , test "releasing a touch settles the camera" <|
+            , test "releasing a touch that moved settles the camera" <|
                 \_ ->
                     idle
                         |> update (PointerTouchStart { id = 1, x = 5, y = 5 })
+                        |> Tuple.first
+                        |> update (PointerTouchMove { id = 1, x = 105, y = 5 })
                         |> Tuple.first
                         |> update (PointerTouchEnd 1)
                         |> Tuple.second
@@ -149,6 +151,110 @@ suite =
                     update (PointerTouchEnd 9) idle
                         |> Tuple.second
                         |> Expect.equal []
+            ]
+        , describe "capturing a gesture"
+            [ test "a mouse press reports where it started" <|
+                \_ ->
+                    update (MouseDown 10 20 False) idle
+                        |> Tuple.second
+                        |> Expect.equal [ PressStarted 10 20 ]
+            , test "a release that did not start on the canvas is not a click" <|
+                \_ ->
+                    update (MouseUp 10 20) idle
+                        |> Tuple.second
+                        |> Expect.equal []
+            , test "a shift-click says so" <|
+                \_ ->
+                    idle
+                        |> update (MouseDown 10 20 True)
+                        |> Tuple.first
+                        |> update (MouseUp 10 20)
+                        |> Tuple.second
+                        |> Expect.equal [ Clicked 10 20 True ]
+            , test "a captured mouse drag is reported and leaves the camera alone" <|
+                \_ ->
+                    let
+                        pressed =
+                            update (MouseDown 10 20 False) idle
+                                |> Tuple.first
+                                |> Viewport.captureDrag
+
+                        ( moved, moveEvents ) =
+                            update (MouseMove 50 60) pressed
+
+                        ( released, upEvents ) =
+                            update (MouseUp 50 60) moved
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ DragMoved 50 60 ] moveEvents
+                        , \_ -> Expect.equal [ DragEnded 50 60 ] upEvents
+                        , \_ -> Expect.within (Expect.Absolute 0.000001) pressed.camera.azimuth moved.camera.azimuth
+                        , \_ -> Expect.equal False released.captured
+                        ]
+                        ()
+            , test "after a captured drag the camera follows the mouse again" <|
+                \_ ->
+                    idle
+                        |> update (MouseDown 10 20 False)
+                        |> Tuple.first
+                        |> Viewport.captureDrag
+                        |> update (MouseUp 10 20)
+                        |> Tuple.first
+                        |> update (MouseDown 10 20 False)
+                        |> Tuple.first
+                        |> update (MouseMove 70 20)
+                        |> Tuple.second
+                        |> Expect.equal []
+            , test "a tap with one finger is reported" <|
+                \_ ->
+                    idle
+                        |> update (PointerTouchStart { id = 1, x = 30, y = 40 })
+                        |> Tuple.first
+                        |> update (PointerTouchEnd 1)
+                        |> Tuple.second
+                        |> Expect.equal [ Tapped 30 40, CameraSettled ]
+            , test "dragging a finger is not a tap" <|
+                \_ ->
+                    idle
+                        |> update (PointerTouchStart { id = 1, x = 30, y = 40 })
+                        |> Tuple.first
+                        |> update (PointerTouchMove { id = 1, x = 130, y = 40 })
+                        |> Tuple.first
+                        |> update (PointerTouchEnd 1)
+                        |> Tuple.second
+                        |> Expect.equal [ CameraSettled ]
+            , test "a finger press can be captured like a mouse press" <|
+                \_ ->
+                    let
+                        ( down, downEvents ) =
+                            update (PointerTouchStart { id = 1, x = 30, y = 40 }) idle
+
+                        ( moved, moveEvents ) =
+                            Viewport.captureDrag down
+                                |> update (PointerTouchMove { id = 1, x = 90, y = 40 })
+
+                        ( _, upEvents ) =
+                            update (PointerTouchEnd 1) moved
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ PressStarted 30 40 ] downEvents
+                        , \_ -> Expect.equal [ DragMoved 90 40 ] moveEvents
+                        , \_ -> Expect.equal [ DragEnded 90 40 ] upEvents
+                        ]
+                        ()
+            , test "a second finger ends a capture and becomes a camera gesture" <|
+                \_ ->
+                    let
+                        captured =
+                            update (PointerTouchStart { id = 1, x = 30, y = 40 }) idle
+                                |> Tuple.first
+                                |> Viewport.captureDrag
+                    in
+                    update (PointerTouchStart { id = 2, x = 80, y = 40 }) captured
+                        |> Expect.all
+                            [ \( _, events ) -> Expect.equal [ DragEnded 30 40 ] events
+                            , \( m, _ ) -> Expect.equal False m.captured
+                            ]
             ]
         , describe "keyboard"
             [ test "a plain key press is handed to the host and held" <|

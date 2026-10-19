@@ -306,7 +306,7 @@ handleViewportEvent event ( model, cmds ) =
         Viewport.CameraSettled ->
             ( model, cmds ++ [ Ports.setUrlHash (Hash.encodeCamera model.viewport.camera) ] )
 
-        Viewport.Clicked x y ->
+        Viewport.Clicked x y _ ->
             let
                 viewport =
                     model.viewport
@@ -323,6 +323,18 @@ handleViewportEvent event ( model, cmds ) =
 
                 Nothing ->
                     ( model, cmds ++ [ Ports.setUrlHash (Hash.encodeCamera viewport.camera) ] )
+
+        Viewport.Tapped _ _ ->
+            ( model, cmds )
+
+        Viewport.PressStarted _ _ ->
+            ( model, cmds )
+
+        Viewport.DragMoved _ _ ->
+            ( model, cmds )
+
+        Viewport.DragEnded _ _ ->
+            ( model, cmds )
 
         Viewport.LoadStarted ->
             ( { model | simulation = Simulation.reset model.simulation }, cmds )

@@ -10,6 +10,8 @@ module LDraw.Document exposing
     , fingerprint
     , fromLines
     , getPlacement
+    , indexOfPlacement
+    , insertPlacement
     , isMultiFile
     , mainPlacements
     , mainSubmodel
@@ -255,6 +257,49 @@ entryToText entry =
 
         Raw text ->
             text
+
+
+{-| Position of a main-submodel placement among that submodel's entries, which
+`insertPlacement` can put it back at.
+-}
+indexOfPlacement : Int -> Document -> Maybe Int
+indexOfPlacement id doc =
+    (mainSubmodel doc).entries
+        |> List.indexedMap Tuple.pair
+        |> List.filter
+            (\( _, entry ) ->
+                case entry of
+                    PlacementEntry p ->
+                        p.id == id
+
+                    Raw _ ->
+                        False
+            )
+        |> List.head
+        |> Maybe.map Tuple.first
+
+
+{-| Put a placement back into the main submodel at an entry index (clamped), with
+its original id. Used to undo a removal.
+-}
+insertPlacement : Int -> Placement -> Document -> Document
+insertPlacement index placement doc =
+    let
+        insert entries =
+            List.take index entries ++ PlacementEntry placement :: List.drop index entries
+
+        update i submodel =
+            if i == 0 then
+                { submodel | entries = insert submodel.entries }
+
+            else
+                submodel
+    in
+    { doc
+        | submodels = List.indexedMap update doc.submodels
+        , nextId = max doc.nextId (placement.id + 1)
+        , touched = Set.insert placement.id doc.touched
+    }
 
 
 {-| Forget which placements changed; call once a renderer has caught up.
