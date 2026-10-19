@@ -484,6 +484,13 @@ editingSuite =
                         |> .selection
                         |> Set.isEmpty
                         |> Expect.equal True
+            , test "the rotate tool selects RotateTool" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded |> click (screenOf 0 loaded) |> step (UseTool RotateTool)
+                    in
+                    Expect.equal True (ready.tool == RotateTool)
             ]
         , describe "colour and grid"
             [ test "recolouring is one undoable step" <|

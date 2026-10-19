@@ -178,4 +178,71 @@ suite =
                         Nothing ->
                             Expect.fail "no handle"
             ]
+        , describe "arc handles"
+            [ test "produces three principal arc handles" <|
+                \_ ->
+                    let
+                        arcs =
+                            Gizmo.arcHandles camera width height (vec3 0 0 0)
+                    in
+                    Expect.equal 3 (List.length arcs)
+            , test "creates custom joint arc handle" <|
+                \_ ->
+                    let
+                        jointArc =
+                            Gizmo.jointArcHandle camera width height (vec3 0 0 0) (vec3 0 1 0)
+                    in
+                    case jointArc of
+                        Just arc ->
+                            Expect.greaterThan 10 (List.length arc.screenPoints)
+
+                        Nothing ->
+                            Expect.fail "expected arc handle"
+            , test "hitArc detects point near arc ring" <|
+                \_ ->
+                    let
+                        arcs =
+                            Gizmo.arcHandles camera width height (vec3 0 0 0)
+                    in
+                    case List.head arcs of
+                        Just arc ->
+                            case List.head arc.screenPoints of
+                                Just pt ->
+                                    Gizmo.hitArc 10.0 ( Tuple.first pt + 1, Tuple.second pt + 1 ) arcs
+                                        |> Expect.notEqual Nothing
+
+                                Nothing ->
+                                    Expect.fail "expected screen points"
+
+                        Nothing ->
+                            Expect.fail "expected arc handle"
+            , test "dragArcAngle snaps rotation delta to step" <|
+                \_ ->
+                    let
+                        arcs =
+                            Gizmo.arcHandles camera width height (vec3 0 0 0)
+                    in
+                    case List.head arcs of
+                        Just arc ->
+                            let
+                                ( cx, cy ) =
+                                    arc.screenCenter
+
+                                start =
+                                    ( cx + 50, cy )
+
+                                now =
+                                    ( cx, cy - 50 )
+
+                                step =
+                                    degrees 15
+
+                                angle =
+                                    Gizmo.dragArcAngle step arc start now
+                            in
+                            Expect.within (Expect.Absolute 0.001) (pi / 2) angle
+
+                        Nothing ->
+                            Expect.fail "expected arc handle"
+            ]
         ]

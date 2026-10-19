@@ -25,6 +25,7 @@ and turns it into a move along one axis, snapped to the grid.
 import Browser.Dom
 import Data
 import EmbeddedParts
+import Gear.Joint as Joint
 import Html exposing (Html, button, div, span, text)
 import Html.Attributes as Attr
 import Http
@@ -39,7 +40,7 @@ import Render.Style as Style
 import Set exposing (Set)
 import Studio.Colours as Colours
 import Studio.Edit as Edit exposing (Axis(..), Command(..), History)
-import Studio.Gizmo as Gizmo exposing (Handle)
+import Studio.Gizmo as Gizmo exposing (ArcHandle, DragHandle(..), Handle)
 import Studio.Hints as Hints
 import Studio.Inspector as Inspector
 import Studio.Layout as Layout exposing (Layout, Panel(..))
@@ -108,12 +109,19 @@ type alias Model =
     }
 
 
+{-| The kind of handle being dragged.
+-}
+type DragKind
+    = LinearDrag Handle
+    | ArcDrag ArcHandle
+
+
 {-| A handle being dragged: which one, what it moves, where the press began, the
 document as it was then (every step is computed from it, so the drag can wander
 and come back without drift) and how far it has gone.
 -}
 type alias Drag =
-    { handle : Handle
+    { kind : DragKind
     , ids : List Int
     , start : ( Float, Float )
     , original : Document
@@ -1033,6 +1041,64 @@ currentHandles model =
         []
 
 
+{-| The rotational arc handles for the current selection when the rotate tool is active.
+-}
+currentArcHandles : Model -> List ArcHandle
+currentArcHandles model =
+    if model.tool == RotateTool then
+        let
+            mainPlacements =
+                Document.mainPlacements model.document
+
+            joints =
+                Joint.detectJoints mainPlacements
+
+            selectedJoints =
+                List.filter
+                    (\j ->
+                        Set.member j.parentPlacementId model.selection
+                            || Set.member j.childPlacementId model.selection
+                    )
+                    joints
+        in
+        case selectedJoints of
+            firstJoint :: _ ->
+                case firstJoint.jointType of
+                    Joint.RevoluteJoint rev ->
+                        case
+                            Gizmo.jointArcHandle
+                                model.viewport.camera
+                                model.viewport.width
+                                model.viewport.height
+                                firstJoint.pivotWorld
+                                rev.axis
+                        of
+                            Just handle ->
+                                [ handle ]
+
+                            Nothing ->
+                                defaultArcHandles model
+
+                    _ ->
+                        defaultArcHandles model
+
+            [] ->
+                defaultArcHandles model
+
+    else
+        []
+
+
+defaultArcHandles : Model -> List ArcHandle
+defaultArcHandles model =
+    case Edit.selectionCenter (Set.toList model.selection) model.document of
+        Just center ->
+            Gizmo.arcHandles model.viewport.camera model.viewport.width model.viewport.height center
+
+        Nothing ->
+            []
+
+
 {-| How close, in pixels, a press has to be to a handle to grab it.
 -}
 grabRadius : Float
@@ -1046,7 +1112,19 @@ startDrag point model =
         Gizmo.hit grabRadius point (currentHandles model)
             |> Maybe.map
                 (\handle ->
-                    { handle = handle
+                    { kind = LinearDrag handle
+                    , ids = Set.toList model.selection
+                    , start = point
+                    , original = model.document
+                    , amount = 0
+                    }
+                )
+
+    else if model.tool == RotateTool then
+        Gizmo.hitArc grabRadius point (currentArcHandles model)
+            |> Maybe.map
+                (\arcHandle ->
+                    { kind = ArcDrag arcHandle
                     , ids = Set.toList model.selection
                     , start = point
                     , original = model.document
@@ -1059,34 +1137,62 @@ startDrag point model =
 
 
 {-| Follow the pointer: the document is the drag's original with the snapped
-move applied, shown live but not yet recorded for undo.
+move or rotation applied, shown live but not yet recorded for undo.
 -}
 moveDrag : Drag -> ( Float, Float ) -> Model -> ( Model, Cmd Msg )
 moveDrag drag point model =
-    let
-        amount =
-            Gizmo.dragAmount (toFloat model.gridStep) drag.handle drag.start point
-    in
-    if amount == drag.amount then
-        ( model, Cmd.none )
+    case drag.kind of
+        LinearDrag handle ->
+            let
+                amount =
+                    Gizmo.dragAmount (toFloat model.gridStep) handle drag.start point
+            in
+            if amount == drag.amount then
+                ( model, Cmd.none )
 
-    else
-        let
-            delta =
-                Vec3.scale amount (Edit.axisVector drag.handle.axis)
+            else
+                let
+                    delta =
+                        Vec3.scale amount (Edit.axisVector handle.axis)
 
-            ( moved, _ ) =
-                Edit.apply (Translate drag.ids delta) drag.original
+                    ( moved, _ ) =
+                        Edit.apply (Translate drag.ids delta) drag.original
 
-            -- `original` was taken after a sync, so its touched set is empty; the
-            -- translated copy lists exactly the placements that moved.
-            ( next, cmd ) =
-                syncDocumentLive { model | document = moved, drag = Just { drag | amount = amount } }
-        in
-        ( next, cmd )
+                    ( next, cmd ) =
+                        syncDocumentLive { model | document = moved, drag = Just { drag | amount = amount } }
+                in
+                ( next, cmd )
+
+        ArcDrag arcHandle ->
+            let
+                step =
+                    degrees (toFloat model.rotateStep)
+
+                amount =
+                    Gizmo.dragArcAngle step arcHandle drag.start point
+            in
+            if amount == drag.amount then
+                ( model, Cmd.none )
+
+            else
+                let
+                    ( moved, _ ) =
+                        Edit.apply
+                            (RotateAroundAxis drag.ids
+                                { pivot = arcHandle.center
+                                , axis = arcHandle.axis
+                                , radians = amount
+                                }
+                            )
+                            drag.original
+
+                    ( next, cmd ) =
+                        syncDocumentLive { model | document = moved, drag = Just { drag | amount = amount } }
+                in
+                ( next, cmd )
 
 
-{-| Finish a drag: the document already shows the move, so record its undo,
+{-| Finish a drag: the document already shows the move or rotation, so record its undo,
 schedule hints and save the draft once.
 -}
 endDrag : Model -> ( Model, Cmd Msg )
@@ -1098,13 +1204,23 @@ endDrag model =
 
             else
                 let
+                    inverseCmd =
+                        case drag.kind of
+                            LinearDrag handle ->
+                                Translate drag.ids (Vec3.scale -drag.amount (Edit.axisVector handle.axis))
+
+                            ArcDrag arcHandle ->
+                                RotateAroundAxis drag.ids
+                                    { pivot = arcHandle.center
+                                    , axis = arcHandle.axis
+                                    , radians = -drag.amount
+                                    }
+
                     updated =
                         { model
                             | drag = Nothing
                             , history =
-                                Edit.pushApplied
-                                    (Translate drag.ids (Vec3.scale -drag.amount (Edit.axisVector drag.handle.axis)))
-                                    model.history
+                                Edit.pushApplied inverseCmd model.history
                         }
 
                     ( withTimer, hintCmd ) =
@@ -1294,6 +1410,7 @@ canvasArea model =
                             , isolated = model.hints.isolated
                             }
                             (currentHandles model)
+                            (currentArcHandles model)
                 , coarsenWhileMoving = True
                 }
                 model.viewport

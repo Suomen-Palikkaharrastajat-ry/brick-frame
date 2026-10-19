@@ -1,17 +1,24 @@
 module Studio.Gizmo exposing
-    ( Handle
+    ( ArcHandle
+    , DragHandle(..)
+    , Handle
+    , arcHandles
     , dragAmount
+    , dragArcAngle
     , handles
     , hit
+    , hitArc
+    , jointArcHandle
+    , orthogonalBasis
     , project
     , toRender
     )
 
-{-| The move gizmo: three axis handles at the selection's centre.
+{-| Move and rotation gizmos: linear axis handles and circular arc rotation handles.
 
 Handles are laid out in the document's coordinates (LDraw, Y down) but hit-tested
-and dragged on screen. Their length is a fraction of the distance to the eye, so
-they stay the same size on screen however far the camera is from the model.
+and dragged on screen. Their size scales with distance to the eye, remaining consistent
+on screen regardless of camera zoom.
 
 -}
 
@@ -21,7 +28,7 @@ import Render.Camera as Camera exposing (Camera)
 import Studio.Edit as Edit exposing (Axis(..))
 
 
-{-| One axis handle: where it points in the document, how long that is, and
+{-| One linear axis handle: where it points in the document, how long that is, and
 where its two ends fall on screen (canvas pixels).
 -}
 type alias Handle =
@@ -32,6 +39,25 @@ type alias Handle =
     , screenStart : ( Float, Float )
     , screenEnd : ( Float, Float )
     }
+
+
+{-| A circular arc handle for rotational manipulation around an axis.
+-}
+type alias ArcHandle =
+    { axis : Vec3
+    , axisKind : Maybe Axis
+    , center : Vec3
+    , radius : Float
+    , screenPoints : List ( Float, Float )
+    , screenCenter : ( Float, Float )
+    }
+
+
+{-| Union of drag handle types supported by the gizmo system.
+-}
+type DragHandle
+    = LinearDrag Handle
+    | ArcDrag ArcHandle
 
 
 {-| LDraw (Y down) to render space (Y up), the conversion every mesh gets.
@@ -74,7 +100,7 @@ project camera width height point =
             )
 
 
-{-| The three handles for a selection centred at `center` (document coordinates).
+{-| The three linear translation handles for a selection centred at `center`.
 -}
 handles : Camera -> Int -> Int -> Vec3 -> List Handle
 handles camera width height center =
@@ -106,8 +132,121 @@ handles camera width height center =
     List.filterMap make [ AxisX, AxisY, AxisZ ]
 
 
-{-| The handle under a screen point, within `tolerance` pixels of its line, the
-nearest first.
+{-| Find two orthogonal unit vectors perpendicular to a given normal vector.
+-}
+orthogonalBasis : Vec3 -> ( Vec3, Vec3 )
+orthogonalBasis n =
+    let
+        len =
+            Vec3.length n
+
+        unitN =
+            if len < 0.0001 then
+                vec3 0 1 0
+
+            else
+                Vec3.scale (1 / len) n
+
+        up =
+            if abs (Vec3.getY unitN) < 0.9 then
+                vec3 0 1 0
+
+            else
+                vec3 1 0 0
+
+        cross =
+            Vec3.cross unitN up
+
+        cLen =
+            Vec3.length cross
+
+        u =
+            if cLen < 0.0001 then
+                vec3 1 0 0
+
+            else
+                Vec3.scale (1 / cLen) cross
+
+        v =
+            Vec3.cross unitN u
+    in
+    ( u, v )
+
+
+{-| Create a rotational arc handle around an arbitrary axis vector at `center`.
+-}
+jointArcHandle : Camera -> Int -> Int -> Vec3 -> Vec3 -> Maybe ArcHandle
+jointArcHandle camera width height center axis =
+    let
+        eye =
+            Camera.position camera
+
+        radius =
+            0.14 * max 1 (Vec3.distance eye (toRender center))
+
+        ( u, v ) =
+            orthogonalBasis axis
+
+        segments =
+            32
+
+        step =
+            2 * pi / toFloat segments
+
+        circlePoint i =
+            let
+                angle =
+                    toFloat i * step
+
+                offset =
+                    Vec3.add (Vec3.scale (radius * cos angle) u) (Vec3.scale (radius * sin angle) v)
+            in
+            Vec3.add center offset
+
+        projected =
+            List.range 0 segments
+                |> List.filterMap (\i -> project camera width height (toRender (circlePoint i)))
+    in
+    case ( project camera width height (toRender center), projected ) of
+        ( Just sc, pts ) ->
+            if List.length pts >= segments // 2 then
+                Just
+                    { axis = axis
+                    , axisKind = Nothing
+                    , center = center
+                    , radius = radius
+                    , screenPoints = pts
+                    , screenCenter = sc
+                    }
+
+            else
+                Nothing
+
+        _ ->
+            Nothing
+
+
+{-| The three principal rotational arc handles (X, Y, Z) around `center`.
+-}
+arcHandles : Camera -> Int -> Int -> Vec3 -> List ArcHandle
+arcHandles camera width height center =
+    let
+        make ( axis, kind ) =
+            case jointArcHandle camera width height center axis of
+                Just h ->
+                    Just { h | axisKind = Just kind }
+
+                Nothing ->
+                    Nothing
+    in
+    List.filterMap make
+        [ ( Edit.axisVector AxisX, AxisX )
+        , ( Edit.axisVector AxisY, AxisY )
+        , ( Edit.axisVector AxisZ, AxisZ )
+        ]
+
+
+{-| The linear handle under a screen point, within `tolerance` pixels.
 -}
 hit : Float -> ( Float, Float ) -> List Handle -> Maybe Handle
 hit tolerance point candidates =
@@ -120,6 +259,44 @@ hit tolerance point candidates =
                 in
                 if d <= tolerance then
                     Just ( d, h )
+
+                else
+                    Nothing
+            )
+        |> List.sortBy Tuple.first
+        |> List.head
+        |> Maybe.map Tuple.second
+
+
+{-| The rotational arc handle under a screen point, within `tolerance` pixels.
+-}
+hitArc : Float -> ( Float, Float ) -> List ArcHandle -> Maybe ArcHandle
+hitArc tolerance point candidates =
+    let
+        distanceToArc pt arc =
+            case arc.screenPoints of
+                [] ->
+                    1000000
+
+                first :: rest ->
+                    let
+                        step p2 ( p1, minD ) =
+                            ( p2, min minD (distanceToSegment pt p1 p2) )
+
+                        ( _, d ) =
+                            List.foldl step ( first, 1000000 ) rest
+                    in
+                    d
+    in
+    candidates
+        |> List.filterMap
+            (\arc ->
+                let
+                    d =
+                        distanceToArc point arc
+                in
+                if d <= tolerance then
+                    Just ( d, arc )
 
                 else
                     Nothing
@@ -151,9 +328,41 @@ dragAmount step handle ( sx, sy ) ( x, y ) =
         0
 
     else
-        -- Mouse motion projected onto the handle's on-screen direction, scaled
-        -- by how many document units that many pixels stand for.
         Edit.snap step (((x - sx) * dx + (y - sy) * dy) / lengthSquared * handle.length)
+
+
+{-| How far around an arc handle's axis a drag from `start` to `now` has turned, in
+radians, snapped to `step`.
+-}
+dragArcAngle : Float -> ArcHandle -> ( Float, Float ) -> ( Float, Float ) -> Float
+dragArcAngle step handle ( sx, sy ) ( x, y ) =
+    let
+        ( cx, cy ) =
+            handle.screenCenter
+
+        angleAt px py =
+            atan2 -(py - cy) (px - cx)
+
+        startA =
+            angleAt sx sy
+
+        nowA =
+            angleAt x y
+
+        wrap a =
+            if a > pi then
+                wrap (a - 2 * pi)
+
+            else if a < -pi then
+                wrap (a + 2 * pi)
+
+            else
+                a
+
+        deltaA =
+            wrap (nowA - startA)
+    in
+    Edit.snap step deltaA
 
 
 distanceToSegment : ( Float, Float ) -> ( Float, Float ) -> ( Float, Float ) -> Float

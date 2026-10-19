@@ -17,7 +17,7 @@ import Render.Camera as Camera exposing (Camera)
 import Render.Instanced exposing (InstancedScene)
 import Set exposing (Set)
 import Studio.Edit exposing (Axis(..))
-import Studio.Gizmo as Gizmo exposing (Handle)
+import Studio.Gizmo as Gizmo exposing (ArcHandle, Handle)
 import Studio.Shader as Shader exposing (Vertex)
 import WebGL
 import WebGL.Settings.DepthTest as DepthTest
@@ -35,8 +35,8 @@ type alias Highlights =
 
 {-| The outlines for `highlights`, and the gizmo handles if there are any.
 -}
-entities : Camera -> Float -> Maybe InstancedScene -> Highlights -> List Handle -> List WebGL.Entity
-entities camera aspect scene highlights handles =
+entities : Camera -> Float -> Maybe InstancedScene -> Highlights -> List Handle -> List ArcHandle -> List WebGL.Entity
+entities camera aspect scene highlights handles arcHandles =
     let
         uniforms color =
             { viewMatrix = Camera.viewMatrix camera
@@ -69,6 +69,7 @@ entities camera aspect scene highlights handles =
         ++ outline highlights.isolated isolatedColor
         ++ outline highlights.selection outlineColor
         ++ List.map (\h -> draw (WebGL.triangles (handleTriangles camera h)) (axisColor h.axis)) handles
+        ++ List.map (\ah -> draw (WebGL.lines (arcLines ah)) (arcColor ah)) arcHandles
 
 
 outlineColor : Vec4
@@ -97,6 +98,50 @@ axisColor axis =
 
         AxisZ ->
             vec4 0.15 0.35 0.85 1
+
+
+arcColor : ArcHandle -> Vec4
+arcColor handle =
+    case handle.axisKind of
+        Just axis ->
+            axisColor axis
+
+        Nothing ->
+            vec4 0.1 0.75 0.85 1
+
+
+arcLines : ArcHandle -> List ( Vertex, Vertex )
+arcLines handle =
+    let
+        renderCenter =
+            Gizmo.toRender handle.center
+
+        renderAxis =
+            Gizmo.toRender handle.axis
+
+        ( u, v ) =
+            Gizmo.orthogonalBasis renderAxis
+
+        segments =
+            32
+
+        step =
+            2 * pi / toFloat segments
+
+        circlePoint i =
+            let
+                angle =
+                    toFloat i * step
+
+                offset =
+                    Vec3.add (Vec3.scale (handle.radius * cos angle) u) (Vec3.scale (handle.radius * sin angle) v)
+            in
+            Vertex (Vec3.add renderCenter offset)
+
+        indices =
+            List.range 0 (segments - 1)
+    in
+    List.map (\i -> ( circlePoint i, circlePoint (modBy segments (i + 1)) )) indices
 
 
 {-| The eight corners of each selected placement's bounding box, in render space.
