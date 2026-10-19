@@ -74,11 +74,16 @@ ports.saveDraft.subscribe((text) => {
   }, 500)
 })
 
-// Ctrl/Cmd+S would open the browser's own save dialog, which Elm cannot
-// prevent from a keydown subscription.
+// Browser shortcuts that clash with the studio (save, duplicate, select all, undo/redo).
+// Elm cannot prevent browser default actions from a keydown subscription.
 window.addEventListener('keydown', (event) => {
-  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
-    event.preventDefault()
-    ports.saveRequested.send(null)
+  if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+    const key = event.key.toLowerCase()
+    if (key === 's') {
+      event.preventDefault()
+      ports.saveRequested.send(null)
+    } else if (key === 'd' || key === 'a' || key === 'z' || key === 'y') {
+      event.preventDefault()
+    }
   }
 })

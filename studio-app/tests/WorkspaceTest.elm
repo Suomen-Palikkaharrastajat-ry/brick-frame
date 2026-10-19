@@ -426,6 +426,41 @@ editingSuite =
 
                         Nothing ->
                             Expect.fail "no X handle"
+            , test "edits during a drag are ignored" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded |> click (screenOf 0 loaded) |> step (UseTool MoveTool)
+
+                        h =
+                            Edit.selectionCenter [ 0 ] ready.document
+                                |> Maybe.map (Gizmo.handles ready.viewport.camera 800 600)
+                                |> Maybe.andThen (List.filter (\x -> x.axis == AxisX) >> List.head)
+                    in
+                    case h of
+                        Just handle ->
+                            let
+                                ( ax, ay ) =
+                                    handle.screenStart
+
+                                ( bx, by ) =
+                                    handle.screenEnd
+
+                                ( gx, gy ) =
+                                    ( (ax + bx) / 2, (ay + by) / 2 )
+
+                                inDrag =
+                                    ready
+                                        |> step (ViewportMsg (Viewport.MouseDown gx gy False))
+
+                                afterDelete =
+                                    step DeleteSelection inDrag
+                            in
+                            Expect.equal (List.length (Document.placements ready.document))
+                                (List.length (Document.placements afterDelete.document))
+
+                        Nothing ->
+                            Expect.fail "no X handle"
             , test "pressing away from the handles still orbits the camera" <|
                 \_ ->
                     let

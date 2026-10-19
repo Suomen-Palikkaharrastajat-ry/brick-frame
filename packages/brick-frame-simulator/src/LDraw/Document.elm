@@ -137,13 +137,44 @@ parse text =
         all =
             List.reverse (closeSubmodel last closed)
 
-        -- Text before the first `0 FILE` is usually empty; drop that phantom
-        -- submodel when real ones follow.
+        hasPlacements submodel =
+            List.any
+                (\entry ->
+                    case entry of
+                        PlacementEntry _ ->
+                            True
+
+                        Raw _ ->
+                            False
+                )
+                submodel.entries
+
+        -- Text before the first `0 FILE` is usually empty or comments; drop
+        -- that phantom submodel when real ones follow and fold any non-blank
+        -- comments into the first named submodel.
         submodels =
             case all of
                 first :: rest ->
-                    if first.name == "" && List.isEmpty first.entries && not (List.isEmpty rest) then
-                        rest
+                    if first.name == "" && not (hasPlacements first) && not (List.isEmpty rest) then
+                        let
+                            preamble =
+                                List.filter
+                                    (\entry ->
+                                        case entry of
+                                            Raw s ->
+                                                String.trim s /= ""
+
+                                            PlacementEntry _ ->
+                                                True
+                                    )
+                                    first.entries
+                        in
+                        case rest of
+                            named :: others ->
+                                { named | entries = preamble ++ named.entries } :: others
+
+                            [] ->
+                                rest
 
                     else
                         all
