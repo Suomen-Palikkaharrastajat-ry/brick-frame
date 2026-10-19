@@ -7,11 +7,14 @@ module Viewport exposing
     , Model
     , Msg(..)
     , ViewConfig
+    , applyDocument
     , beginFlatten
     , cameraChangedPayload
     , cameraMoved
     , init
+    , loadDocument
     , needsAnimationFrame
+    , pickSource
     , subscriptions
     , update
     , view
@@ -48,6 +51,7 @@ import Html.Events
 import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
+import LDraw.Document as Document exposing (Document)
 import LDraw.Geometry as Geometry
 import LDraw.Parser as Parser
 import LDraw.Resolve as Resolve exposing (PartCache, PartStatus(..), ResolverConfig)
@@ -56,6 +60,7 @@ import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3
 import Render.Camera as Camera exposing (Camera)
 import Render.Instanced as Instanced exposing (InstancedScene)
+import Render.Pick as Pick
 import Render.Scene as Scene exposing (Scene)
 import Render.Style as Style
 import Set exposing (Set)
@@ -66,6 +71,7 @@ import Viewport.Framing as Framing exposing (ModelBounds, ViewPreset(..))
 import Viewport.Hash as Hash
 import Viewport.Navigation as Navigation
 import Viewport.Shortcuts as Shortcuts
+import Viewport.Sync as Sync
 import Viewport.Wire as Wire
 import WebGL
 
@@ -150,6 +156,8 @@ type alias Model =
     , refineFrames : Int
     , errorMsg : Maybe String
     , fallbackLines : List LDrawLine
+    , document : Maybe Document
+    , sync : Maybe Sync.State
     , dragTravel : Float
     , cameraMode : CameraMode
     , touchGesture : TouchGesture
@@ -260,6 +268,8 @@ init config =
       , refineFrames = 0
       , errorMsg = Nothing
       , fallbackLines = []
+      , document = Nothing
+      , sync = Nothing
       , dragTravel = 0.0
       , cameraMode = initialCameraMode
       , touchGesture = NoTouchGesture
@@ -951,13 +961,36 @@ applyHeldControl now model =
 handlePartResult : String -> Result Http.Error String -> Model -> ( Model, Cmd Msg, List Event )
 handlePartResult name result model =
     if model.loadPhase /= ResolvingParts then
-        ( { model
-            | partCache =
+        let
+            newCache =
                 Resolve.updateCache name result Parser.parseFile model.partCache
-          }
-        , Cmd.none
-        , []
-        )
+        in
+        case model.sync of
+            Just _ ->
+                -- Editing: a part fetched for a new placement. Fetch whatever it
+                -- references in turn, then build the placements that are ready.
+                let
+                    newLines =
+                        case result of
+                            Ok text ->
+                                Parser.parseFile text
+
+                            Err _ ->
+                                []
+
+                    pending =
+                        Resolve.pendingParts newLines newCache
+
+                    ( reconciled, reconcileCmd ) =
+                        reconcile { model | partCache = Resolve.markLoading pending newCache }
+                in
+                ( reconciled
+                , Cmd.batch [ fetchPending model.resolverConfig pending, reconcileCmd ]
+                , []
+                )
+
+            Nothing ->
+                ( { model | partCache = newCache }, Cmd.none, [] )
 
     else
         let
@@ -1321,11 +1354,27 @@ handleTopLevelText text model =
 
             else
                 ( model.partCache, Parser.parseFile text )
+    in
+    beginLoad { lines = lines, cache = seededCache, submodelNames = submodelNames, document = Nothing } model
 
+
+{-| Start loading a model whose top-level lines and embedded submodels are
+already known: resolve every part they need, then hand over to `finishLoading`.
+-}
+beginLoad :
+    { lines : List LDrawLine
+    , cache : PartCache
+    , submodelNames : Set String
+    , document : Maybe Document
+    }
+    -> Model
+    -> ( Model, Cmd Msg, List Event )
+beginLoad { lines, cache, submodelNames, document } model =
+    let
         -- Also scan embedded submodels (seeded from MPD) for their own dependencies,
         -- since those lines are never passed through handlePartResult's additionalPending.
         seededSubmodelLines =
-            seededCache
+            cache
                 |> Dict.values
                 |> List.filterMap
                     (\status ->
@@ -1339,16 +1388,18 @@ handleTopLevelText text model =
                 |> List.concat
 
         pending =
-            Resolve.pendingParts (lines ++ seededSubmodelLines) seededCache
+            Resolve.pendingParts (lines ++ seededSubmodelLines) cache
 
         cacheWithLoading =
-            Resolve.markLoading pending seededCache
+            Resolve.markLoading pending cache
 
         loadingModel =
             { model
                 | topLevelLines = lines
                 , partCache = cacheWithLoading
                 , submodelNames = submodelNames
+                , document = document
+                , sync = Nothing
                 , loadPhase = ResolvingParts
                 , partsTotal = List.length pending
                 , partsLoaded = 0
@@ -1371,6 +1422,214 @@ handleTopLevelText text model =
         ( loadingModel, fetchPending model.resolverConfig pending, [ LoadStarted ] )
 
 
+{-| Load an editable document. Unlike a plain file, a document is always shown
+with the instanced renderer — every placement stays individually addressable —
+and later changes go through `applyDocument`.
+
+The document's submodels other than the main one are seeded into the part cache,
+so references to them expand in place.
+
+-}
+loadDocument : Document -> Model -> ( Model, Cmd Msg, List Event )
+loadDocument document model =
+    let
+        subfiles =
+            Document.subfiles document
+
+        seeded =
+            List.foldl
+                (\( name, lines ) acc -> Dict.insert name (Loaded lines) acc)
+                model.partCache
+                subfiles
+    in
+    beginLoad
+        { lines = Document.toLines document
+        , cache = seeded
+        , submodelNames = Set.fromList (List.map Tuple.first subfiles)
+        , document = Just document
+        }
+        model
+
+
+{-| Bring the scene in line with an edited document.
+
+Edits to the main submodel touch only the placements that changed: the instanced
+scene swaps those sources in place and rebuilds just the proxy cells they were
+in. Parts that have not been seen before are fetched first; the placement
+appears once they arrive. An edit inside another submodel reloads the document,
+keeping the camera where it is.
+
+A document that arrives while the previous one is still loading is picked up
+when that load finishes.
+
+-}
+applyDocument : Document -> Model -> ( Model, Cmd Msg, List Event )
+applyDocument document model =
+    case model.sync of
+        Nothing ->
+            if model.document == Nothing then
+                loadDocument document model
+
+            else
+                -- Still loading: finishLoadingDocument builds from the latest.
+                ( { model | document = Just document }, Cmd.none, [] )
+
+        Just state ->
+            if Document.subfilesSignature document /= state.subfilesSignature then
+                loadDocument document { model | cameraMode = CameraManual }
+
+            else
+                let
+                    ( reconciled, cmd ) =
+                        reconcile { model | document = Just document }
+                in
+                ( reconciled, cmd, [] )
+
+
+{-| Apply whatever `Viewport.Sync.plan` says is out of date.
+-}
+reconcile : Model -> ( Model, Cmd Msg )
+reconcile model =
+    case ( model.sync, model.instancedScene, model.document ) of
+        ( Just state, Just scene, Just document ) ->
+            let
+                plan =
+                    Sync.plan model.partCache model.submodelNames document state
+
+                afterRemoval =
+                    List.foldl Instanced.removeSource scene plan.removed
+
+                nextScene =
+                    List.foldl
+                        (\sourced acc -> Instanced.replaceSource model.partCache sourced.source sourced.raws acc)
+                        afterRemoval
+                        plan.replaced
+
+                built =
+                    List.foldl
+                        (\sourced acc -> Dict.insert sourced.source sourced.fingerprint acc)
+                        (List.foldl Dict.remove state.built plan.removed)
+                        plan.replaced
+
+                nextState =
+                    { state
+                        | document = document
+                        , built = built
+                        , pending = plan.pending
+                        , readyParts = plan.readyParts
+                    }
+
+                unchanged =
+                    List.isEmpty plan.removed && List.isEmpty plan.replaced && List.isEmpty plan.missing
+            in
+            if unchanged then
+                ( { model | sync = Just nextState }, Cmd.none )
+
+            else
+                ( frameEditedScene
+                    { model
+                        | instancedScene = Just nextScene
+                        , sync = Just nextState
+                        , partCache = Resolve.markLoading plan.missing model.partCache
+                    }
+                , fetchPending model.resolverConfig plan.missing
+                )
+
+        _ ->
+            ( model, Cmd.none )
+
+
+{-| After an edit, keep the zoom range and far plane matched to the model, and
+frame the camera on the first content a document gets. Later edits leave the
+camera alone: it is the user's.
+-}
+frameEditedScene : Model -> Model
+frameEditedScene model =
+    case model.instancedScene of
+        Just scene ->
+            if List.isEmpty scene.placements then
+                { model | modelBounds = Nothing }
+
+            else
+                let
+                    bounds =
+                        Framing.modelBoundsFromInstanced scene
+
+                    firstContent =
+                        model.modelBounds == Nothing
+
+                    camera =
+                        if firstContent && model.cameraMode == CameraAutoFit then
+                            Framing.cameraForBounds model.width model.height bounds.center bounds.radius model.camera
+
+                        else
+                            Framing.applyZoomRange model.width model.height bounds.radius model.camera
+                in
+                { model | camera = camera, modelBounds = Just bounds }
+
+        Nothing ->
+            model
+
+
+{-| Document path of `finishLoading`: build the instanced scene with every main
+placement tagged by its document id.
+-}
+finishLoadingDocument : Document -> Model -> ( Model, Cmd Msg, List Event )
+finishLoadingDocument document model =
+    let
+        sourced =
+            Sync.buildAll model.partCache model.submodelNames document
+
+        instanced =
+            Instanced.buildFrom model.partCache
+                (List.concatMap (\s -> List.map (Tuple.pair s.source) s.raws) sourced)
+
+        ready =
+            Set.fromList (Dict.keys instanced.parts)
+
+        loaded =
+            { model
+                | instancedScene = Just instanced
+                , scene = Nothing
+                , sync = Just (Sync.initialState document ready sourced)
+                , loadPhase = Ready
+                , loadingProgressPct = 100
+                , loadingProgressTick = Nothing
+            }
+
+        -- A document that was edited while loading may differ from `document`.
+        ( reconciled, cmd ) =
+            reconcile { loaded | document = model.document }
+    in
+    ( frameEditedScene reconciled, cmd, [ ModelReady ] )
+
+
+{-| The document placement under a screen point, nearest first.
+
+Placements are tested as bounding spheres — cheap, and good enough to pick a
+brick out of a model; an exact triangle test can replace it later without
+changing the signature.
+
+-}
+pickSource : Float -> Float -> Model -> Maybe Int
+pickSource x y model =
+    case ( model.instancedScene, Pick.screenRay model.camera model.width model.height x y ) of
+        ( Just scene, Just ( origin, direction ) ) ->
+            scene.placements
+                |> List.filter (\p -> p.source >= 0)
+                |> List.filterMap
+                    (\p ->
+                        Pick.raySphereHit origin direction p.center p.radius
+                            |> Maybe.map (\t -> ( t, p.source ))
+                    )
+                |> List.sortBy Tuple.first
+                |> List.head
+                |> Maybe.map Tuple.second
+
+        _ ->
+            Nothing
+
+
 {-| Called when all parts have been resolved. Build the scene and gear graph.
 
 Model size is measured first, because every step below — gear detection, the
@@ -1381,15 +1640,20 @@ takes the instanced path instead; see `finishLoadingInstanced`.
 -}
 finishLoading : Model -> ( Model, Cmd Msg, List Event )
 finishLoading model =
-    let
-        placements =
-            Instanced.extractPlacements model.submodelNames model.topLevelLines model.partCache rootColorCode
-    in
-    if Instanced.triangleBudgetExceeded (List.length placements) then
-        finishLoadingInstanced placements model
+    case model.document of
+        Just document ->
+            finishLoadingDocument document model
 
-    else
-        finishLoadingBaked model
+        Nothing ->
+            let
+                placements =
+                    Instanced.extractPlacements model.submodelNames model.topLevelLines model.partCache rootColorCode
+            in
+            if Instanced.triangleBudgetExceeded (List.length placements) then
+                finishLoadingInstanced placements model
+
+            else
+                finishLoadingBaked model
 
 
 {-| The root inherited colour: LDraw code 15 (white), matching the value passed
@@ -1655,8 +1919,8 @@ subscriptions model =
 
 {-| How the host decorates the canvas.
 
-`extraEntities camera style aspect` adds host-owned entities (moving gears) to
-the baked scene; they are not drawn for instanced models. `coarsenWhileMoving`
+`extraEntities camera style aspect` adds host-owned entities — moving gears, a
+selection outline — on top of the scene. `coarsenWhileMoving`
 trades detail for latency while the camera moves — turn it off when the host
 redraws continuously anyway, as a running simulation does.
 
@@ -1690,6 +1954,7 @@ view config model =
                         , coarsen = config.coarsenWhileMoving && model.refineFrames > 0
                         }
                         instanced
+                        ++ config.extraEntities model.camera model.renderStyle aspect
 
                 ( Nothing, Nothing ) ->
                     []

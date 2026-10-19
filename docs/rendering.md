@@ -398,7 +398,7 @@ several gigabytes once serialised through the geometry worker's JSON, which is
 why it never reached the screen at all.
 
 Above `Render.Instanced.triangleBudgetExceeded` (2,000 placements),
-`finishLoading` takes `finishLoadingInstanced` instead of the worker path:
+`Viewport`'s `finishLoading` takes `finishLoadingInstanced` instead of the worker path:
 
 - Each distinct **part** is flattened once in local LDraw space
   (`Geometry.localOptions`) — 202 meshes and 232,242 triangles for the model
@@ -450,13 +450,44 @@ of 50,000.
 ### Static-scene detail settling
 
 When `simulationAvailable` is false nothing animates, so the image only changes
-when the camera does. `Main.refineFrames` is refilled on every camera movement
+when the camera does. `Viewport.refineFrames` is refilled on every camera movement
 and spent one per animation frame; while it is non-zero every placement drops
 one band, and the frame after it reaches zero is drawn at full detail.
-`needsAnimationFrame` includes the countdown so that refinement frame is
+`Viewport.needsAnimationFrame` includes the countdown so that refinement frame is
 guaranteed to render before the subscription goes quiet. A model with a running
 simulation is excluded — it redraws continuously and has no settled state to
 refine towards.
+
+### Editing: updating the scene in place
+
+An editor cannot afford to rebuild a city-scale scene for every drag step, so an
+`InstancedScene` can be changed one *source* at a time. A source is the id of the
+`LDraw.Document` placement a group of instances came from (a library part is one
+instance, a reference to a submodel expands to all of its parts):
+
+- `Instanced.buildFrom` builds a scene from `( source, RawPlacement )` pairs.
+- `Instanced.replaceSource cache source raws scene` swaps one source's placements
+  for new ones — which covers add, move, recolour and part change — and
+  `removeSource` drops one. Only the part meshes the new placements need are
+  built, and only the proxy cells the old and new placements fall in are
+  rebuilt (the cell size is fixed when the scene is built, so cells stay put as
+  the model grows).
+- `Viewport.loadDocument` loads a `Document` through this path (always
+  instanced, never baked, no gear analysis) and `Viewport.applyDocument` keeps the
+  scene in step with later edits. `Viewport.Sync.plan` looks only at the
+  placements `Document.touched` names, so the cost of an edit does not depend on
+  how many placements the model has beyond a few passes over the placement list.
+  A placement whose part has not been fetched yet waits in `Sync.State.pending`
+  while the part (and what it references) loads, and appears when it arrives.
+- Edits inside a non-main submodel change `Document.subfilesSignature`; the
+  viewport then reloads the document (keeping the camera) instead.
+- The camera is framed on the first content a document gets and never again; the
+  zoom range and far plane follow the model's bounds.
+
+Measured with a 22,000-placement document in Node (unoptimised Elm build, so the
+browser figure is better): loading it takes about 2.4 s; adding, moving or
+removing one placement takes 8–125 ms, mostly the garbage collector working
+through the placement list.
 
 ## Limitations
 

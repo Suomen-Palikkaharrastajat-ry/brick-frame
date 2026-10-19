@@ -6,7 +6,13 @@ the model and which events it reports to the host.
 
 import Dict
 import Expect
-import LDraw.Resolve as Resolve
+import Http
+import LDraw.Document as Document exposing (Document)
+import LDraw.Resolve as Resolve exposing (PartStatus(..))
+import LDraw.Types exposing (LDrawLine(..))
+import Math.Matrix4 as Mat4
+import Math.Vector3 exposing (vec3)
+import Math.Vector4
 import Render.Camera as Camera
 import Render.Style as Style
 import Set
@@ -55,7 +61,8 @@ update msg model =
 suite : Test
 suite =
     describe "Viewport"
-        [ describe "init"
+        [ documentSuite
+        , describe "init"
             [ test "an empty model URL leaves the viewport idle and auto-fitting" <|
                 \_ ->
                     Expect.all
@@ -295,4 +302,195 @@ suite =
                         |> .navigation
                         |> Expect.equal Camera.Orbit
             ]
+        ]
+
+
+
+-- ── Document mode ─────────────────────────────────────────────────────────────
+
+
+brickLines : List LDrawLine
+brickLines =
+    [ Triangle { color = 16, p1 = vec3 -10 0 -10, p2 = vec3 10 0 -10, p3 = vec3 0 -20 0 } ]
+
+
+studioConfig : Viewport.Config
+studioConfig =
+    { config
+        | partCache =
+            Dict.fromList [ ( "3001.dat", Loaded brickLines ) ]
+    }
+
+
+studio : Viewport.Model
+studio =
+    Viewport.init studioConfig |> Tuple.first
+
+
+{-| A document with `n` bricks side by side, spaced so they do not overlap.
+-}
+bricks : Int -> Document
+bricks n =
+    List.range 0 (n - 1)
+        |> List.foldl
+            (\i doc ->
+                Document.addPlacement "" { part = "3001.dat", color = 4, matrix = Mat4.makeTranslate3 (toFloat i * 40) 0 0 } doc
+                    |> Tuple.first
+            )
+            Document.empty
+
+
+loaded : Document -> Viewport.Model
+loaded doc =
+    Viewport.loadDocument doc studio
+        |> (\( m, _, _ ) -> m)
+
+
+sources : Viewport.Model -> List Int
+sources model =
+    model.instancedScene
+        |> Maybe.map (\scene -> List.map .source scene.placements)
+        |> Maybe.withDefault []
+
+
+documentSuite : Test
+documentSuite =
+    describe "Viewport documents"
+        [ test "loadDocument shows every placement through the instanced renderer" <|
+            \_ ->
+                let
+                    ( model, _, events ) =
+                        Viewport.loadDocument (bricks 3) studio
+                in
+                Expect.all
+                    [ \_ -> Expect.equal [ LoadStarted, ModelReady ] events
+                    , \m -> Expect.equal Ready m.loadPhase
+                    , \m -> Expect.equal [ 0, 1, 2 ] (List.sort (sources m))
+                    , \m -> Expect.equal Nothing m.scene
+                    ]
+                    model
+        , test "an empty document is ready and has no bounds to frame" <|
+            \_ ->
+                loaded Document.empty
+                    |> Expect.all
+                        [ \m -> Expect.equal Ready m.loadPhase
+                        , \m -> Expect.equal Nothing m.modelBounds
+                        ]
+        , test "adding a placement leaves the existing ones in place" <|
+            \_ ->
+                let
+                    before =
+                        loaded (bricks 2)
+
+                    ( after, _, _ ) =
+                        Viewport.applyDocument (bricks 3) before
+                in
+                Expect.equal [ 0, 1, 2 ] (List.sort (sources after))
+        , test "removing a placement removes only that one" <|
+            \_ ->
+                let
+                    ( after, _, _ ) =
+                        Viewport.applyDocument (Document.removePlacement 1 (bricks 3)) (loaded (bricks 3))
+                in
+                Expect.equal [ 0, 2 ] (List.sort (sources after))
+        , test "recolouring a placement changes its colour and nothing else" <|
+            \_ ->
+                let
+                    ( after, _, _ ) =
+                        Viewport.applyDocument
+                            (Document.updatePlacement 1 (\p -> { p | color = 14 }) (bricks 3))
+                            (loaded (bricks 3))
+
+                    colours model =
+                        model.instancedScene
+                            |> Maybe.map (\scene -> scene.placements |> List.sortBy .source |> List.map (.color >> Math.Vector4.toRecord))
+                in
+                Expect.all
+                    [ \m -> Expect.equal (List.length (sources m)) 3
+                    , \m ->
+                        case colours m of
+                            Just [ a, b, c ] ->
+                                Expect.all
+                                    [ \_ -> Expect.equal a c
+                                    , \_ -> Expect.notEqual a b
+                                    ]
+                                    ()
+
+                            _ ->
+                                Expect.fail "expected three placements"
+                    ]
+                    after
+        , test "moving a placement moves it" <|
+            \_ ->
+                let
+                    ( after, _, _ ) =
+                        Viewport.applyDocument
+                            (Document.updatePlacement 0 (\p -> { p | matrix = Mat4.makeTranslate3 500 0 0 }) (bricks 1))
+                            (loaded (bricks 1))
+                in
+                after.instancedScene
+                    |> Maybe.map (\scene -> List.map (.center >> Math.Vector3.getX) scene.placements)
+                    |> Maybe.withDefault []
+                    |> List.map (\x -> x > 400)
+                    |> Expect.equal [ True ]
+        , test "a part that is not cached is fetched, and appears once it arrives" <|
+            \_ ->
+                let
+                    withNew =
+                        Document.addPlacement "" { part = "9999.dat", color = 4, matrix = Mat4.identity } (bricks 1)
+                            |> Tuple.first
+
+                    ( waiting, _, _ ) =
+                        Viewport.applyDocument withNew (loaded (bricks 1))
+
+                    ( arrived, _, _ ) =
+                        Viewport.update (PartLoaded "9999.dat" (Ok "3 16 0 0 0 10 0 0 0 0 10")) waiting
+                            |> (\( m, c, e ) -> ( m, c, e ))
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Just Loading) (Dict.get "9999.dat" waiting.partCache)
+                    , \_ -> Expect.equal [ 0 ] (sources waiting)
+                    , \_ -> Expect.equal [ 0, 1 ] (List.sort (sources arrived))
+                    ]
+                    ()
+        , test "a part that fails to load does not block the document" <|
+            \_ ->
+                let
+                    withNew =
+                        Document.addPlacement "" { part = "9999.dat", color = 4, matrix = Mat4.identity } (bricks 1)
+                            |> Tuple.first
+
+                    ( waiting, _, _ ) =
+                        Viewport.applyDocument withNew (loaded (bricks 1))
+
+                    ( failed, _, _ ) =
+                        Viewport.update (PartLoaded "9999.dat" (Err Http.NetworkError)) waiting
+                in
+                Expect.equal [ 0 ] (sources failed)
+        , test "framing happens for the first content only" <|
+            \_ ->
+                let
+                    ( first, _, _ ) =
+                        Viewport.applyDocument (bricks 1) (loaded Document.empty)
+
+                    ( second, _, _ ) =
+                        Viewport.applyDocument (bricks 2) first
+                in
+                Expect.all
+                    [ \_ -> Expect.notEqual Nothing first.modelBounds
+                    , \_ -> Expect.equal first.camera.target second.camera.target
+                    ]
+                    ()
+        , test "pickSource finds the placement under the cursor" <|
+            \_ ->
+                let
+                    model =
+                        loaded (bricks 1)
+                            |> (\m -> { m | width = 800, height = 600 })
+
+                    framed =
+                        Viewport.applyDocument (bricks 1) model |> (\( m, _, _ ) -> m)
+                in
+                ( Viewport.pickSource 400 300 framed, Viewport.pickSource 5 5 framed )
+                    |> Expect.equal ( Just 0, Nothing )
         ]

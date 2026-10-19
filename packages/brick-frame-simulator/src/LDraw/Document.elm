@@ -4,14 +4,20 @@ module LDraw.Document exposing
     , Placement
     , Submodel
     , addPlacement
+    , clearTouched
     , empty
+    , entryToText
+    , fingerprint
     , fromLines
     , getPlacement
     , isMultiFile
+    , mainPlacements
     , mainSubmodel
     , parse
     , placements
     , removePlacement
+    , subfiles
+    , subfilesSignature
     , toLines
     , toLinesOf
     , updatePlacement
@@ -24,6 +30,10 @@ not render (META lines, blank lines, Studio-specific tokens). A document keeps
 all of it: every submodel is an ordered list of entries, where a part reference
 is a structured `Placement` and every other line is kept verbatim as `Raw`.
 `LDraw.Writer` is the reverse of `parse`.
+
+`touched` collects the ids of placements added, changed or removed by the
+editing functions since the last `clearTouched`, so a renderer can update just
+those instead of comparing the whole document.
 
 Placements get stable integer ids when the document is parsed (or when a
 placement is added). Ids are never reused within a document, so selection,
@@ -38,6 +48,7 @@ import LDraw.Format as Format
 import LDraw.Parser as Parser
 import LDraw.Types exposing (LDrawLine(..), SubFileData)
 import Math.Matrix4 exposing (Mat4)
+import Set exposing (Set)
 
 
 {-| A whole file: ordered submodels plus the next free placement id.
@@ -45,6 +56,7 @@ import Math.Matrix4 exposing (Mat4)
 type alias Document =
     { submodels : List Submodel
     , nextId : Int
+    , touched : Set Int
     }
 
 
@@ -92,6 +104,7 @@ empty : Document
 empty =
     { submodels = [ { name = "", entries = [] } ]
     , nextId = 0
+    , touched = Set.empty
     }
 
 
@@ -136,7 +149,7 @@ parse text =
                 [] ->
                     empty.submodels
     in
-    { submodels = submodels, nextId = finalId }
+    { submodels = submodels, nextId = finalId, touched = Set.empty }
 
 
 {-| Build a single-submodel document from already parsed lines. Comments become
@@ -158,6 +171,7 @@ fromLines lines =
     in
     { submodels = [ { name = "", entries = List.reverse reversed } ]
     , nextId = finalId
+    , touched = Set.empty
     }
 
 
@@ -193,6 +207,61 @@ placements doc =
     doc.submodels
         |> List.concatMap .entries
         |> List.filterMap placementOf
+
+
+{-| The placements of the main submodel, in file order.
+-}
+mainPlacements : Document -> List Placement
+mainPlacements doc =
+    (mainSubmodel doc).entries |> List.filterMap placementOf
+
+
+{-| The submodels other than the main one, as parsed lines under their
+normalised file names — what a part cache needs to resolve references to them.
+-}
+subfiles : Document -> List ( String, List LDrawLine )
+subfiles doc =
+    doc.submodels
+        |> List.drop 1
+        |> List.map (\s -> ( normalise s.name, entriesToLines s.entries ))
+
+
+{-| Text of every non-main submodel. Equal signatures mean a part cache seeded
+from `subfiles` is still valid.
+-}
+subfilesSignature : Document -> String
+subfilesSignature doc =
+    doc.submodels
+        |> List.drop 1
+        |> List.concatMap (\s -> s.name :: List.map entryToText s.entries)
+        |> String.join "\n"
+
+
+{-| What makes two placements draw the same: part, colour and position, but not
+the id. Equal fingerprints mean the scene need not change.
+-}
+fingerprint : Placement -> String
+fingerprint =
+    Format.placementToText
+
+
+{-| One entry as the line it is written as.
+-}
+entryToText : Entry -> String
+entryToText entry =
+    case entry of
+        PlacementEntry p ->
+            Format.placementToText p
+
+        Raw text ->
+            text
+
+
+{-| Forget which placements changed; call once a renderer has caught up.
+-}
+clearTouched : Document -> Document
+clearTouched doc =
+    { doc | touched = Set.empty }
 
 
 {-| Look a placement up by id.
@@ -260,7 +329,13 @@ addPlacement submodelName spec doc =
             else
                 submodel
     in
-    ( { doc | submodels = List.map add doc.submodels, nextId = id + 1 }, id )
+    ( { doc
+        | submodels = List.map add doc.submodels
+        , nextId = id + 1
+        , touched = Set.insert id doc.touched
+      }
+    , id
+    )
 
 
 {-| Change one placement. Unknown ids leave the document untouched.
@@ -280,7 +355,7 @@ updatePlacement id change doc =
                 Raw _ ->
                     e
     in
-    mapEntries (List.map entry) doc
+    mapEntries (List.map entry) { doc | touched = Set.insert id doc.touched }
 
 
 {-| Delete one placement.
@@ -296,7 +371,7 @@ removePlacement id doc =
                 Raw _ ->
                     True
     in
-    mapEntries (List.filter keep) doc
+    mapEntries (List.filter keep) { doc | touched = Set.insert id doc.touched }
 
 
 

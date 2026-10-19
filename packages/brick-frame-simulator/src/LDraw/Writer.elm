@@ -8,7 +8,7 @@ re-formatted with stable six-decimal floats.
 
 -}
 
-import LDraw.Document as Document exposing (Document, Entry(..))
+import LDraw.Document as Document exposing (Document)
 import LDraw.Format as Format
 import LDraw.Types exposing (LDrawLine)
 
@@ -19,20 +19,12 @@ every submodel gets a `0 FILE` header and the result is an `.mpd`.
 writeDocument : Document -> String
 writeDocument doc =
     let
-        entryText entry =
-            case entry of
-                PlacementEntry p ->
-                    Format.placementToText p
-
-                Raw text ->
-                    text
-
         submodelLines submodel =
             if Document.isMultiFile doc then
-                ("0 FILE " ++ submodel.name) :: List.map entryText submodel.entries
+                ("0 FILE " ++ submodel.name) :: List.map Document.entryToText submodel.entries
 
             else
-                List.map entryText submodel.entries
+                List.map Document.entryToText submodel.entries
     in
     doc.submodels
         |> List.concatMap submodelLines
