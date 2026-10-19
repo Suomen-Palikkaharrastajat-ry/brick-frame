@@ -57,6 +57,15 @@ ports.downloadFile.subscribe(({ filename, mime, text }) => {
   URL.revokeObjectURL(url)
 })
 
+// Copy text to clipboard
+if (ports.copyToClipboard) {
+  ports.copyToClipboard.subscribe((text) => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {})
+    }
+  })
+}
+
 // Draft: the document is offered on every change, which is far more often than
 // it needs storing — write the latest one once the edits pause.
 let pendingDraft = null

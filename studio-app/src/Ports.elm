@@ -1,5 +1,6 @@
 port module Ports exposing
-    ( downloadFile
+    ( copyToClipboard
+    , downloadFile
     , fileContentReceived
     , fileLoadError
     , geometryFlattenFailed
@@ -76,3 +77,8 @@ port saveDraft : String -> Cmd msg
 {-| The browser asked to save (Ctrl+S), which the page intercepts.
 -}
 port saveRequested : (() -> msg) -> Sub msg
+
+
+{-| Copy text to the system clipboard.
+-}
+port copyToClipboard : String -> Cmd msg

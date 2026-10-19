@@ -28,6 +28,8 @@ import EmbeddedParts
 import Html exposing (Html, button, div, span, text)
 import Html.Attributes as Attr
 import Http
+import LDraw.BOM as BOM exposing (ModelBOM)
+import LDraw.Catalog as Catalog exposing (ElementCatalog, PartIndex)
 import LDraw.Document as Document exposing (Document)
 import LDraw.Writer as Writer
 import Math.Matrix4 as Mat4
@@ -37,6 +39,7 @@ import Process
 import Render.Camera as Camera
 import Render.Style as Style
 import Set exposing (Set)
+import Studio.BOM as StudioBOM
 import Studio.Colours as Colours
 import Studio.Edit as Edit exposing (Axis(..), Command(..), History)
 import Studio.Gizmo as Gizmo exposing (Handle)
@@ -105,6 +108,10 @@ type alias Model =
     , panel : Maybe Panel
     , hints : Hints.Hints
     , hintGeneration : Int
+    , bomOpen : Bool
+    , bomState : StudioBOM.State
+    , elementCatalog : ElementCatalog
+    , baseBOM : Maybe ModelBOM
     }
 
 
@@ -158,6 +165,19 @@ type Msg
     | OpenPanel (Maybe Panel)
     | SimulateRequested
     | HintsDue Int
+    | ToggleBOM
+    | CloseBOM
+    | BOMQuery String
+    | BOMCategory (Maybe String)
+    | BOMSubmodel (Maybe String)
+    | BOMSort StudioBOM.SortColumn
+    | BOMSelectLot String Int
+    | BOMExportBrickLink
+    | BOMExportRebrickable
+    | BOMCopyMarkdown
+    | BOMCopyPlainText
+    | BOMToggleDiff
+    | ElementCatalogLoaded (Result Http.Error ElementCatalog)
     | NoOp
 
 
@@ -207,6 +227,10 @@ init flags =
             , panel = Nothing
             , hints = Hints.empty
             , hintGeneration = 0
+            , bomOpen = False
+            , bomState = StudioBOM.init
+            , elementCatalog = Catalog.emptyCatalog
+            , baseBOM = Nothing
             }
 
         ( opened, openCmd ) =
@@ -219,6 +243,10 @@ init flags =
         , openCmd
         , Ports.setUrlHash (Hash.encodeCamera viewport.camera)
         , PartIndex.fetch flags.ldrawBase PartIndexLoaded
+        , Http.get
+            { url = withoutTrailingSlash flags.ldrawBase ++ "/elements-index.json"
+            , expect = Http.expectJson ElementCatalogLoaded Catalog.elementCatalogDecoder
+            }
         , Browser.Dom.getViewport
             |> Task.perform (\vp -> WindowSized (round vp.viewport.width) (round vp.viewport.height))
         ]
@@ -230,6 +258,15 @@ init flags =
 previewSize : ( Int, Int )
 previewSize =
     ( 264, 150 )
+
+
+withoutTrailingSlash : String -> String
+withoutTrailingSlash base =
+    if String.endsWith "/" base then
+        String.dropRight 1 base
+
+    else
+        base
 
 
 sized : ( Int, Int ) -> Viewport.Model -> Viewport.Model
@@ -586,6 +623,142 @@ update msg model =
 
         SimulateRequested ->
             -- The page above this one changes pages; the workspace stays as it is.
+            ( model, Cmd.none )
+
+        ToggleBOM ->
+            let
+                willOpen =
+                    not model.bomOpen
+
+                baseBOM =
+                    if willOpen && model.baseBOM == Nothing then
+                        Just (computeBOM model)
+
+                    else
+                        model.baseBOM
+            in
+            ( { model | bomOpen = willOpen, baseBOM = baseBOM }, Cmd.none )
+
+        CloseBOM ->
+            ( { model | bomOpen = False }, Cmd.none )
+
+        BOMQuery query ->
+            let
+                bomState =
+                    model.bomState
+            in
+            ( { model | bomState = { bomState | query = query } }, Cmd.none )
+
+        BOMCategory category ->
+            let
+                bomState =
+                    model.bomState
+            in
+            ( { model | bomState = { bomState | category = category } }, Cmd.none )
+
+        BOMSubmodel submodel ->
+            let
+                bomState =
+                    model.bomState
+            in
+            ( { model | bomState = { bomState | submodel = submodel } }, Cmd.none )
+
+        BOMSort column ->
+            let
+                bomState =
+                    model.bomState
+
+                ( newCol, newAsc ) =
+                    if bomState.sortColumn == column then
+                        ( column, not bomState.sortAscending )
+
+                    else
+                        ( column, False )
+            in
+            ( { model | bomState = { bomState | sortColumn = newCol, sortAscending = newAsc } }, Cmd.none )
+
+        BOMSelectLot partId colorId ->
+            let
+                bom =
+                    computeBOM model
+
+                matchingLot =
+                    List.filter (\l -> l.partId == partId && l.colorId == colorId) bom.lots
+                        |> List.head
+
+                newSelection =
+                    case matchingLot of
+                        Just lot ->
+                            Set.fromList lot.placementIds
+
+                        Nothing ->
+                            model.selection
+
+                bomState =
+                    model.bomState
+            in
+            ( { model
+                | selection = newSelection
+                , bomState = { bomState | selectedLot = Just ( partId, colorId ) }
+              }
+            , Cmd.none
+            )
+
+        BOMExportBrickLink ->
+            let
+                bom =
+                    computeBOM model
+            in
+            ( model
+            , Ports.downloadFile
+                { filename = "wanted-list.xml"
+                , mime = "application/xml"
+                , text = BOM.toBrickLinkXml bom
+                }
+            )
+
+        BOMExportRebrickable ->
+            let
+                bom =
+                    computeBOM model
+            in
+            ( model
+            , Ports.downloadFile
+                { filename = "rebrickable-parts.csv"
+                , mime = "text/csv"
+                , text = BOM.toRebrickableCsv bom
+                }
+            )
+
+        BOMCopyMarkdown ->
+            let
+                bom =
+                    computeBOM model
+            in
+            ( model
+            , Ports.copyToClipboard (BOM.toMarkdown bom)
+            )
+
+        BOMCopyPlainText ->
+            let
+                bom =
+                    computeBOM model
+            in
+            ( model
+            , Ports.copyToClipboard (BOM.toPlainText bom)
+            )
+
+        BOMToggleDiff ->
+            let
+                bomState =
+                    model.bomState
+            in
+            ( { model | bomState = { bomState | showDiff = not bomState.showDiff } }, Cmd.none )
+
+        ElementCatalogLoaded (Ok catalog) ->
+            ( { model | elementCatalog = catalog }, Cmd.none )
+
+        ElementCatalogLoaded (Err _) ->
             ( model, Cmd.none )
 
         NoOp ->
@@ -1241,34 +1414,102 @@ subscriptions model =
 
 view : Model -> Html Msg
 view model =
-    case model.layout.mode of
-        Layout.Wide ->
-            div
-                [ Attr.style "display" "flex"
-                , Attr.style "width" "100%"
-                , Attr.style "height" "100%"
-                , Attr.style "overflow" "hidden"
-                , Attr.style "background" Theme.appBackground
-                ]
-                [ pane [ heading "Parts", div [ Attr.style "flex" "1", Attr.style "min-height" "0" ] [ viewPalette model ], heading "Colours", viewColours model ]
-                , canvasArea model
-                , pane [ heading "Selection", viewInspector model, heading "Structure", div [ Attr.style "flex" "1", Attr.style "min-height" "0", Attr.style "overflow-y" "auto" ] [ viewTree model ] ]
-                ]
+    let
+        content =
+            case model.layout.mode of
+                Layout.Wide ->
+                    div
+                        [ Attr.style "display" "flex"
+                        , Attr.style "width" "100%"
+                        , Attr.style "height" "100%"
+                        , Attr.style "overflow" "hidden"
+                        , Attr.style "background" Theme.appBackground
+                        ]
+                        [ pane [ heading "Parts", div [ Attr.style "flex" "1", Attr.style "min-height" "0" ] [ viewPalette model ], heading "Colours", viewColours model ]
+                        , canvasArea model
+                        , pane [ heading "Selection", viewInspector model, heading "Structure", div [ Attr.style "flex" "1", Attr.style "min-height" "0", Attr.style "overflow-y" "auto" ] [ viewTree model ] ]
+                        ]
 
-        Layout.Narrow ->
-            div
-                [ Attr.style "position" "relative"
-                , Attr.style "display" "flex"
-                , Attr.style "flex-direction" "column"
-                , Attr.style "width" "100%"
-                , Attr.style "height" "100%"
-                , Attr.style "overflow" "hidden"
-                , Attr.style "background" Theme.appBackground
-                ]
-                [ canvasArea model
-                , viewTabs model
-                , viewSheet model
-                ]
+                Layout.Narrow ->
+                    div
+                        [ Attr.style "position" "relative"
+                        , Attr.style "display" "flex"
+                        , Attr.style "flex-direction" "column"
+                        , Attr.style "width" "100%"
+                        , Attr.style "height" "100%"
+                        , Attr.style "overflow" "hidden"
+                        , Attr.style "background" Theme.appBackground
+                        ]
+                        [ canvasArea model
+                        , viewTabs model
+                        , viewSheet model
+                        ]
+    in
+    if model.bomOpen then
+        div
+            [ Attr.style "position" "relative"
+            , Attr.style "width" "100%"
+            , Attr.style "height" "100%"
+            , Attr.style "overflow" "hidden"
+            ]
+            [ content
+            , viewBOMModal model
+            ]
+
+    else
+        content
+
+
+viewBOMModal : Model -> Html Msg
+viewBOMModal model =
+    let
+        bom =
+            computeBOM model
+
+        submodels =
+            model.document.submodels
+                |> List.map .name
+                |> List.filter (\n -> String.trim n /= "")
+
+        config =
+            { onQuery = BOMQuery
+            , onCategory = BOMCategory
+            , onSubmodel = BOMSubmodel
+            , onSort = BOMSort
+            , onSelectLot = BOMSelectLot
+            , onExportBrickLink = BOMExportBrickLink
+            , onExportRebrickable = BOMExportRebrickable
+            , onCopyMarkdown = BOMCopyMarkdown
+            , onCopyPlainText = BOMCopyPlainText
+            , onToggleDiff = BOMToggleDiff
+            , onClose = CloseBOM
+            }
+    in
+    StudioBOM.view config model.bomState submodels bom model.baseBOM
+
+
+partIndexFromPalette : Palette.State -> PartIndex
+partIndexFromPalette palette =
+    case palette.index of
+        Palette.Loaded pIndex ->
+            Catalog.fromPartList (List.map (\p -> { file = p.file, description = p.description, category = p.category }) pIndex.parts)
+
+        _ ->
+            Catalog.emptyPartIndex
+
+
+computeBOM : Model -> ModelBOM
+computeBOM model =
+    let
+        pIndex =
+            partIndexFromPalette model.palette
+    in
+    case model.bomState.submodel of
+        Just subName ->
+            BOM.generateSubmodelBOM subName model.document pIndex model.elementCatalog
+
+        Nothing ->
+            BOM.generateBOM model.document pIndex model.elementCatalog
 
 
 {-| The 3D canvas with the tools, status and help drawn over it.
@@ -1537,6 +1778,13 @@ viewTopBar model =
                 )
             ]
         , span [ Attr.style "flex" "1", Attr.style "min-width" "0", Attr.style "overflow" "hidden", Attr.style "text-overflow" "ellipsis" ] [ text (documentSummary model) ]
+        , Button.secondary ToggleBOM
+            (if narrow then
+                "BOM"
+
+             else
+                "Model Info & BOM (" ++ String.fromInt (List.length (Document.placements model.document)) ++ ")"
+            )
         , Button.secondary SimulateRequested "▶ Simulate"
         , Button.secondary NewDocument "New"
         , Button.secondary RequestFileUpload

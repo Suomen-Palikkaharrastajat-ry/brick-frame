@@ -11,6 +11,7 @@ import LDraw.Writer as Writer
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (vec3)
 import Set
+import Studio.BOM as BOM
 import Studio.Edit as Edit exposing (Axis(..))
 import Studio.Gizmo as Gizmo
 import Studio.Layout as Layout
@@ -895,5 +896,39 @@ panelSuite =
                         , \m -> Expect.equal Nothing (step (OpenPanel Nothing) (step (OpenPanel (Just Layout.PartsPanel)) m)).panel
                         ]
                         loaded
+            ]
+        , describe "BOM & marketplace integration"
+            [ test "ToggleBOM opens and CloseBOM closes the BOM panel" <|
+                \_ ->
+                    let
+                        opened =
+                            step ToggleBOM loaded
+
+                        closed =
+                            step CloseBOM opened
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal True opened.bomOpen
+                        , \_ -> Expect.equal False closed.bomOpen
+                        ]
+                        ()
+            , test "BOMSelectLot selects matching placements in the viewport" <|
+                \_ ->
+                    let
+                        lotSelected =
+                            step (BOMSelectLot "3001" 4) loaded
+                    in
+                    Expect.equal (Set.singleton 0) lotSelected.selection
+            , test "BOMSort toggles column and order" <|
+                \_ ->
+                    let
+                        sorted =
+                            step (BOMSort BOM.SortName) loaded
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal BOM.SortName m.bomState.sortColumn
+                        , \m -> Expect.equal False m.bomState.sortAscending
+                        ]
+                        sorted
             ]
         ]
