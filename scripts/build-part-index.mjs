@@ -81,6 +81,72 @@ export function writeIndex(ldrawDir) {
   return { target, count: index.parts.length }
 }
 
+/**
+ * Ingest Rebrickable part_colors.csv data.
+ * Columns: part_num,color_id,num_sets,num_set_parts,is_spare
+ */
+export function parseRebrickablePartColors(csvText) {
+  const result = new Map()
+  const lines = csvText.trim().split(/\r?\n/)
+  if (lines.length <= 1) return result
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+    const [partNum, colorId, numSets] = line.split(',')
+    if (!partNum || !colorId) continue
+
+    const part = partNum.toLowerCase()
+    const color = parseInt(colorId, 10)
+    const sets = parseInt(numSets, 10) || 0
+
+    if (!result.has(part)) {
+      result.set(part, [])
+    }
+    result.get(part).push({ color, numSets: sets })
+  }
+  return result
+}
+
+/**
+ * Render a clean SVG isometric thumbnail for build-time asset pipelines.
+ */
+export function renderSvgThumbnail(file, description = '', rgb = [201, 26, 9], size = 96) {
+  const [r, g, b] = rgb
+  const topColor = `rgb(${Math.min(255, Math.round(r * 1.15))},${Math.min(255, Math.round(g * 1.15))},${Math.min(255, Math.round(b * 1.15))})`
+  const leftColor = `rgb(${Math.round(r * 0.75)},${Math.round(g * 0.75)},${Math.round(b * 0.75)})`
+  const rightColor = `rgb(${Math.round(r * 0.9)},${Math.round(g * 0.9)},${Math.round(b * 0.9)})`
+
+  const cx = size / 2
+  const cy = size / 2 + 6
+  const s = 18
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">
+  <polygon points="${cx},${cy - s} ${cx + s * 1.4},${cy - s * 0.3} ${cx},${cy + s * 0.4} ${cx - s * 1.4},${cy - s * 0.3}" fill="${topColor}" stroke="rgba(0,0,0,0.2)" stroke-width="0.8" />
+  <polygon points="${cx - s * 1.4},${cy - s * 0.3} ${cx},${cy + s * 0.4} ${cx},${cy + s * 1.4} ${cx - s * 1.4},${cy + s * 0.7}" fill="${leftColor}" stroke="rgba(0,0,0,0.2)" stroke-width="0.8" />
+  <polygon points="${cx},${cy + s * 0.4} ${cx + s * 1.4},${cy - s * 0.3} ${cx + s * 1.4},${cy + s * 0.7} ${cx},${cy + s * 1.4}" fill="${rightColor}" stroke="rgba(0,0,0,0.2)" stroke-width="0.8" />
+</svg>`
+}
+
+/**
+ * Batch render SVG thumbnails into an output directory.
+ */
+export function batchRenderThumbnails(parts, outputDir, rgb = [201, 26, 9]) {
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true })
+  }
+  let count = 0
+  for (const part of parts) {
+    const file = Array.isArray(part) ? part[0] : part
+    const desc = Array.isArray(part) ? part[1] : ''
+    const svg = renderSvgThumbnail(file, desc, rgb)
+    const outPath = path.join(outputDir, `${file.replace(/\.dat$/i, '')}.svg`)
+    fs.writeFileSync(outPath, svg, 'utf8')
+    count++
+  }
+  return count
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const dir = process.argv[2] ?? process.env.LDRAW_SYNC_DIR ?? 'viewer-app/public/ldraw'
   if (!fs.existsSync(path.join(dir, 'parts'))) {

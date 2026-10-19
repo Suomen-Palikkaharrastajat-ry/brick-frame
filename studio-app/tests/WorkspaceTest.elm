@@ -42,6 +42,8 @@ flags =
     , supportsPointerEvents = True
     , studioUrl = ""
     , draft = Nothing
+    , favorites = Nothing
+    , recentParts = Nothing
     }
 
 

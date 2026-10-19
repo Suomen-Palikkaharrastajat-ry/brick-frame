@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { buildIndex, parsePartHeader, writeIndex } from './build-part-index.mjs'
+import { buildIndex, parsePartHeader, writeIndex, parseRebrickablePartColors, renderSvgThumbnail, batchRenderThumbnails } from './build-part-index.mjs'
 
 const brick = `0 Brick  2 x  4
 0 Name: 3001.dat
@@ -58,4 +58,35 @@ test('writes parts-index.json next to the parts', () => {
   const { target, count } = writeIndex(dir)
   assert.equal(count, 1)
   assert.equal(JSON.parse(fs.readFileSync(target, 'utf8')).parts.length, 1)
+})
+
+test('parseRebrickablePartColors ingests csv into map of part colors', () => {
+  const csv = `part_num,color_id,num_sets,num_set_parts,is_spare
+3001,4,1240,5000,f
+3001,0,1120,4500,f
+3647,71,380,800,f
+`
+  const map = parseRebrickablePartColors(csv)
+  assert.equal(map.has('3001'), true)
+  assert.equal(map.get('3001').length, 2)
+  assert.deepEqual(map.get('3001')[0], { color: 4, numSets: 1240 })
+  assert.equal(map.has('3647'), true)
+  assert.equal(map.get('3647')[0].color, 71)
+})
+
+test('renderSvgThumbnail generates valid isometric SVG with dimensions', () => {
+  const svg = renderSvgThumbnail('3001.dat', 'Brick 2 x 4', [201, 26, 9], 96)
+  assert.ok(svg.startsWith('<svg'))
+  assert.ok(svg.includes('viewBox="0 0 96 96"'))
+  assert.ok(svg.includes('polygon points='))
+  assert.ok(svg.endsWith('</svg>'))
+})
+
+test('batchRenderThumbnails generates thumbnail files in output directory', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'thumbnails-'))
+  const parts = [['3001.dat', 'Brick 2 x 4'], ['3023.dat', 'Plate 1 x 2']]
+  const count = batchRenderThumbnails(parts, dir)
+  assert.equal(count, 2)
+  assert.ok(fs.existsSync(path.join(dir, '3001.svg')))
+  assert.ok(fs.existsSync(path.join(dir, '3023.svg')))
 })
