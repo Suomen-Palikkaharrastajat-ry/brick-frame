@@ -22,7 +22,7 @@ negating every Y coordinate during geometry flattening. This negation is
 applied in two places:
 
 - `LDraw.Geometry.flatten` (Elm, [packages/brick-frame-simulator/src/LDraw/Geometry.elm](../packages/brick-frame-simulator/src/LDraw/Geometry.elm)) — for the Elm-side path.
-- `geometry-worker.js` ([viewer-app/geometry-worker.js](../viewer-app/geometry-worker.js)) — for the Web Worker path.
+- `geometry-worker.js` ([packages/brick-frame-viewport/geometry-worker.js](../packages/brick-frame-viewport/geometry-worker.js)) — for the Web Worker path.
 
 All world positions stored in `GearInstance.worldPosition` and
 `GearInstance.worldMatrix` are already in Y-up space.
@@ -176,7 +176,7 @@ mode is active, because a walking camera still has a valid target in front of it
 `Camera.enterWalk groundY` drops the eye to `walkEyeHeight` (40 LDU, roughly
 minifig eye level) above the model's lowest point, directly below whatever was
 being looked at, with the horizon levelled and the heading kept. Ground level
-comes from `ModelBounds.minCorner` — see `Main.groundLevel`.
+comes from `ModelBounds.minCorner` — see `Viewport.Framing.groundLevel`.
 
 `Camera.walkSpeed` is `max 20 (sceneRadius / 8)` LDU/s, so the same key crosses a
 gear assembly and a city at comparable apparent pace. `Shift` multiplies by four.
@@ -187,7 +187,7 @@ does not lift you off the ground.
 
 Projection: `Mat4.makePerspective Camera.fovYDegrees aspect near far` (FOV 45°).
 `Camera.fovYDegrees` is the single source for the FOV — the projection matrix,
-the frustum cull in `Main.isSphereVisible`, `Render.Instanced`'s pixel-radius
+the frustum cull in `Render.Pick.isSphereVisible`, `Render.Instanced`'s pixel-radius
 LOD, and the pan scale all read it.
 
 ### Sensitivity
@@ -207,7 +207,7 @@ pixels-to-units number, following three.js `OrbitControls`:
 
 Held keys are integrated per animation frame rather than counted as key-repeat
 events, so movement speed does not depend on the operating system's repeat rate.
-`Main.applyHeldKeys` shares `heldControlTick` with the on-screen rotate buttons
+`Viewport.applyHeldKeys` shares `heldControlTick` with the on-screen rotate buttons
 so there is one notion of frame time.
 
 Fixed constants were only correct at one canvas size: panning overshot the
@@ -216,14 +216,14 @@ short phone canvas. The old linear zoom factor `1 + delta × 0.001` was not
 reciprocal and went negative below `delta = -1000`, snapping the camera to its
 minimum distance.
 
-`Main.wheelDeltaDecoder` normalises `deltaMode` before the delta reaches the
+`Viewport.Decode.wheelDeltaDecoder` normalises `deltaMode` before the delta reaches the
 camera (line mode × 16, page mode × 100, `ctrlKey` trackpad pinch × 10).
 Without it Firefox, which reports lines, zoomed ~30× slower than Chrome.
 
 ### Zoom range
 
 `minDistance`/`maxDistance` are set from the model's bounding sphere by
-`Main.applyZoomRange`: `0.5` LDU in, and eight times the framed distance out
+`Viewport.Framing.applyZoomRange`: `0.5` LDU in, and eight times the framed distance out
 (`zoomOutHeadroom`). They are applied on every load, whether or not the camera
 is being re-framed, because a `#d=` link restores a manual camera that still
 needs a range wide enough to reach it.
@@ -246,11 +246,11 @@ distance says nothing about how far the geometry is: at a 40 LDU street-level ey
 height the first term alone gives a 400 LDU far plane on a model 3370 LDU wide —
 twenty studs of street and then blackness. That is not merely a clip, because the
 same expression feeds `Instanced.visiblePlacements`, `Instanced.proxyEntities`
-and `Main.isSphereVisible`, so the far city was never submitted at all.
+and `Render.Pick.isSphereVisible`, so the far city was never submitted at all.
 
 `sceneRadius` defaults to 0, which reduces the far plane to the first term
 exactly, so a host that never calls `Camera.setSceneRadius` keeps the previous
-behaviour. `Main.applyZoomRange` is the only place it is set.
+behaviour. `Viewport.Framing.applyZoomRange` is the only place it is set.
 
 Deriving `nearPlane` from `farPlane` pins the near:far ratio — and with it
 depth-buffer precision — at 10000 regardless of model scale or eye position. In
@@ -267,19 +267,19 @@ same figure as before.
   never runs again, so a model lost off-screen needed a page reload. Fitting also
   returns to `Orbit`.
 - **Street level:** the person button in the control pad, or `G`, toggles walk
-  mode (`ToggleWalkMode` → `Main.toggleWalkMode`). Needs loaded model bounds to
+  mode (`ToggleWalkMode` → `Viewport.toggleWalkMode`). Needs loaded model bounds to
   know where the ground is, so it is a no-op on an empty viewer.
 - **Control panel:** top-right motor/gear panel is collapsible (`Minimize` / `Maximize`).
 
 ### Keyboard shortcuts
 
-Every rotation goes through `Main.applyLook`, which dispatches on
+Every rotation goes through `Viewport.Navigation.applyLook`, which dispatches on
 `Camera.navigation`, so the arrow keys and the on-screen chevron buttons turn
 your head while walking rather than orbiting a point in front of you. That is the
 only `Camera.orbitBy` call site in `Main` — keep it that way.
 
 `UI.Shortcuts` owns the whole mapping as pure functions, returning its own
-`Action` type that `Main.msgForAction` translates — `Main.update` is not exposed,
+`Action` type that the host's `msgForAction` translates — the host `update` is not exposed,
 so this is the only way key dispatch gets test coverage. `Shortcuts.helpRows`
 also backs the `?` overlay, so the reference cannot drift from the bindings.
 
@@ -310,7 +310,7 @@ to a tab switch would otherwise leave the camera walking forever.
 
 ### View presets
 
-`Main.applyViewPreset` reuses `cameraForBounds` for the target and distance —
+`Viewport.applyViewPreset` reuses `cameraForBounds` for the target and distance —
 both come from the bounding *sphere* and so are independent of viewing angle —
 then overrides the angles from `viewPresetAngles`. `TopView` stops just short of
 straight down, matching the camera's own elevation clamp.
@@ -318,7 +318,7 @@ straight down, matching the camera's own elevation clamp.
 ### Touch event handling
 
 Only **one** of the Touch or Pointer listener families is bound to the canvas,
-chosen by the `supportsPointerEvents` flag (`Main.touchListeners`). iOS Safari
+chosen by the `supportsPointerEvents` flag (`Viewport.view`). iOS Safari
 dispatches both for the same finger, and `activeTouches` is keyed by touch
 `identifier` in one path and `pointerId` in the other, so binding both made the
 two sets of bookkeeping fight.
@@ -340,7 +340,7 @@ dispatch.
 
 ## Gear rendering
 
-Gear meshes are pre-built once (`buildGearMeshes` in `Main.elm`) by flattening
+Gear meshes are pre-built once (`buildGearMeshes` in `Simulation.Meshes`) by flattening
 each gear's part file with `LDraw.Geometry.flatten`. At render time, each gear
 gets its own `WebGL.Entity` with a rotation model matrix:
 
