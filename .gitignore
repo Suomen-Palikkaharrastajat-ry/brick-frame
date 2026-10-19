@@ -12,6 +12,8 @@ node_modules
 node_modules/
 viewer-app/node_modules/
 viewer-app/packages
+studio-app/node_modules/
+studio-app/packages
 
 # --- Haskell build artifacts ---
 dist-newstyle/
@@ -22,6 +24,8 @@ brick-data-generator
 viewer-app/elm-stuff/
 viewer-app/.elm-tailwind/
 viewer-app/.vite/
+studio-app/.elm-tailwind/
+studio-app/.vite/
 viewer-app/public/ldraw/
 packages/*/elm-stuff/
 build/

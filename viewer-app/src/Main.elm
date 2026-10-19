@@ -22,6 +22,7 @@ import Browser
 import Browser.Events
 import Data
 import Dict exposing (Dict)
+import EmbeddedParts
 import FeatherIcons
 import Gear.Components as Components
 import Gear.Physics as Physics
@@ -108,14 +109,14 @@ init flags =
                 , supportsPointerEvents = flags.supportsPointerEvents
                 , useWindowResize = flags.useWindowResize
                 , renderStyle = buildRenderStyle flags.ambientStrength flags.lightStrength flags.vibrance flags.edgeWidth
-                , partCache = embeddedPartCache
+                , partCache = EmbeddedParts.cache
                 }
     in
     ( { viewport = viewport
       , simulation =
             Simulation.init
                 { gearSpecs = Data.gearParts
-                , lodCache = embeddedLodCache
+                , lodCache = EmbeddedParts.lodCache
                 , maxRpm = flags.maxRpm
                 , initialRpm = flags.initialRpm
                 , requestedMotorIndex =
@@ -136,30 +137,6 @@ init flags =
         , Ports.setUrlHash (Hash.encodeCamera viewport.camera)
         ]
     )
-
-
-embeddedPartCache : PartCache
-embeddedPartCache =
-    Dict.foldl
-        (\name text acc ->
-            Dict.insert name (Loaded (Parser.parseFile text)) acc
-        )
-        Resolve.initCache
-        Data.embeddedParts
-
-
-{-| Simplified (decimated) versions of the embedded gear parts, keyed by the
-same part-file names as `embeddedPartCache`. Used to build the low-detail gear
-meshes selected at a distance (see `Gear.Lod`).
--}
-embeddedLodCache : PartCache
-embeddedLodCache =
-    Dict.foldl
-        (\name text acc ->
-            Dict.insert name (Loaded (Parser.parseFile text)) acc
-        )
-        Resolve.initCache
-        Data.lodParts
 
 
 buildRenderStyle : Maybe Float -> Maybe Float -> Maybe Float -> Maybe Float -> Style.Style

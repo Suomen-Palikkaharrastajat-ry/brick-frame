@@ -53,6 +53,7 @@ let
       enterShell = ''
         ln -sfn "${npmTools}/lib/node_modules" node_modules
         ln -sfn "${npmTools}/lib/node_modules" viewer-app/node_modules
+        ln -sfn "${npmTools}/lib/node_modules" studio-app/node_modules
       '';
     };
 
@@ -85,6 +86,7 @@ let
       enterShell = ''
         ln -sfn "${npmTools}/lib/node_modules" node_modules
         ln -sfn "${npmTools}/lib/node_modules" viewer-app/node_modules
+        ln -sfn "${npmTools}/lib/node_modules" studio-app/node_modules
 
         echo ""
         echo "── brick-frame dev environment ─────────────────────"
