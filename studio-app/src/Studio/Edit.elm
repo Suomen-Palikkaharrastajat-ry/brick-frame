@@ -58,6 +58,8 @@ type alias NewPart =
   - `Translate` moves placements by a vector.
   - `Rotate` turns placements about an axis through `pivot`.
   - `Recolor` sets colours, as `( id, colour )` pairs.
+  - `SetMatrix` sets whole matrices, as `( id, matrix )` pairs: what typing a
+    position or angle into an inspector does.
   - `Add` appends new placements to the main submodel.
   - `Remove` deletes placements.
   - `Restore` puts placements back at entry indices; it is what undoing a
@@ -69,6 +71,7 @@ type Command
     = Translate (List Int) Vec3
     | Rotate (List Int) { pivot : Vec3, axis : Axis, radians : Float }
     | Recolor (List ( Int, Int ))
+    | SetMatrix (List ( Int, Mat4 ))
     | Add (List NewPart)
     | Remove (List Int)
     | Restore (List ( Int, Placement ))
@@ -104,6 +107,22 @@ apply command doc =
                 doc
                 pairs
             , Recolor before
+            )
+
+        SetMatrix pairs ->
+            let
+                before =
+                    pairs
+                        |> List.filterMap
+                            (\( id, _ ) ->
+                                Document.getPlacement id doc |> Maybe.map (\p -> ( id, p.matrix ))
+                            )
+            in
+            ( List.foldl
+                (\( id, matrix ) d -> Document.updatePlacement id (\p -> { p | matrix = matrix }) d)
+                doc
+                pairs
+            , SetMatrix before
             )
 
         Add parts ->

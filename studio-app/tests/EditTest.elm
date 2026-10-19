@@ -167,6 +167,20 @@ suite =
                         ]
                         ()
             ]
+        , describe "SetMatrix"
+            [ test "replaces matrices and undoes them" <|
+                \_ ->
+                    let
+                        ( set, inverse ) =
+                            Edit.apply (SetMatrix [ ( 1, Mat4.makeTranslate3 7 8 9 ) ]) doc
+                    in
+                    Expect.all
+                        [ \_ -> near ( 7, 8, 9 ) (positionOf 1 set)
+                        , \_ -> near ( 40, 0, 0 ) (positionOf 1 (Edit.apply inverse set |> Tuple.first))
+                        , \_ -> near ( 0, 0, 0 ) (positionOf 0 set)
+                        ]
+                        ()
+            ]
         , describe "Add and Remove"
             [ test "Add appends placements and returns the ids to remove" <|
                 \_ ->

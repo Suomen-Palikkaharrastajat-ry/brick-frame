@@ -13,7 +13,11 @@ import Math.Vector3 as Vec3 exposing (vec3)
 import Set
 import Studio.Edit as Edit exposing (Axis(..))
 import Studio.Gizmo as Gizmo
+import Studio.Layout as Layout
+import Studio.Palette as Palette
+import Studio.PartIndex as PartIndex
 import Studio.Shortcuts as Shortcuts exposing (Tool(..))
+import Studio.Transform as Transform
 import Studio.Workspace as Workspace exposing (Msg(..))
 import Test exposing (Test, describe, test)
 import Viewport
@@ -57,6 +61,7 @@ suite : Test
 suite =
     describe "Studio.Workspace"
         [ editingSuite
+        , panelSuite
         , test "starts with an empty document that is ready to show" <|
             \_ ->
                 Expect.all
@@ -581,3 +586,257 @@ shortcutIn context key =
         , targetTag = "BODY"
         , targetEditable = False
         }
+
+
+
+-- ── Palette, colours and the inspector ────────────────────────────────────────
+
+
+catalogue : PartIndex.PartIndex
+catalogue =
+    { parts =
+        [ { file = "3001.dat", description = "Brick 2 x 4", category = "Brick", haystack = "3001.dat brick 2 x 4" }
+        , { file = "3023.dat", description = "Plate 1 x 2", category = "Plate", haystack = "3023.dat plate 1 x 2" }
+        ]
+    , categories = [ ( "Brick", 1 ), ( "Plate", 1 ) ]
+    }
+
+
+{-| An empty workspace whose catalogue has arrived.
+-}
+withCatalogue : Workspace.Model
+withCatalogue =
+    start |> step (PartIndexLoaded (Ok catalogue))
+
+
+part3001 : PartIndex.Part
+part3001 =
+    { file = "3001.dat", description = "Brick 2 x 4", category = "Brick", haystack = "3001.dat brick 2 x 4" }
+
+
+panelSuite : Test
+panelSuite =
+    describe "palette, colours and inspector"
+        [ describe "palette"
+            [ test "starts waiting for its catalogue" <|
+                \_ ->
+                    case start.palette.index of
+                        Palette.Loading ->
+                            Expect.pass
+
+                        _ ->
+                            Expect.fail "expected Loading"
+            , test "the catalogue arriving fills the palette" <|
+                \_ ->
+                    case withCatalogue.palette.index of
+                        Palette.Loaded index ->
+                            Expect.equal 2 (List.length index.parts)
+
+                        _ ->
+                            Expect.fail "expected Loaded"
+            , test "a missing catalogue is reported, not fatal" <|
+                \_ ->
+                    case (step (PartIndexLoaded (Err (Http.BadStatus 404))) start).palette.index of
+                        Palette.Failed reason ->
+                            Expect.equal "not found" reason
+
+                        _ ->
+                            Expect.fail "expected Failed"
+            , test "searching and picking a category are remembered" <|
+                \_ ->
+                    withCatalogue
+                        |> step (PaletteQuery "brick")
+                        |> step (PaletteCategory (Just "Brick"))
+                        |> .palette
+                        |> (\p -> ( p.query, p.category ))
+                        |> Expect.equal ( "brick", Just "Brick" )
+            , test "picking a part previews it" <|
+                \_ ->
+                    let
+                        picked =
+                            withCatalogue |> step (ArmPart part3001)
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal (Just "3001.dat") (Maybe.map .file m.palette.armed)
+                        , \m -> Expect.equal Viewport.ResolvingParts m.preview.loadPhase
+                        ]
+                        picked
+            , test "adding the picked part puts it at the middle of the view, selected" <|
+                \_ ->
+                    let
+                        added =
+                            withCatalogue |> step (ArmPart part3001) |> step AddArmedPart
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal [ "3001.dat" ] (List.map .fileText (Document.placements m.document))
+                        , \m -> Expect.equal [ 0 ] (selected m)
+                        , \m -> Expect.equal (Just 0) (positionOf 0 m)
+                        ]
+                        added
+            , test "an added part takes the active colour" <|
+                \_ ->
+                    withCatalogue
+                        |> step (PickColour 14)
+                        |> step (ArmPart part3001)
+                        |> step AddArmedPart
+                        |> .document
+                        |> Document.placements
+                        |> List.map .color
+                        |> Expect.equal [ 14 ]
+            , test "adding is undoable" <|
+                \_ ->
+                    withCatalogue
+                        |> step (ArmPart part3001)
+                        |> step AddArmedPart
+                        |> step Undo
+                        |> .document
+                        |> Document.placements
+                        |> Expect.equal []
+            , test "adding with nothing picked does nothing" <|
+                \_ ->
+                    step AddArmedPart withCatalogue
+                        |> .document
+                        |> Document.placements
+                        |> Expect.equal []
+            , test "a typed part number is added without the catalogue" <|
+                \_ ->
+                    start
+                        |> step (ManualPart " 3001 ")
+                        |> step AddManualPart
+                        |> .document
+                        |> Document.placements
+                        |> List.map .part
+                        |> Expect.equal [ "3001.dat" ]
+            , test "a typed part number with odd characters is refused" <|
+                \_ ->
+                    start
+                        |> step (ManualPart "../../etc/passwd")
+                        |> step AddManualPart
+                        |> .document
+                        |> Document.placements
+                        |> Expect.equal []
+            , test "a new part lands on the grid" <|
+                \_ ->
+                    let
+                        camera =
+                            start.viewport.camera
+
+                        moved =
+                            { start | viewport = (\v -> { v | camera = { camera | target = vec3 13 -11 -31 } }) start.viewport }
+                    in
+                    moved
+                        |> step (ManualPart "3001")
+                        |> step AddManualPart
+                        |> .document
+                        |> Document.placements
+                        |> List.head
+                        |> Maybe.map (\p -> Mat4.transform p.matrix (vec3 0 0 0) |> Vec3.toRecord)
+                        |> Expect.equal (Just { x = 20, y = 20, z = 40 })
+            ]
+        , describe "colours"
+            [ test "picking a colour with a selection recolours it, as one undo step" <|
+                \_ ->
+                    let
+                        painted =
+                            loaded |> click (screenOf 0 loaded) |> step (PickColour 1)
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal [ 1, 14 ] (List.map .color (Document.placements m.document))
+                        , \m -> Expect.equal 1 m.activeColour
+                        , \m -> Expect.equal [ 4, 14 ] (List.map .color (Document.placements (step Undo m).document))
+                        ]
+                        painted
+            , test "picking a colour with nothing selected only changes the active colour" <|
+                \_ ->
+                    loaded
+                        |> step (PickColour 2)
+                        |> Expect.all
+                            [ \m -> Expect.equal [ 4, 14 ] (List.map .color (Document.placements m.document))
+                            , \m -> Expect.equal 2 m.activeColour
+                            , \m -> Expect.equal False (Edit.canUndo m.history)
+                            ]
+            ]
+        , describe "inspector"
+            [ test "typing a position moves the selection there" <|
+                \_ ->
+                    loaded
+                        |> click (screenOf 0 loaded)
+                        |> step (SetPosition AxisX 40)
+                        |> positionOf 0
+                        |> Expect.equal (Just 40)
+            , test "moving several parts keeps them together" <|
+                \_ ->
+                    -- Their centre is x = 150; putting it at 200 moves both by 50.
+                    loaded
+                        |> step SelectAll
+                        |> step (SetPosition AxisX 200)
+                        |> (\m -> ( positionOf 0 m, positionOf 1 m ))
+                        |> Expect.equal ( Just 50, Just 350 )
+            , test "typing a position is one undo step" <|
+                \_ ->
+                    loaded
+                        |> click (screenOf 0 loaded)
+                        |> step (SetPosition AxisX 40)
+                        |> step Undo
+                        |> positionOf 0
+                        |> Expect.equal (Just 0)
+            , test "typing an angle turns a single part" <|
+                \_ ->
+                    let
+                        turned =
+                            loaded |> click (screenOf 0 loaded) |> step (SetRotation AxisY 90)
+
+                        angle m =
+                            Document.getPlacement 0 m.document
+                                |> Maybe.map (.matrix >> Transform.eulerDegrees)
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal (Just { x = 0, y = 90, z = 0 }) (angle m)
+                        , \m -> Expect.equal (Just { x = 0, y = 0, z = 0 }) (angle (step Undo m))
+                        ]
+                        turned
+            , test "typing an angle with several parts selected does nothing" <|
+                \_ ->
+                    loaded
+                        |> step SelectAll
+                        |> step (SetRotation AxisY 90)
+                        |> .history
+                        |> Edit.canUndo
+                        |> Expect.equal False
+            ]
+        , describe "tree"
+            [ test "choosing a row selects that part; Shift adds to the selection" <|
+                \_ ->
+                    Expect.all
+                        [ \m -> Expect.equal [ 1 ] (selected (step (SelectPlacement 1 False) m))
+                        , \m -> Expect.equal [ 0, 1 ] (selected (step (SelectPlacement 1 True) (step (SelectPlacement 0 False) m)))
+                        , \m -> Expect.equal [ 0 ] (selected (step (SelectPlacement 1 True) (step (SelectPlacement 0 True) (step (SelectPlacement 1 False) m))))
+                        ]
+                        loaded
+            ]
+        , describe "layout"
+            [ test "a wide window shrinks the canvas to the space between the panes" <|
+                \_ ->
+                    step (WindowSized 1400 900) loaded
+                        |> Expect.all
+                            [ \m -> Expect.equal Layout.Wide m.layout.mode
+                            , \m -> Expect.equal 800 m.viewport.width
+                            , \m -> Expect.equal 900 m.viewport.height
+                            ]
+            , test "a phone gets a full-width canvas above the tab bar" <|
+                \_ ->
+                    step (WindowSized 390 780) loaded
+                        |> Expect.all
+                            [ \m -> Expect.equal Layout.Narrow m.layout.mode
+                            , \m -> Expect.equal 390 m.viewport.width
+                            , \m -> Expect.equal (780 - Layout.tabBarHeight) m.viewport.height
+                            ]
+            , test "a panel opens and closes" <|
+                \_ ->
+                    Expect.all
+                        [ \m -> Expect.equal (Just Layout.PartsPanel) (step (OpenPanel (Just Layout.PartsPanel)) m).panel
+                        , \m -> Expect.equal Nothing (step (OpenPanel Nothing) (step (OpenPanel (Just Layout.PartsPanel)) m)).panel
+                        ]
+                        loaded
+            ]
+        ]

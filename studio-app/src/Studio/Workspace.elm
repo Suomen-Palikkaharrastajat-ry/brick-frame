@@ -21,9 +21,11 @@ and turns it into a move along one axis, snapped to the grid.
 
 -}
 
+import Browser.Dom
 import EmbeddedParts
-import Html exposing (Html, div, span, text)
+import Html exposing (Html, button, div, span, text)
 import Html.Attributes as Attr
+import Http
 import LDraw.Document as Document exposing (Document)
 import LDraw.Writer as Writer
 import Math.Matrix4 as Mat4
@@ -32,10 +34,18 @@ import Ports
 import Render.Camera as Camera
 import Render.Style as Style
 import Set exposing (Set)
+import Studio.Colours as Colours
 import Studio.Edit as Edit exposing (Axis(..), Command(..), History)
 import Studio.Gizmo as Gizmo exposing (Handle)
+import Studio.Inspector as Inspector
+import Studio.Layout as Layout exposing (Layout, Panel(..))
 import Studio.Overlay as Overlay
+import Studio.Palette as Palette
+import Studio.PartIndex as PartIndex exposing (Part)
 import Studio.Shortcuts as StudioShortcuts exposing (Tool(..))
+import Studio.Transform as Transform
+import Studio.Tree as Tree
+import Task
 import UI.Button as Button
 import UI.ShortcutHelp as ShortcutHelp
 import UI.Status as Status
@@ -83,6 +93,11 @@ type alias Model =
     , rotateStep : Int
     , drag : Maybe Drag
     , helpOpen : Bool
+    , palette : Palette.State
+    , preview : Viewport.Model
+    , activeColour : Int
+    , layout : Layout
+    , panel : Maybe Panel
     }
 
 
@@ -120,6 +135,20 @@ type Msg
     | SetGridStep Int
     | SetRotateStep Int
     | Save
+    | WindowSized Int Int
+    | PartIndexLoaded (Result Http.Error PartIndex.PartIndex)
+    | PaletteQuery String
+    | PaletteCategory (Maybe String)
+    | ArmPart Part
+    | AddArmedPart
+    | ManualPart String
+    | AddManualPart
+    | PickColour Int
+    | PreviewMsg Viewport.Msg
+    | SetPosition Axis Float
+    | SetRotation Axis Float
+    | SelectPlacement Int Bool
+    | OpenPanel (Maybe Panel)
     | NoOp
 
 
@@ -128,17 +157,28 @@ type Msg
 init : Flags -> ( Model, Cmd Msg )
 init flags =
     let
+        viewportConfig =
+            { ldrawBase = flags.ldrawBase
+            , ldrawFallbackBase = flags.ldrawFallbackBase
+            , defaultModelUrl = ""
+            , initialHash = flags.initialHash
+
+            -- The canvas is one pane of the layout, not the window, so its size
+            -- comes from `WindowSized` rather than from the viewport's own listener.
+            , useWindowResize = False
+            , supportsPointerEvents = flags.supportsPointerEvents
+            , renderStyle = renderStyle flags
+            , partCache = EmbeddedParts.cache
+            }
+
         ( viewport, viewportCmd ) =
-            Viewport.init
-                { ldrawBase = flags.ldrawBase
-                , ldrawFallbackBase = flags.ldrawFallbackBase
-                , defaultModelUrl = ""
-                , initialHash = flags.initialHash
-                , supportsPointerEvents = flags.supportsPointerEvents
-                , useWindowResize = flags.useWindowResize
-                , renderStyle = renderStyle flags
-                , partCache = EmbeddedParts.cache
-                }
+            Viewport.init viewportConfig
+
+        ( preview, previewCmd ) =
+            Viewport.init { viewportConfig | initialHash = "" }
+
+        layout =
+            Layout.compute 1280 800
 
         model =
             { viewport = viewport
@@ -150,18 +190,61 @@ init flags =
             , rotateStep = 90
             , drag = Nothing
             , helpOpen = False
+            , palette = Palette.init
+            , preview = sized previewSize preview
+            , activeColour = 4
+            , layout = layout
+            , panel = Nothing
             }
 
         ( opened, openCmd ) =
-            openDocument (Maybe.map Document.parse flags.draft |> Maybe.withDefault Document.empty) model
+            openDocument (Maybe.map Document.parse flags.draft |> Maybe.withDefault Document.empty) (resized 1280 800 model)
     in
     ( opened
     , Cmd.batch
         [ Cmd.map ViewportMsg viewportCmd
+        , Cmd.map PreviewMsg previewCmd
         , openCmd
         , Ports.setUrlHash (Hash.encodeCamera viewport.camera)
+        , PartIndex.fetch flags.ldrawBase PartIndexLoaded
+        , Browser.Dom.getViewport
+            |> Task.perform (\vp -> WindowSized (round vp.viewport.width) (round vp.viewport.height))
         ]
     )
+
+
+{-| The part preview's canvas, in pixels.
+-}
+previewSize : ( Int, Int )
+previewSize =
+    ( 264, 150 )
+
+
+sized : ( Int, Int ) -> Viewport.Model -> Viewport.Model
+sized ( w, h ) viewport =
+    Viewport.update (Viewport.WindowResize w h) viewport
+        |> (\( v, _, _ ) -> v)
+
+
+{-| Lay the panes out for a window and give the canvas its share.
+-}
+resized : Int -> Int -> Model -> Model
+resized width height model =
+    let
+        layout =
+            Layout.compute width height
+    in
+    { model
+        | layout = layout
+        , viewport = sized ( layout.canvasWidth, layout.canvasHeight ) model.viewport
+        , panel =
+            -- Panels are sheets of the narrow layout; the wide one shows them all.
+            if layout.mode == Layout.Wide then
+                Nothing
+
+            else
+                model.panel
+    }
 
 
 renderStyle : Flags -> Style.Style
@@ -282,8 +365,257 @@ update msg model =
                 }
             )
 
+        WindowSized width height ->
+            ( resized width height model, Cmd.none )
+
+        PartIndexLoaded (Ok index) ->
+            let
+                palette =
+                    model.palette
+            in
+            ( { model | palette = { palette | index = Palette.Loaded index } }, Cmd.none )
+
+        PartIndexLoaded (Err error) ->
+            let
+                palette =
+                    model.palette
+            in
+            ( { model | palette = { palette | index = Palette.Failed (httpError error) } }, Cmd.none )
+
+        PaletteQuery query ->
+            let
+                palette =
+                    model.palette
+            in
+            ( { model | palette = { palette | query = query } }, Cmd.none )
+
+        PaletteCategory category ->
+            let
+                palette =
+                    model.palette
+            in
+            ( { model | palette = { palette | category = category } }, Cmd.none )
+
+        ArmPart part ->
+            armPart part.file model
+                |> (\( m, cmd ) -> ( withArmed (Just part) m, cmd ))
+
+        ManualPart text ->
+            let
+                palette =
+                    model.palette
+            in
+            ( { model | palette = { palette | manual = text } }, Cmd.none )
+
+        AddManualPart ->
+            case manualPartFile model.palette.manual of
+                Just file ->
+                    addPart file model
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        AddArmedPart ->
+            case model.palette.armed of
+                Just part ->
+                    addPart part.file model
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        PickColour code ->
+            let
+                picked =
+                    { model | activeColour = code }
+
+                ( recoloured, recolourCmd ) =
+                    whenSelected (\ids -> commit (Recolor (List.map (\id -> ( id, code )) ids))) picked
+
+                ( previewed, previewCmd ) =
+                    case model.palette.armed of
+                        Just part ->
+                            armPart part.file recoloured
+
+                        Nothing ->
+                            ( recoloured, Cmd.none )
+            in
+            ( previewed, Cmd.batch [ recolourCmd, previewCmd ] )
+
+        PreviewMsg previewMsg ->
+            let
+                ( preview, previewCmd, _ ) =
+                    Viewport.update previewMsg model.preview
+            in
+            ( { model | preview = preview }, Cmd.map PreviewMsg previewCmd )
+
+        SetPosition axis value ->
+            whenSelected
+                (\ids m ->
+                    case Edit.selectionCenter ids m.document of
+                        Just center ->
+                            let
+                                current =
+                                    Vec3.toRecord center
+
+                                delta =
+                                    case axis of
+                                        AxisX ->
+                                            Vec3.vec3 (value - current.x) 0 0
+
+                                        AxisY ->
+                                            Vec3.vec3 0 (value - current.y) 0
+
+                                        AxisZ ->
+                                            Vec3.vec3 0 0 (value - current.z)
+                            in
+                            commit (Translate ids delta) m
+
+                        Nothing ->
+                            ( m, Cmd.none )
+                )
+                model
+
+        SetRotation axis degrees ->
+            case Set.toList model.selection |> List.filterMap (\id -> Document.getPlacement id model.document) of
+                [ placement ] ->
+                    let
+                        current =
+                            Transform.eulerDegrees placement.matrix
+
+                        next =
+                            case axis of
+                                AxisX ->
+                                    { current | x = degrees }
+
+                                AxisY ->
+                                    { current | y = degrees }
+
+                                AxisZ ->
+                                    { current | z = degrees }
+                    in
+                    commit (SetMatrix [ ( placement.id, Transform.withEuler next placement.matrix ) ]) model
+
+                _ ->
+                    ( model, Cmd.none )
+
+        SelectPlacement id shift ->
+            ( { model
+                | selection =
+                    if shift then
+                        if Set.member id model.selection then
+                            Set.remove id model.selection
+
+                        else
+                            Set.insert id model.selection
+
+                    else
+                        Set.singleton id
+              }
+            , Cmd.none
+            )
+
+        OpenPanel panel ->
+            ( { model | panel = panel }, Cmd.none )
+
         NoOp ->
             ( model, Cmd.none )
+
+
+{-| Remember which part is picked and show it in the preview.
+-}
+withArmed : Maybe Part -> Model -> Model
+withArmed part model =
+    let
+        palette =
+            model.palette
+    in
+    { model | palette = { palette | armed = part } }
+
+
+{-| Load one part, in the active colour, into the preview.
+-}
+armPart : String -> Model -> ( Model, Cmd Msg )
+armPart file model =
+    let
+        ( document, _ ) =
+            Document.addPlacement ""
+                { part = file, color = model.activeColour, matrix = Mat4.identity }
+                Document.empty
+
+        ( preview, previewCmd, _ ) =
+            Viewport.loadDocument document model.preview
+    in
+    ( { model | preview = preview }, Cmd.map PreviewMsg previewCmd )
+
+
+{-| A typed part number as a file name: `3001`, `3001.dat` and `3001.DAT` all
+mean `3001.dat`. Anything with characters a part file cannot have is refused.
+-}
+manualPartFile : String -> Maybe String
+manualPartFile text =
+    let
+        cleaned =
+            String.toLower (String.trim text)
+
+        file =
+            if String.endsWith ".dat" cleaned then
+                cleaned
+
+            else
+                cleaned ++ ".dat"
+    in
+    if cleaned /= "" && String.all (\c -> Char.isAlphaNum c || c == '-' || c == '_' || c == '.') cleaned then
+        Just file
+
+    else
+        Nothing
+
+
+{-| Add a part at the middle of the view, snapped to the grid, in the active
+colour, and select it.
+-}
+addPart : String -> Model -> ( Model, Cmd Msg )
+addPart file model =
+    let
+        -- The camera looks at a render-space (Y up) point; the document is Y down.
+        target =
+            Gizmo.toRender model.viewport.camera.target
+
+        snap v =
+            Edit.snap (toFloat model.gridStep) v
+
+        placement =
+            Mat4.makeTranslate3 (snap (Vec3.getX target)) (snap (Vec3.getY target)) (snap (Vec3.getZ target))
+
+        newId =
+            model.document.nextId
+
+        ( document, history ) =
+            Edit.record (Add [ { part = file, color = model.activeColour, matrix = placement } ]) model.document model.history
+    in
+    syncDocument { model | document = document, history = history, selection = Set.singleton newId }
+
+
+httpError : Http.Error -> String
+httpError error =
+    case error of
+        Http.BadUrl url ->
+            "bad URL " ++ url
+
+        Http.Timeout ->
+            "timed out"
+
+        Http.NetworkError ->
+            "network error"
+
+        Http.BadStatus 404 ->
+            "not found"
+
+        Http.BadStatus code ->
+            "HTTP " ++ String.fromInt code
+
+        Http.BadBody message ->
+            message
 
 
 {-| Move steps in LDU, coarsest first: a stud pitch, a plate-ish half step, a
@@ -738,7 +1070,7 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
         [ Sub.map ViewportMsg (Viewport.subscriptions model.viewport)
-        , Ports.viewportResized (\size -> ViewportMsg (Viewport.WindowResize size.width size.height))
+        , Ports.viewportResized (\size -> WindowSized size.width size.height)
         , Ports.fileContentReceived FileTextReceived
         , Ports.fileLoadError FileFailed
         , Ports.geometryFlattened (ViewportMsg << Viewport.GeometryFlattened)
@@ -753,12 +1085,46 @@ subscriptions model =
 
 view : Model -> Html Msg
 view model =
+    case model.layout.mode of
+        Layout.Wide ->
+            div
+                [ Attr.style "display" "flex"
+                , Attr.style "width" "100%"
+                , Attr.style "height" "100%"
+                , Attr.style "overflow" "hidden"
+                , Attr.style "background" Theme.appBackground
+                ]
+                [ pane [ heading "Parts", div [ Attr.style "flex" "1", Attr.style "min-height" "0" ] [ viewPalette model ], heading "Colours", viewColours model ]
+                , canvasArea model
+                , pane [ heading "Selection", viewInspector model, heading "Structure", div [ Attr.style "flex" "1", Attr.style "min-height" "0", Attr.style "overflow-y" "auto" ] [ viewTree model ] ]
+                ]
+
+        Layout.Narrow ->
+            div
+                [ Attr.style "position" "relative"
+                , Attr.style "display" "flex"
+                , Attr.style "flex-direction" "column"
+                , Attr.style "width" "100%"
+                , Attr.style "height" "100%"
+                , Attr.style "overflow" "hidden"
+                , Attr.style "background" Theme.appBackground
+                ]
+                [ canvasArea model
+                , viewTabs model
+                , viewSheet model
+                ]
+
+
+{-| The 3D canvas with the tools, status and help drawn over it.
+-}
+canvasArea : Model -> Html Msg
+canvasArea model =
     div
-        [ Attr.style "width" "100%"
-        , Attr.style "height" "100%"
+        [ Attr.style "position" "relative"
+        , Attr.style "width" (String.fromInt model.layout.canvasWidth ++ "px")
+        , Attr.style "height" (String.fromInt model.layout.canvasHeight ++ "px")
+        , Attr.style "flex" "none"
         , Attr.style "overflow" "hidden"
-        , Attr.style "background" Theme.appBackground
-        , Attr.style "position" "relative"
         ]
         [ Html.map ViewportMsg
             (Viewport.view
@@ -771,6 +1137,177 @@ view model =
             )
         , overlay model
         ]
+
+
+{-| A side pane of the wide layout.
+-}
+pane : List (Html Msg) -> Html Msg
+pane children =
+    div
+        [ Attr.style "width" (String.fromInt Layout.panelWidth ++ "px")
+        , Attr.style "flex" "none"
+        , Attr.style "box-sizing" "border-box"
+        , Attr.style "padding" "12px"
+        , Attr.style "display" "flex"
+        , Attr.style "flex-direction" "column"
+        , Attr.style "gap" "8px"
+        , Attr.style "min-height" "0"
+        , Attr.style "background" Theme.panelSurface
+        , Attr.style "border-left" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "border-right" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "overflow" "hidden"
+        ]
+        children
+
+
+heading : String -> Html Msg
+heading title =
+    div
+        [ Attr.style "color" Theme.textMuted
+        , Attr.style "text-transform" "uppercase"
+        , Attr.style "font-size" "10px"
+        , Attr.style "letter-spacing" "0.08em"
+        , Attr.style "font-family" "monospace"
+        , Attr.style "margin-top" "4px"
+        ]
+        [ text title ]
+
+
+viewPalette : Model -> Html Msg
+viewPalette model =
+    Palette.view
+        { onQuery = PaletteQuery
+        , onCategory = PaletteCategory
+        , onArm = ArmPart
+        , onAdd = AddArmedPart
+        , onManual = ManualPart
+        , onAddManual = AddManualPart
+        , preview = viewPreview model
+        }
+        model.palette
+
+
+{-| The picked part, drawn small by its own viewport.
+-}
+viewPreview : Model -> Html Msg
+viewPreview model =
+    let
+        ( w, h ) =
+            previewSize
+    in
+    div
+        [ Attr.style "width" (String.fromInt w ++ "px")
+        , Attr.style "height" (String.fromInt h ++ "px")
+        , Attr.style "flex" "none"
+        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "border-radius" "6px"
+        , Attr.style "overflow" "hidden"
+        , Attr.style "pointer-events" "none"
+        , Attr.style "background" Theme.panelSubtleBackground
+        ]
+        (case model.palette.armed of
+            Just _ ->
+                [ Html.map PreviewMsg
+                    (Viewport.view { extraEntities = \_ _ _ -> [], coarsenWhileMoving = False } model.preview)
+                ]
+
+            Nothing ->
+                [ div [ Attr.style "padding" "12px", Attr.style "color" Theme.textMuted, Attr.style "font-size" "11px", Attr.style "font-family" "monospace" ] [ text "Preview" ] ]
+        )
+
+
+viewColours : Model -> Html Msg
+viewColours model =
+    Colours.view { current = model.activeColour, onPick = PickColour }
+
+
+viewInspector : Model -> Html Msg
+viewInspector model =
+    Inspector.view
+        { onPosition = SetPosition
+        , onRotation = SetRotation
+        , onDuplicate = DuplicateSelection
+        , onDelete = DeleteSelection
+        }
+        model.document
+        model.selection
+
+
+viewTree : Model -> Html Msg
+viewTree model =
+    Tree.view { selection = model.selection, onSelect = SelectPlacement } model.document
+
+
+{-| The narrow layout's tab bar: one button per panel, tapping the open one closes it.
+-}
+viewTabs : Model -> Html Msg
+viewTabs model =
+    let
+        tab panel label =
+            Button.toggle
+                { active = model.panel == Just panel, enabled = True }
+                (OpenPanel
+                    (if model.panel == Just panel then
+                        Nothing
+
+                     else
+                        Just panel
+                    )
+                )
+                label
+    in
+    div
+        [ Attr.style "height" (String.fromInt Layout.tabBarHeight ++ "px")
+        , Attr.style "flex" "none"
+        , Attr.style "display" "flex"
+        , Attr.style "gap" "6px"
+        , Attr.style "padding" "6px 8px"
+        , Attr.style "box-sizing" "border-box"
+        , Attr.style "background" Theme.panelSurface
+        , Attr.style "border-top" ("1px solid " ++ Theme.borderDefault)
+        ]
+        [ tab PartsPanel "Parts"
+        , tab ColoursPanel "Colours"
+        , tab InspectorPanel "Edit"
+        , tab TreePanel "Tree"
+        ]
+
+
+{-| The open panel of the narrow layout, as a sheet over the lower half.
+-}
+viewSheet : Model -> Html Msg
+viewSheet model =
+    case model.panel of
+        Nothing ->
+            text ""
+
+        Just panel ->
+            div
+                [ Attr.style "position" "absolute"
+                , Attr.style "left" "0"
+                , Attr.style "right" "0"
+                , Attr.style "bottom" (String.fromInt Layout.tabBarHeight ++ "px")
+                , Attr.style "height" "45%"
+                , Attr.style "box-sizing" "border-box"
+                , Attr.style "padding" "12px"
+                , Attr.style "overflow-y" "auto"
+                , Attr.style "background" Theme.panelSurface
+                , Attr.style "border-top" ("1px solid " ++ Theme.borderDefault)
+                , Attr.style "box-shadow" "0 -8px 24px color-mix(in srgb, var(--color-brand) 10%, transparent)"
+                ]
+                [ case panel of
+                    PartsPanel ->
+                        viewPalette model
+
+                    ColoursPanel ->
+                        viewColours model
+
+                    InspectorPanel ->
+                        viewInspector model
+
+                    TreePanel ->
+                        viewTree model
+                ]
 
 
 overlay : Model -> Html Msg
@@ -786,8 +1323,13 @@ overlay model =
         ([ viewStatus model
          , viewTopBar model
          , viewToolbar model
-         , viewPad model
          ]
+            ++ (if model.panel == Nothing then
+                    [ viewPad model ]
+
+                else
+                    []
+               )
             ++ (if model.helpOpen then
                     [ ShortcutHelp.view
                         { rows = Shortcuts.helpRows ++ StudioShortcuts.helpRows
@@ -803,9 +1345,13 @@ overlay model =
 
 viewTopBar : Model -> Html Msg
 viewTopBar model =
+    let
+        narrow =
+            model.layout.mode == Layout.Narrow
+    in
     div
         [ Attr.style "position" "absolute"
-        , Attr.style "top" "12px"
+        , Attr.style "top" "8px"
         , Attr.style "left" "12px"
         , Attr.style "right" "12px"
         , Attr.style "display" "flex"
@@ -816,12 +1362,26 @@ viewTopBar model =
         , Attr.style "color" Theme.textMuted
         , Attr.style "font-family" "monospace"
         , Attr.style "font-size" "12px"
+        , Attr.style "white-space" "nowrap"
         ]
-        [ span [ Attr.style "color" Theme.textPrimary, Attr.style "font-weight" "600" ] [ text "Palikkakehys Studio" ]
-        , span [] [ text (documentSummary model) ]
-        , div [ Attr.style "flex" "1" ] []
+        [ span [ Attr.style "color" Theme.textPrimary, Attr.style "font-weight" "600" ]
+            [ text
+                (if narrow then
+                    "Studio"
+
+                 else
+                    "Palikkakehys Studio"
+                )
+            ]
+        , span [ Attr.style "flex" "1", Attr.style "min-width" "0", Attr.style "overflow" "hidden", Attr.style "text-overflow" "ellipsis" ] [ text (documentSummary model) ]
         , Button.secondary NewDocument "New"
-        , Button.secondary RequestFileUpload "Open file"
+        , Button.secondary RequestFileUpload
+            (if narrow then
+                "Open"
+
+             else
+                "Open file"
+            )
         , Button.secondary Save "Save"
         ]
 
@@ -834,19 +1394,54 @@ viewToolbar model =
         hasSelection =
             not (Set.isEmpty model.selection)
 
+        narrow =
+            model.layout.mode == Layout.Narrow
+
+        direction =
+            if narrow then
+                "row"
+
+            else
+                "column"
+
         group =
-            div [ Attr.style "display" "flex", Attr.style "flex-direction" "column", Attr.style "gap" "4px" ]
+            div [ Attr.style "display" "flex", Attr.style "flex-direction" direction, Attr.style "gap" "4px", Attr.style "flex" "none" ]
     in
     div
-        [ Attr.style "position" "absolute"
-        , Attr.style "top" "56px"
-        , Attr.style "left" "12px"
-        , Attr.style "display" "flex"
-        , Attr.style "flex-direction" "column"
-        , Attr.style "gap" "12px"
-        , Attr.style "pointer-events" "auto"
-        , Attr.style "touch-action" "none"
-        ]
+        ([ Attr.style "position" "absolute"
+         , Attr.style "top"
+            (if narrow then
+                "56px"
+
+             else
+                "56px"
+            )
+         , Attr.style "left"
+            (if narrow then
+                "8px"
+
+             else
+                "12px"
+            )
+         , Attr.style "display" "flex"
+         , Attr.style "flex-direction" direction
+         , Attr.style "gap"
+            (if narrow then
+                "6px"
+
+             else
+                "12px"
+            )
+         , Attr.style "pointer-events" "auto"
+         , Attr.style "touch-action" "none"
+         ]
+            ++ (if narrow then
+                    [ Attr.style "right" "8px", Attr.style "overflow-x" "auto", Attr.style "padding-bottom" "4px" ]
+
+                else
+                    []
+               )
+        )
         [ group
             [ toolButton model SelectTool "Select"
             , toolButton model MoveTool "Move"

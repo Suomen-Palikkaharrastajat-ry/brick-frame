@@ -199,14 +199,24 @@ ldraw-missing-check: ## Check model references resolve via synced + generated LD
 	LDRAW_SYNC_DIR="$(LDRAW_SYNC_DIR)" \
 	./scripts/check-missing-ldraw-parts.sh
 
+.PHONY: ldraw-index
+ldraw-index: ## Build the studio's part index (parts-index.json) from the synced library
+	node scripts/build-part-index.mjs "$(LDRAW_SYNC_DIR)"
+
+.PHONY: ldraw-index-test
+ldraw-index-test: ## Test the part index builder
+	node --test scripts/*.test.mjs
+
+# The index runs last so it lists the generated replacement parts too.
 .PHONY: ldraw-missing
-ldraw-missing: ldraw-missing-generate ldraw-missing-check ## Generate + validate missing-part replacements
+ldraw-missing: ldraw-missing-generate ldraw-missing-check ldraw-index ## Generate + validate missing-part replacements, then rebuild the part index
 
 # ── Test & quality ────────────────────────────────────────────────────────────
 
 .PHONY: test
 test: check ## Run all tests
 	cabal test
+	$(MAKE) ldraw-index-test
 	$(MAKE) elm-test
 	$(MAKE) test-lib
 

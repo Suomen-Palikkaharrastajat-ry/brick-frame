@@ -102,6 +102,10 @@ The sync pipeline enforces a defensive policy and fails if any file declares:
 This notice is informational only and is not legal advice.
 EOF
 
+# The studio's part palette searches this; it is not part of the official
+# library, so it is built after the file count above.
+node "$(dirname "$0")/build-part-index.mjs" "$LDRAW_SYNC_DIR"
+
 echo "sync-ldraw: wrote ${LDRAW_SYNC_LOCK}"
 echo "sync-ldraw: wrote ${LDRAW_NOTICE_FILE}"
 echo "sync-ldraw: done (files=${total_files}, cc-by-4.0=${count_cc_by_4}, cc0=${count_cc0}, legacy-ccal=${count_legacy_ccal})"

@@ -24,7 +24,8 @@ function readDraft() {
 const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''))
 const requestedModel = hashParams.get('src')
 const draft = requestedModel ? null : readDraft()
-const model = requestedModel ?? (draft ? '' : `${siteRoot}examples/wheeler.ldr`)
+// An empty draft is a draft: someone who started a new document gets it back.
+const model = requestedModel ?? (draft !== null ? '' : `${siteRoot}examples/wheeler.ldr`)
 
 const runtime = initBricksRuntime({
   elm: Elm.Main,
