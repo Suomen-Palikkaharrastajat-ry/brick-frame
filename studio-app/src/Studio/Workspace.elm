@@ -3,6 +3,7 @@ module Studio.Workspace exposing
     , Model
     , Msg(..)
     , init
+    , restore
     , subscriptions
     , update
     , view
@@ -22,6 +23,7 @@ and turns it into a move along one axis, snapped to the grid.
 -}
 
 import Browser.Dom
+import Data
 import EmbeddedParts
 import Html exposing (Html, button, div, span, text)
 import Html.Attributes as Attr
@@ -31,12 +33,14 @@ import LDraw.Writer as Writer
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3
 import Ports
+import Process
 import Render.Camera as Camera
 import Render.Style as Style
 import Set exposing (Set)
 import Studio.Colours as Colours
 import Studio.Edit as Edit exposing (Axis(..), Command(..), History)
 import Studio.Gizmo as Gizmo exposing (Handle)
+import Studio.Hints as Hints
 import Studio.Inspector as Inspector
 import Studio.Layout as Layout exposing (Layout, Panel(..))
 import Studio.Overlay as Overlay
@@ -97,7 +101,10 @@ type alias Model =
     , preview : Viewport.Model
     , activeColour : Int
     , layout : Layout
+    , window : ( Int, Int )
     , panel : Maybe Panel
+    , hints : Hints.Hints
+    , hintGeneration : Int
     }
 
 
@@ -149,6 +156,8 @@ type Msg
     | SetRotation Axis Float
     | SelectPlacement Int Bool
     | OpenPanel (Maybe Panel)
+    | SimulateRequested
+    | HintsDue Int
     | NoOp
 
 
@@ -194,7 +203,10 @@ init flags =
             , preview = sized previewSize preview
             , activeColour = 4
             , layout = layout
+            , window = ( 1280, 800 )
             , panel = Nothing
+            , hints = Hints.empty
+            , hintGeneration = 0
             }
 
         ( opened, openCmd ) =
@@ -236,6 +248,7 @@ resized width height model =
     in
     { model
         | layout = layout
+        , window = ( width, height )
         , viewport = sized ( layout.canvasWidth, layout.canvasHeight ) model.viewport
         , panel =
             -- Panels are sheets of the narrow layout; the wide one shows them all.
@@ -245,6 +258,20 @@ resized width height model =
             else
                 model.panel
     }
+
+
+{-| Come back from the preview: the camera the preview ended on becomes the
+workspace's, and the canvas is sized for the editing layout again. Selection,
+document, history and tools are untouched, since the preview never had them.
+-}
+restore : Camera.Camera -> Model -> Model
+restore camera model =
+    let
+        viewport =
+            model.viewport
+    in
+    { model | viewport = { viewport | camera = camera } }
+        |> (\m -> resized (Tuple.first m.window) (Tuple.second m.window) m)
 
 
 renderStyle : Flags -> Style.Style
@@ -517,6 +544,18 @@ update msg model =
         OpenPanel panel ->
             ( { model | panel = panel }, Cmd.none )
 
+        HintsDue generation ->
+            -- Only the last edit's timer counts; earlier ones were overtaken.
+            if generation == model.hintGeneration then
+                ( { model | hints = Hints.analyse Data.gearParts model.document }, Cmd.none )
+
+            else
+                ( model, Cmd.none )
+
+        SimulateRequested ->
+            -- The page above this one changes pages; the workspace stays as it is.
+            ( model, Cmd.none )
+
         NoOp ->
             ( model, Cmd.none )
 
@@ -733,9 +772,27 @@ syncDocument model =
 
         ( final, eventCmds ) =
             handleEvents events ( synced, [] )
+
+        ( withTimer, hintCmd ) =
+            scheduleHints final
     in
-    ( final
-    , Cmd.batch (Cmd.map ViewportMsg viewportCmd :: Ports.saveDraft (Writer.writeDocument model.document) :: eventCmds)
+    ( withTimer
+    , Cmd.batch (hintCmd :: Cmd.map ViewportMsg viewportCmd :: Ports.saveDraft (Writer.writeDocument model.document) :: eventCmds)
+    )
+
+
+{-| Re-check the gears once editing has paused for a moment. Each edit starts a
+new timer and makes the earlier ones stale, so a burst of edits (a drag) costs
+one analysis.
+-}
+scheduleHints : Model -> ( Model, Cmd Msg )
+scheduleHints model =
+    let
+        generation =
+            model.hintGeneration + 1
+    in
+    ( { model | hintGeneration = generation }
+    , Process.sleep 500 |> Task.perform (\_ -> HintsDue generation)
     )
 
 
@@ -759,9 +816,12 @@ openDocument document model =
                   }
                 , []
                 )
+
+        ( withTimer, hintCmd ) =
+            scheduleHints next
     in
-    ( next
-    , Cmd.batch (Cmd.map ViewportMsg viewportCmd :: Ports.saveDraft (Writer.writeDocument document) :: eventCmds)
+    ( withTimer
+    , Cmd.batch (hintCmd :: Cmd.map ViewportMsg viewportCmd :: Ports.saveDraft (Writer.writeDocument document) :: eventCmds)
     )
 
 
@@ -1130,7 +1190,14 @@ canvasArea model =
             (Viewport.view
                 { extraEntities =
                     \camera _ aspect ->
-                        Overlay.entities camera aspect model.viewport.instancedScene model.selection (currentHandles model)
+                        Overlay.entities camera
+                            aspect
+                            model.viewport.instancedScene
+                            { selection = model.selection
+                            , meshed = model.hints.meshed
+                            , isolated = model.hints.isolated
+                            }
+                            (currentHandles model)
                 , coarsenWhileMoving = True
                 }
                 model.viewport
@@ -1374,6 +1441,7 @@ viewTopBar model =
                 )
             ]
         , span [ Attr.style "flex" "1", Attr.style "min-width" "0", Attr.style "overflow" "hidden", Attr.style "text-overflow" "ellipsis" ] [ text (documentSummary model) ]
+        , Button.secondary SimulateRequested "▶ Simulate"
         , Button.secondary NewDocument "New"
         , Button.secondary RequestFileUpload
             (if narrow then
@@ -1505,6 +1573,13 @@ documentSummary model =
 
             else
                 ""
+           )
+        ++ (case Hints.summary model.hints of
+                "" ->
+                    ""
+
+                hint ->
+                    "  ·  " ++ hint
            )
 
 

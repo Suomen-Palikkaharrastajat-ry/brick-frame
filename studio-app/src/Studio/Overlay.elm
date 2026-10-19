@@ -1,4 +1,4 @@
-module Studio.Overlay exposing (entities)
+module Studio.Overlay exposing (Highlights, entities)
 
 {-| What the studio draws on top of the model: selection outlines and the move
 gizmo.
@@ -23,11 +23,20 @@ import WebGL
 import WebGL.Settings.DepthTest as DepthTest
 
 
-{-| The selection outline for placements whose source is in `selection`, and the
-gizmo handles if there are any.
+{-| Which placements to outline, and in which colour: the selection in yellow,
+gears that mesh in green, gears that cannot turn in orange.
 -}
-entities : Camera -> Float -> Maybe InstancedScene -> Set Int -> List Handle -> List WebGL.Entity
-entities camera aspect scene selection handles =
+type alias Highlights =
+    { selection : Set Int
+    , meshed : Set Int
+    , isolated : Set Int
+    }
+
+
+{-| The outlines for `highlights`, and the gizmo handles if there are any.
+-}
+entities : Camera -> Float -> Maybe InstancedScene -> Highlights -> List Handle -> List WebGL.Entity
+entities camera aspect scene highlights handles =
     let
         uniforms color =
             { viewMatrix = Camera.viewMatrix camera
@@ -43,26 +52,38 @@ entities camera aspect scene selection handles =
                 mesh
                 (uniforms color)
 
-        outlines =
+        outline sources color =
             case scene of
                 Just s ->
-                    selectedBoxes s selection
+                    case selectedBoxes s sources of
+                        [] ->
+                            []
+
+                        boxes ->
+                            [ draw (WebGL.lines (List.concatMap boxEdges boxes)) color ]
 
                 Nothing ->
                     []
     in
-    (if List.isEmpty outlines then
-        []
-
-     else
-        [ draw (WebGL.lines (List.concatMap boxEdges outlines)) outlineColor ]
-    )
+    outline highlights.meshed meshedColor
+        ++ outline highlights.isolated isolatedColor
+        ++ outline highlights.selection outlineColor
         ++ List.map (\h -> draw (WebGL.triangles (handleTriangles camera h)) (axisColor h.axis)) handles
 
 
 outlineColor : Vec4
 outlineColor =
     vec4 0.98 0.78 0.04 1
+
+
+meshedColor : Vec4
+meshedColor =
+    vec4 0.15 0.65 0.25 1
+
+
+isolatedColor : Vec4
+isolatedColor =
+    vec4 0.95 0.45 0.1 1
 
 
 axisColor : Axis -> Vec4

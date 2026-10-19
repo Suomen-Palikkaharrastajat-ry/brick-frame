@@ -814,6 +814,28 @@ panelSuite =
                         ]
                         loaded
             ]
+        , describe "gear hints"
+            [ test "hints are computed once editing pauses, not on every edit" <|
+                \_ ->
+                    let
+                        edited =
+                            start
+                                |> step (FileTextReceived "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3647.dat\n")
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal 0 m.hints.gears
+                        , \m -> Expect.equal 1 (step (HintsDue m.hintGeneration) m).hints.gears
+                        ]
+                        edited
+            , test "a timer from an earlier edit is ignored" <|
+                \_ ->
+                    start
+                        |> step (FileTextReceived "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3647.dat\n")
+                        |> step (HintsDue 0)
+                        |> .hints
+                        |> .gears
+                        |> Expect.equal 0
+            ]
         , describe "layout"
             [ test "a wide window shrinks the canvas to the space between the panes" <|
                 \_ ->
