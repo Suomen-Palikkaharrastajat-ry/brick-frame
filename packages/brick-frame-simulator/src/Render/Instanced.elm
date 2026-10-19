@@ -2,6 +2,7 @@ module Render.Instanced exposing
     ( InstancedScene, PartMesh, Placement, ProxyChunk, RawPlacement, PartKey
     , Detail(..)
     , build, extractPlacements, chunkKeyFor
+    , buildFrom, replaceSource, removeSource
     , render, visiblePlacements, detailFor
     , Frustum, frustumFromMatrix, sphereInFrustum, projectedRadiusPx
     , triangleBudgetExceeded
@@ -59,6 +60,7 @@ recorded per placement and the cull face is switched accordingly.
 @docs InstancedScene, PartMesh, Placement, ProxyChunk, RawPlacement, PartKey
 @docs Detail
 @docs build, extractPlacements, chunkKeyFor
+@docs buildFrom, replaceSource, removeSource
 @docs render, visiblePlacements, detailFor
 @docs Frustum, frustumFromMatrix, sphereInFrustum, projectedRadiusPx
 @docs triangleBudgetExceeded
@@ -135,9 +137,15 @@ type alias RawPlacement =
 
 {-| A placement ready to draw: its model matrix and the culling data derived
 from the part's local bounds.
+
+`source` says where the placement came from, so an editor can swap out one
+document placement (which may expand to many instances when it references a
+submodel) without rebuilding the scene. It is `-1` for scenes made by `build`.
+
 -}
 type alias Placement =
-    { part : PartKey
+    { source : Int
+    , part : PartKey
     , matrix : Mat4
     , color : Vec4
     , center : Vec3
@@ -164,6 +172,8 @@ type alias InstancedScene =
     { parts : Dict PartKey PartMesh
     , placements : List Placement
     , proxyChunks : List ProxyChunk
+    , chunkCell : Float
+    , chunkIndex : Dict ( Int, Int, Int ) ProxyChunk
     , boundsMin : Vec3
     , boundsMax : Vec3
     }
@@ -329,25 +339,113 @@ Placements whose part is missing from the cache are dropped, matching
 -}
 build : PartCache -> List RawPlacement -> InstancedScene
 build cache raws =
+    buildFrom cache (List.map (Tuple.pair -1) raws)
+
+
+{-| Like `build`, with each raw placement tagged with the source it came from
+so that `replaceSource` can later swap it out.
+-}
+buildFrom : PartCache -> List ( Int, RawPlacement ) -> InstancedScene
+buildFrom cache sourced =
     let
         parts =
-            List.foldl (addPartMesh cache) Dict.empty raws
+            List.foldl (\( _, raw ) acc -> addPartMesh cache raw acc) Dict.empty sourced
 
         placements =
-            List.filterMap (toPlacement parts) raws
+            List.filterMap (\( source, raw ) -> toPlacement parts source raw) sourced
 
-        boundsMin =
-            List.foldl (\p acc -> minVec acc (Vec3.sub p.center (uniformVec p.radius))) hugeVec placements
+        ( boundsMin, boundsMax ) =
+            boundsOf placements
 
-        boundsMax =
-            List.foldl (\p acc -> maxVec acc (Vec3.add p.center (uniformVec p.radius))) (Vec3.negate hugeVec) placements
+        cell =
+            chunkCellSize boundsMin boundsMax
+
+        chunkIndex =
+            buildChunkIndex parts cell placements
     in
     { parts = parts
     , placements = placements
-    , proxyChunks = buildProxyChunks parts boundsMin boundsMax placements
+    , proxyChunks = Dict.values chunkIndex
+    , chunkCell = cell
+    , chunkIndex = chunkIndex
     , boundsMin = boundsMin
     , boundsMax = boundsMax
     }
+
+
+{-| Replace everything that came from one document placement.
+
+Removes the scene's placements with this `source` and adds `raws` in their
+place, so it covers adding (nothing to remove), moving or recolouring (same
+part, new matrix) and changing the part. Only the part meshes the new
+placements need are built, and only the proxy cells the old and new placements
+touch are rebuilt; the rest of the scene is shared with the input.
+
+Placements whose part is not yet in the cache are skipped, as in `build`.
+
+-}
+replaceSource : PartCache -> Int -> List RawPlacement -> InstancedScene -> InstancedScene
+replaceSource cache source raws scene =
+    let
+        ( removed, kept ) =
+            List.partition (\p -> p.source == source) scene.placements
+
+        parts =
+            List.foldl (addPartMesh cache) scene.parts raws
+
+        added =
+            List.filterMap (toPlacement parts source) raws
+
+        placements =
+            kept ++ added
+
+        dirtyKeys =
+            (removed ++ added)
+                |> List.map (\p -> chunkKeyFor scene.chunkCell p.center)
+                |> dedupe
+
+        chunkIndex =
+            List.foldl (rebuildChunk parts scene.chunkCell placements) scene.chunkIndex dirtyKeys
+
+        ( boundsMin, boundsMax ) =
+            boundsOf placements
+    in
+    { scene
+        | parts = parts
+        , placements = placements
+        , proxyChunks = Dict.values chunkIndex
+        , chunkIndex = chunkIndex
+        , boundsMin = boundsMin
+        , boundsMax = boundsMax
+    }
+
+
+{-| Drop everything that came from one document placement.
+-}
+removeSource : Int -> InstancedScene -> InstancedScene
+removeSource source scene =
+    replaceSource Dict.empty source [] scene
+
+
+boundsOf : List Placement -> ( Vec3, Vec3 )
+boundsOf placements =
+    ( List.foldl (\p acc -> minVec acc (Vec3.sub p.center (uniformVec p.radius))) hugeVec placements
+    , List.foldl (\p acc -> maxVec acc (Vec3.add p.center (uniformVec p.radius))) (Vec3.negate hugeVec) placements
+    )
+
+
+dedupe : List comparable -> List comparable
+dedupe items =
+    List.foldl
+        (\item acc ->
+            if List.member item acc then
+                acc
+
+            else
+                item :: acc
+        )
+        []
+        items
 
 
 addPartMesh : PartCache -> RawPlacement -> Dict PartKey PartMesh -> Dict PartKey PartMesh
@@ -400,8 +498,8 @@ buildPartMesh cache partLines =
 {-| Attach the world bounding sphere and winding flag a raw placement needs
 before it can be culled and drawn.
 -}
-toPlacement : Dict PartKey PartMesh -> RawPlacement -> Maybe Placement
-toPlacement parts raw =
+toPlacement : Dict PartKey PartMesh -> Int -> RawPlacement -> Maybe Placement
+toPlacement parts source raw =
     Dict.get raw.part parts
         |> Maybe.map
             (\mesh ->
@@ -409,7 +507,8 @@ toPlacement parts raw =
                     matrix =
                         Mat4.mul yUpFlip raw.matrix
                 in
-                { part = raw.part
+                { source = source
+                , part = raw.part
                 , matrix = matrix
 
                 -- Extraction already resolved inheritance, so the code is
@@ -435,16 +534,40 @@ proxy triangles across a few dozen meshes — the same order as the part meshes 
 stands in for, and a draw-call count the GPU does not notice.
 
 -}
-buildProxyChunks : Dict PartKey PartMesh -> Vec3 -> Vec3 -> List Placement -> List ProxyChunk
-buildProxyChunks parts boundsMin boundsMax placements =
-    let
-        cell =
-            chunkCellSize boundsMin boundsMax
-    in
+buildChunkIndex : Dict PartKey PartMesh -> Float -> List Placement -> Dict ( Int, Int, Int ) ProxyChunk
+buildChunkIndex parts cell placements =
     placements
         |> List.foldl (groupByChunk parts cell) Dict.empty
-        |> Dict.values
-        |> List.filterMap toProxyChunk
+        |> Dict.toList
+        |> List.filterMap (\( key, triangles ) -> toProxyChunk triangles |> Maybe.map (Tuple.pair key))
+        |> Dict.fromList
+
+
+{-| Rebuild one proxy cell from the placements that fall in it, or drop it when
+it has none left.
+-}
+rebuildChunk :
+    Dict PartKey PartMesh
+    -> Float
+    -> List Placement
+    -> ( Int, Int, Int )
+    -> Dict ( Int, Int, Int ) ProxyChunk
+    -> Dict ( Int, Int, Int ) ProxyChunk
+rebuildChunk parts cell placements key index =
+    let
+        members =
+            List.filter (\p -> chunkKeyFor cell p.center == key) placements
+
+        triangles =
+            Dict.get key (List.foldl (groupByChunk parts cell) Dict.empty members)
+                |> Maybe.withDefault []
+    in
+    case toProxyChunk triangles of
+        Just chunk ->
+            Dict.insert key chunk index
+
+        Nothing ->
+            Dict.remove key index
 
 
 {-| Edge length of one spatial cell, chosen so the model's longest axis is cut

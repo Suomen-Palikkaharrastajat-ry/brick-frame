@@ -1,0 +1,602 @@
+module ViewportTest exposing (suite)
+
+{-| Tests for the viewport component's state machine: what each input does to
+the model and which events it reports to the host.
+-}
+
+import Dict
+import Expect
+import Http
+import LDraw.Document as Document exposing (Document)
+import LDraw.Resolve as Resolve exposing (PartStatus(..))
+import LDraw.Types exposing (LDrawLine(..))
+import Math.Matrix4 as Mat4
+import Math.Vector3 exposing (vec3)
+import Math.Vector4
+import Render.Camera as Camera
+import Render.Style as Style
+import Set
+import Test exposing (Test, describe, test)
+import Viewport exposing (CameraMode(..), Event(..), HeldControl(..), LoadPhase(..), Msg(..))
+import Viewport.Shortcuts as Shortcuts
+
+
+config : Viewport.Config
+config =
+    { ldrawBase = ""
+    , ldrawFallbackBase = ""
+    , defaultModelUrl = ""
+    , initialHash = ""
+    , supportsPointerEvents = True
+    , useWindowResize = False
+    , renderStyle = Style.defaultStyle
+    , partCache = Resolve.initCache
+    }
+
+
+idle : Viewport.Model
+idle =
+    Viewport.init config |> Tuple.first
+
+
+keyEvent : String -> Shortcuts.KeyEvent
+keyEvent key =
+    { key = key
+    , shift = False
+    , ctrl = False
+    , meta = False
+    , alt = False
+    , repeat = False
+    , targetTag = "BODY"
+    , targetEditable = False
+    }
+
+
+update : Msg -> Viewport.Model -> ( Viewport.Model, List Event )
+update msg model =
+    Viewport.update msg model
+        |> (\( m, _, events ) -> ( m, events ))
+
+
+suite : Test
+suite =
+    describe "Viewport"
+        [ documentSuite
+        , describe "init"
+            [ test "an empty model URL leaves the viewport idle and auto-fitting" <|
+                \_ ->
+                    Expect.all
+                        [ \m -> Expect.equal Idle m.loadPhase
+                        , \m -> Expect.equal CameraAutoFit m.cameraMode
+                        ]
+                        idle
+            , test "a model URL starts fetching it" <|
+                \_ ->
+                    Viewport.init { config | defaultModelUrl = "/m.ldr" }
+                        |> Tuple.first
+                        |> .loadPhase
+                        |> Expect.equal (FetchingTopLevel "/m.ldr")
+            , test "an explicit camera in the hash switches off auto-fit" <|
+                \_ ->
+                    Viewport.init { config | initialHash = "#az=1.5&d=400" }
+                        |> Tuple.first
+                        |> Expect.all
+                            [ \m -> Expect.equal CameraManual m.cameraMode
+                            , \m -> Expect.within (Expect.Absolute 0.0001) 1.5 m.camera.azimuth
+                            , \m -> Expect.within (Expect.Absolute 0.0001) 400 m.camera.distance
+                            ]
+            ]
+        , describe "input events"
+            [ test "WindowResize stores the size" <|
+                \_ ->
+                    update (WindowResize 1024 768) idle
+                        |> Tuple.first
+                        |> Expect.all
+                            [ \m -> Expect.equal 1024 m.width
+                            , \m -> Expect.equal 768 m.height
+                            ]
+            , test "a wheel turn zooms and reports a settled camera" <|
+                \_ ->
+                    let
+                        ( after, events ) =
+                            update (Wheel 100) idle
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ CameraSettled ] events
+                        , \_ -> Expect.equal CameraManual after.cameraMode
+                        , \_ -> Expect.greaterThan idle.camera.distance after.camera.distance
+                        ]
+                        ()
+            , test "press and release without moving is a click" <|
+                \_ ->
+                    idle
+                        |> update (MouseDown 10 20 False)
+                        |> Tuple.first
+                        |> update (MouseUp 10 20)
+                        |> Tuple.second
+                        |> Expect.equal [ Clicked 10 20 False ]
+            , test "press, drag and release settles the camera instead" <|
+                \_ ->
+                    idle
+                        |> update (MouseDown 10 20 False)
+                        |> Tuple.first
+                        |> update (MouseMove 60 20)
+                        |> Tuple.first
+                        |> update (MouseUp 60 20)
+                        |> Tuple.second
+                        |> Expect.equal [ CameraSettled ]
+            , test "mouse input is ignored while a touch is down" <|
+                \_ ->
+                    let
+                        touching =
+                            idle
+                                |> update (PointerTouchStart { id = 1, x = 5, y = 5 })
+                                |> Tuple.first
+                    in
+                    update (MouseDown 10 20 False) touching
+                        |> Tuple.first
+                        |> Expect.equal touching
+            , test "releasing a touch that moved settles the camera" <|
+                \_ ->
+                    idle
+                        |> update (PointerTouchStart { id = 1, x = 5, y = 5 })
+                        |> Tuple.first
+                        |> update (PointerTouchMove { id = 1, x = 105, y = 5 })
+                        |> Tuple.first
+                        |> update (PointerTouchEnd 1)
+                        |> Tuple.second
+                        |> Expect.equal [ CameraSettled ]
+            , test "ending a touch that never started does nothing" <|
+                \_ ->
+                    update (PointerTouchEnd 9) idle
+                        |> Tuple.second
+                        |> Expect.equal []
+            ]
+        , describe "capturing a gesture"
+            [ test "a mouse press reports where it started" <|
+                \_ ->
+                    update (MouseDown 10 20 False) idle
+                        |> Tuple.second
+                        |> Expect.equal [ PressStarted 10 20 ]
+            , test "a release that did not start on the canvas is not a click" <|
+                \_ ->
+                    update (MouseUp 10 20) idle
+                        |> Tuple.second
+                        |> Expect.equal []
+            , test "a shift-click says so" <|
+                \_ ->
+                    idle
+                        |> update (MouseDown 10 20 True)
+                        |> Tuple.first
+                        |> update (MouseUp 10 20)
+                        |> Tuple.second
+                        |> Expect.equal [ Clicked 10 20 True ]
+            , test "a captured mouse drag is reported and leaves the camera alone" <|
+                \_ ->
+                    let
+                        pressed =
+                            update (MouseDown 10 20 False) idle
+                                |> Tuple.first
+                                |> Viewport.captureDrag
+
+                        ( moved, moveEvents ) =
+                            update (MouseMove 50 60) pressed
+
+                        ( released, upEvents ) =
+                            update (MouseUp 50 60) moved
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ DragMoved 50 60 ] moveEvents
+                        , \_ -> Expect.equal [ DragEnded 50 60 ] upEvents
+                        , \_ -> Expect.within (Expect.Absolute 0.000001) pressed.camera.azimuth moved.camera.azimuth
+                        , \_ -> Expect.equal False released.captured
+                        ]
+                        ()
+            , test "after a captured drag the camera follows the mouse again" <|
+                \_ ->
+                    idle
+                        |> update (MouseDown 10 20 False)
+                        |> Tuple.first
+                        |> Viewport.captureDrag
+                        |> update (MouseUp 10 20)
+                        |> Tuple.first
+                        |> update (MouseDown 10 20 False)
+                        |> Tuple.first
+                        |> update (MouseMove 70 20)
+                        |> Tuple.second
+                        |> Expect.equal []
+            , test "a tap with one finger is reported" <|
+                \_ ->
+                    idle
+                        |> update (PointerTouchStart { id = 1, x = 30, y = 40 })
+                        |> Tuple.first
+                        |> update (PointerTouchEnd 1)
+                        |> Tuple.second
+                        |> Expect.equal [ Tapped 30 40, CameraSettled ]
+            , test "dragging a finger is not a tap" <|
+                \_ ->
+                    idle
+                        |> update (PointerTouchStart { id = 1, x = 30, y = 40 })
+                        |> Tuple.first
+                        |> update (PointerTouchMove { id = 1, x = 130, y = 40 })
+                        |> Tuple.first
+                        |> update (PointerTouchEnd 1)
+                        |> Tuple.second
+                        |> Expect.equal [ CameraSettled ]
+            , test "a finger press can be captured like a mouse press" <|
+                \_ ->
+                    let
+                        ( down, downEvents ) =
+                            update (PointerTouchStart { id = 1, x = 30, y = 40 }) idle
+
+                        ( moved, moveEvents ) =
+                            Viewport.captureDrag down
+                                |> update (PointerTouchMove { id = 1, x = 90, y = 40 })
+
+                        ( _, upEvents ) =
+                            update (PointerTouchEnd 1) moved
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ PressStarted 30 40 ] downEvents
+                        , \_ -> Expect.equal [ DragMoved 90 40 ] moveEvents
+                        , \_ -> Expect.equal [ DragEnded 90 40 ] upEvents
+                        ]
+                        ()
+            , test "a second finger ends a capture and becomes a camera gesture" <|
+                \_ ->
+                    let
+                        captured =
+                            update (PointerTouchStart { id = 1, x = 30, y = 40 }) idle
+                                |> Tuple.first
+                                |> Viewport.captureDrag
+                    in
+                    update (PointerTouchStart { id = 2, x = 80, y = 40 }) captured
+                        |> Expect.all
+                            [ \( _, events ) -> Expect.equal [ DragEnded 30 40 ] events
+                            , \( m, _ ) -> Expect.equal False m.captured
+                            ]
+            ]
+        , describe "keyboard"
+            [ test "a plain key press is handed to the host and held" <|
+                \_ ->
+                    let
+                        ( after, events ) =
+                            update (KeyPressed (keyEvent "w")) idle
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ KeyAccepted (keyEvent "w") ] events
+                        , \_ -> Expect.equal True (Set.member "w" after.heldKeys)
+                        ]
+                        ()
+            , test "typing into a form field is ignored" <|
+                \_ ->
+                    let
+                        typing =
+                            { key = "w"
+                            , shift = False
+                            , ctrl = False
+                            , meta = False
+                            , alt = False
+                            , repeat = False
+                            , targetTag = "INPUT"
+                            , targetEditable = False
+                            }
+                    in
+                    update (KeyPressed typing) idle
+                        |> Expect.equal ( idle, [] )
+            , test "auto-repeat holds the key but is not a new press" <|
+                \_ ->
+                    let
+                        repeated =
+                            keyEvent "w"
+                    in
+                    update (KeyPressed { repeated | repeat = True }) idle
+                        |> Tuple.second
+                        |> Expect.equal []
+            , test "AllKeysReleased drops every held key" <|
+                \_ ->
+                    idle
+                        |> update (KeyPressed (keyEvent "w"))
+                        |> Tuple.first
+                        |> update AllKeysReleased
+                        |> Tuple.first
+                        |> .heldKeys
+                        |> Expect.equal Set.empty
+            ]
+        , describe "needsAnimationFrame"
+            [ test "idle → False" <|
+                \_ -> Viewport.needsAnimationFrame idle |> Expect.equal False
+            , test "flattening geometry → True" <|
+                \_ ->
+                    Viewport.needsAnimationFrame { idle | loadPhase = FlatteningGeometry }
+                        |> Expect.equal True
+            , test "held rotate control → True" <|
+                \_ ->
+                    Viewport.needsAnimationFrame { idle | heldControl = HoldRotate 1 0 }
+                        |> Expect.equal True
+            , test "held movement key → True" <|
+                \_ ->
+                    Viewport.needsAnimationFrame { idle | heldKeys = Set.singleton "w" }
+                        |> Expect.equal True
+            , test "held speed modifier alone → False" <|
+                \_ ->
+                    -- Shift changes nothing on its own, so it must not keep the
+                    -- render loop awake.
+                    Viewport.needsAnimationFrame { idle | heldKeys = Set.singleton "Shift" }
+                        |> Expect.equal False
+            , test "the instanced renderer's settle countdown → True" <|
+                \_ ->
+                    Viewport.needsAnimationFrame { idle | refineFrames = 3 }
+                        |> Expect.equal True
+            ]
+        , describe "loading"
+            [ test "a file with nothing to fetch asks the host to analyse it" <|
+                \_ ->
+                    update (FileContentReceived "0 nothing to fetch\n") idle
+                        |> Tuple.second
+                        |> Expect.equal [ LoadStarted, PartsReady ]
+            , test "beginFlatten requests the worker and starts the progress bar" <|
+                \_ ->
+                    let
+                        ( ready, _ ) =
+                            update (FileContentReceived "0 empty\n") idle
+
+                        ( flattening, events ) =
+                            Viewport.beginFlatten { lines = [], fallbackLines = [] } ready
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal FlatteningGeometry m.loadPhase
+                        , \m -> Expect.equal 90 m.loadingProgressPct
+                        , \_ ->
+                            case events of
+                                [ FlattenRequested payload ] ->
+                                    Expect.equal True (String.contains "\"parentColor\"" payload)
+
+                                _ ->
+                                    Expect.fail "expected a single FlattenRequested"
+                        ]
+                        flattening
+            , test "a part that is not cached is fetched before the host is asked" <|
+                \_ ->
+                    update (FileContentReceived "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3647.dat\n") idle
+                        |> Tuple.second
+                        |> Expect.equal [ LoadStarted ]
+            , test "a worker failure falls back to local geometry" <|
+                \_ ->
+                    let
+                        ( ready, _ ) =
+                            update (FileContentReceived "0 empty\n") idle
+
+                        ( flattening, _ ) =
+                            Viewport.beginFlatten { lines = [], fallbackLines = [] } ready
+
+                        ( done, events ) =
+                            update (GeometryFlattenFailed "boom") flattening
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ ModelReady ] events
+                        , \m -> Expect.equal Ready m.loadPhase
+                        , \m -> Expect.equal (Just "Geometry worker failed; used local flatten. boom") m.errorMsg
+                        ]
+                        done
+            , test "a rejected file reports the failure and shows the message" <|
+                \_ ->
+                    let
+                        ( after, events ) =
+                            update (FileLoadError "not an LDraw file") idle
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ LoadFailed "not an LDraw file" ] events
+                        , \m -> Expect.equal (Just "not an LDraw file") m.errorMsg
+                        ]
+                        after
+            , test "DismissError clears the message" <|
+                \_ ->
+                    update (FileLoadError "x") idle
+                        |> Tuple.first
+                        |> update DismissError
+                        |> Tuple.first
+                        |> .errorMsg
+                        |> Expect.equal Nothing
+            ]
+        , describe "navigation"
+            [ test "walk mode needs a loaded model" <|
+                \_ ->
+                    update ToggleWalkMode idle
+                        |> Tuple.first
+                        |> .camera
+                        |> .navigation
+                        |> Expect.equal Camera.Orbit
+            ]
+        ]
+
+
+
+-- ── Document mode ─────────────────────────────────────────────────────────────
+
+
+brickLines : List LDrawLine
+brickLines =
+    [ Triangle { color = 16, p1 = vec3 -10 0 -10, p2 = vec3 10 0 -10, p3 = vec3 0 -20 0 } ]
+
+
+studioConfig : Viewport.Config
+studioConfig =
+    { config
+        | partCache =
+            Dict.fromList [ ( "3001.dat", Loaded brickLines ) ]
+    }
+
+
+studio : Viewport.Model
+studio =
+    Viewport.init studioConfig |> Tuple.first
+
+
+{-| A document with `n` bricks side by side, spaced so they do not overlap.
+-}
+bricks : Int -> Document
+bricks n =
+    List.range 0 (n - 1)
+        |> List.foldl
+            (\i doc ->
+                Document.addPlacement "" { part = "3001.dat", color = 4, matrix = Mat4.makeTranslate3 (toFloat i * 40) 0 0 } doc
+                    |> Tuple.first
+            )
+            Document.empty
+
+
+loaded : Document -> Viewport.Model
+loaded doc =
+    Viewport.loadDocument doc studio
+        |> (\( m, _, _ ) -> m)
+
+
+sources : Viewport.Model -> List Int
+sources model =
+    model.instancedScene
+        |> Maybe.map (\scene -> List.map .source scene.placements)
+        |> Maybe.withDefault []
+
+
+documentSuite : Test
+documentSuite =
+    describe "Viewport documents"
+        [ test "loadDocument shows every placement through the instanced renderer" <|
+            \_ ->
+                let
+                    ( model, _, events ) =
+                        Viewport.loadDocument (bricks 3) studio
+                in
+                Expect.all
+                    [ \_ -> Expect.equal [ LoadStarted, ModelReady ] events
+                    , \m -> Expect.equal Ready m.loadPhase
+                    , \m -> Expect.equal [ 0, 1, 2 ] (List.sort (sources m))
+                    , \m -> Expect.equal Nothing m.scene
+                    ]
+                    model
+        , test "an empty document is ready and has no bounds to frame" <|
+            \_ ->
+                loaded Document.empty
+                    |> Expect.all
+                        [ \m -> Expect.equal Ready m.loadPhase
+                        , \m -> Expect.equal Nothing m.modelBounds
+                        ]
+        , test "adding a placement leaves the existing ones in place" <|
+            \_ ->
+                let
+                    before =
+                        loaded (bricks 2)
+
+                    ( after, _, _ ) =
+                        Viewport.applyDocument (bricks 3) before
+                in
+                Expect.equal [ 0, 1, 2 ] (List.sort (sources after))
+        , test "removing a placement removes only that one" <|
+            \_ ->
+                let
+                    ( after, _, _ ) =
+                        Viewport.applyDocument (Document.removePlacement 1 (bricks 3)) (loaded (bricks 3))
+                in
+                Expect.equal [ 0, 2 ] (List.sort (sources after))
+        , test "recolouring a placement changes its colour and nothing else" <|
+            \_ ->
+                let
+                    ( after, _, _ ) =
+                        Viewport.applyDocument
+                            (Document.updatePlacement 1 (\p -> { p | color = 14 }) (bricks 3))
+                            (loaded (bricks 3))
+
+                    colours model =
+                        model.instancedScene
+                            |> Maybe.map (\scene -> scene.placements |> List.sortBy .source |> List.map (.color >> Math.Vector4.toRecord))
+                in
+                Expect.all
+                    [ \m -> Expect.equal (List.length (sources m)) 3
+                    , \m ->
+                        case colours m of
+                            Just [ a, b, c ] ->
+                                Expect.all
+                                    [ \_ -> Expect.equal a c
+                                    , \_ -> Expect.notEqual a b
+                                    ]
+                                    ()
+
+                            _ ->
+                                Expect.fail "expected three placements"
+                    ]
+                    after
+        , test "moving a placement moves it" <|
+            \_ ->
+                let
+                    ( after, _, _ ) =
+                        Viewport.applyDocument
+                            (Document.updatePlacement 0 (\p -> { p | matrix = Mat4.makeTranslate3 500 0 0 }) (bricks 1))
+                            (loaded (bricks 1))
+                in
+                after.instancedScene
+                    |> Maybe.map (\scene -> List.map (.center >> Math.Vector3.getX) scene.placements)
+                    |> Maybe.withDefault []
+                    |> List.map (\x -> x > 400)
+                    |> Expect.equal [ True ]
+        , test "a part that is not cached is fetched, and appears once it arrives" <|
+            \_ ->
+                let
+                    withNew =
+                        Document.addPlacement "" { part = "9999.dat", color = 4, matrix = Mat4.identity } (bricks 1)
+                            |> Tuple.first
+
+                    ( waiting, _, _ ) =
+                        Viewport.applyDocument withNew (loaded (bricks 1))
+
+                    ( arrived, _, _ ) =
+                        Viewport.update (PartLoaded "9999.dat" (Ok "3 16 0 0 0 10 0 0 0 0 10")) waiting
+                            |> (\( m, c, e ) -> ( m, c, e ))
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Just Loading) (Dict.get "9999.dat" waiting.partCache)
+                    , \_ -> Expect.equal [ 0 ] (sources waiting)
+                    , \_ -> Expect.equal [ 0, 1 ] (List.sort (sources arrived))
+                    ]
+                    ()
+        , test "a part that fails to load does not block the document" <|
+            \_ ->
+                let
+                    withNew =
+                        Document.addPlacement "" { part = "9999.dat", color = 4, matrix = Mat4.identity } (bricks 1)
+                            |> Tuple.first
+
+                    ( waiting, _, _ ) =
+                        Viewport.applyDocument withNew (loaded (bricks 1))
+
+                    ( failed, _, _ ) =
+                        Viewport.update (PartLoaded "9999.dat" (Err Http.NetworkError)) waiting
+                in
+                Expect.equal [ 0 ] (sources failed)
+        , test "framing happens for the first content only" <|
+            \_ ->
+                let
+                    ( first, _, _ ) =
+                        Viewport.applyDocument (bricks 1) (loaded Document.empty)
+
+                    ( second, _, _ ) =
+                        Viewport.applyDocument (bricks 2) first
+                in
+                Expect.all
+                    [ \_ -> Expect.notEqual Nothing first.modelBounds
+                    , \_ -> Expect.equal first.camera.target second.camera.target
+                    ]
+                    ()
+        , test "pickSource finds the placement under the cursor" <|
+            \_ ->
+                let
+                    model =
+                        loaded (bricks 1)
+                            |> (\m -> { m | width = 800, height = 600 })
+
+                    framed =
+                        Viewport.applyDocument (bricks 1) model |> (\( m, _, _ ) -> m)
+                in
+                ( Viewport.pickSource 400 300 framed, Viewport.pickSource 5 5 framed )
+                    |> Expect.equal ( Just 0, Nothing )
+        ]

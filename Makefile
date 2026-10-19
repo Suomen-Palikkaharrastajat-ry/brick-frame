@@ -8,7 +8,7 @@ GENERATOR_NIX ?= generator-nix
 # vite config files.
 VITE ?= vite --configLoader native
 LDRAW_SYNC_URL ?= https://library.ldraw.org/library/updates/complete.zip
-LDRAW_SYNC_DIR ?= elm-app/public/ldraw
+LDRAW_SYNC_DIR ?= viewer-app/public/ldraw
 LDRAW_SYNC_LOCK ?= ldraw-sync.lock.json
 
 .PHONY: help
@@ -23,8 +23,10 @@ vendor: ## Init and update all git submodules to their pinned commits
 	@# rewrite git@github.com: to https://github.com/ so submodules clone via HTTPS.
 	@[ -z "$$CI" ] || git config --global url."https://github.com/".insteadOf "git@github.com:"
 	@if [ -d .git ]; then git submodule update --init; elif [ ! -d vendor/master-builder ]; then mkdir -p vendor && git clone https://github.com/Suomen-Palikkaharrastajat-ry/master-builder.git vendor/master-builder; fi
-	ln -sfn ../vendor/master-builder/packages elm-app/packages
-	ln -sfn ../../../vendor/master-builder/review/src/LlmAgent elm-app/review/src/LlmAgent
+	ln -sfn ../vendor/master-builder/packages viewer-app/packages
+	ln -sfn ../../../vendor/master-builder/review/src/LlmAgent viewer-app/review/src/LlmAgent
+	ln -sfn ../vendor/master-builder/packages studio-app/packages
+	ln -sfn ../../../vendor/master-builder/review/src/LlmAgent studio-app/review/src/LlmAgent
 
 # ── Development environment ──────────────────────────────────────────────────
 
@@ -42,82 +44,116 @@ develop: devenv.local.nix devenv.local.yaml ## Bootstrap devenv shell + VS Code
 all: build ## Build everything
 
 HS_SOURCES := $(shell find src generator -name '*.hs') brick-frame.cabal $(wildcard cabal.project*)
-ELM_APP_SOURCES := $(shell find elm-app/src -name '*.elm' ! -name 'Data.elm')
+SHARED_ELM_SOURCES := $(shell find packages/brick-frame-viewport/src packages/brick-frame-simulation/src packages/brick-frame-simulator/src packages/brick-frame-ui/src -name '*.elm' ! -name 'ColorData.elm')
+VIEWER_APP_SOURCES := $(shell find viewer-app/src -name '*.elm') $(SHARED_ELM_SOURCES) packages/brick-frame-data/src/EmbeddedParts.elm
+STUDIO_APP_SOURCES := $(shell find studio-app/src -name '*.elm') $(SHARED_ELM_SOURCES) packages/brick-frame-data/src/EmbeddedParts.elm
+VIEWPORT_JS_SOURCES := $(shell find packages/brick-frame-viewport/runtime -name '*.js') packages/brick-frame-viewport/geometry-worker.js
+# Shared package code that is elm-format clean. The older simulator modules and
+# the generated ColorData module are not validated yet.
+SHARED_PACKAGE_DIRS := packages/brick-frame-data/src/EmbeddedParts.elm packages/brick-frame-viewport packages/brick-frame-simulation packages/brick-frame-ui packages/brick-frame-simulator/src/LDraw/Document.elm packages/brick-frame-simulator/src/LDraw/Format.elm packages/brick-frame-simulator/src/LDraw/Writer.elm packages/brick-frame-simulator/src/Render/Pick.elm packages/brick-frame-simulator/tests/LDraw/DocumentTest.elm packages/brick-frame-simulator/tests/LDraw/Fixtures.elm
 ELM_PACKAGE_SOURCES := $(shell find vendor/master-builder/packages -name '*.elm' -o -name '*.css' 2>/dev/null)
-WC_SOURCES := $(shell find elm-app/web-components elm-app/runtime -name '*.js' 2>/dev/null)
+WC_SOURCES := $(shell find viewer-app/web-components packages/brick-frame-viewport/runtime -name '*.js' 2>/dev/null)
 
 brick-data-generator: $(HS_SOURCES)
 	cabal build generator
 	cp $$(cabal list-bin generator) $@
 
-GENERATED_ELM := elm-app/src/Data.elm packages/brick-frame-simulator/src/LDraw/ColorData.elm
+GENERATED_ELM := packages/brick-frame-data/src/Data.elm packages/brick-frame-simulator/src/LDraw/ColorData.elm
 
 .PHONY: generate
-generate: elm-app/src/Data.elm ## Run Haskell generator to produce generated Elm data modules
+generate: packages/brick-frame-data/src/Data.elm ## Run Haskell generator to produce generated Elm data modules
 
 # Both generated modules come out of a single generator run; Data.elm stands in
 # for the pair as the make target.
-elm-app/src/Data.elm: brick-data-generator elm-app/public/ldraw/LDConfig.ldr
+packages/brick-frame-data/src/Data.elm: brick-data-generator viewer-app/public/ldraw/LDConfig.ldr
 	./brick-data-generator
-	cd elm-app && elm-format --yes $(patsubst elm-app/%,%,$(filter elm-app/%,$(GENERATED_ELM))) $(addprefix ../,$(filter-out elm-app/%,$(GENERATED_ELM)))
+	elm-format --yes $(GENERATED_ELM)
 
-elm-app/src/.data-nix-stamp:
+packages/brick-frame-data/src/.data-nix-stamp:
 	$(GENERATOR_NIX)
 	touch $@
 
 .PHONY: elm-dev
-elm-dev: elm-app/src/Data.elm ## Start Elm + Vite dev server (hot reload)
-	cd elm-app && $(VITE)
+elm-dev: packages/brick-frame-data/src/Data.elm ## Start Elm + Vite dev server (hot reload)
+	cd viewer-app && $(VITE)
+
+.PHONY: studio-dev
+studio-dev: packages/brick-frame-data/src/Data.elm studio-app/.elm-tailwind/.stamp ## Start the studio's Vite dev server (http://localhost:5174)
+	cd studio-app && $(VITE)
 
 .PHONY: elm-tailwind-gen
-elm-tailwind-gen: elm-app/.elm-tailwind/.stamp ## Generate typed Tailwind Elm modules into elm-app/.elm-tailwind/
+elm-tailwind-gen: viewer-app/.elm-tailwind/.stamp studio-app/.elm-tailwind/.stamp ## Generate typed Tailwind Elm modules into viewer-app/.elm-tailwind/ and studio-app/.elm-tailwind/
 
-elm-app/.elm-tailwind/.stamp: elm-app/elm.json elm-app/vite.config.mjs elm-app/main.css $(ELM_APP_SOURCES) $(ELM_PACKAGE_SOURCES) elm-app/src/Data.elm
-	cd elm-app && elm-tailwind-classes gen
-	mkdir -p elm-app/.elm-tailwind
+studio-app/.elm-tailwind/.stamp: studio-app/elm.json studio-app/vite.config.mjs studio-app/main.css $(STUDIO_APP_SOURCES) $(ELM_PACKAGE_SOURCES) packages/brick-frame-data/src/Data.elm
+	cd studio-app && elm-tailwind-classes gen
+	mkdir -p studio-app/.elm-tailwind
 	touch $@
 
-build/.elm-stamp: elm-app/.elm-tailwind/.stamp $(ELM_APP_SOURCES) $(ELM_PACKAGE_SOURCES) elm-app/elm.json elm-app/vite.config.mjs elm-app/index.html elm-app/main.js elm-app/main.css
-	cd elm-app && $(VITE) build
+viewer-app/.elm-tailwind/.stamp: viewer-app/elm.json viewer-app/vite.config.mjs viewer-app/main.css $(VIEWER_APP_SOURCES) $(ELM_PACKAGE_SOURCES) packages/brick-frame-data/src/Data.elm
+	cd viewer-app && elm-tailwind-classes gen
+	mkdir -p viewer-app/.elm-tailwind
 	touch $@
 
-build/.elm-stamp-ci: elm-app/src/.data-nix-stamp elm-app/.elm-tailwind/.stamp $(ELM_APP_SOURCES) $(ELM_PACKAGE_SOURCES) elm-app/elm.json elm-app/vite.config.mjs elm-app/index.html elm-app/main.js elm-app/main.css
-	cd elm-app && $(VITE) build
+build/.elm-stamp: viewer-app/.elm-tailwind/.stamp $(VIEWER_APP_SOURCES) $(ELM_PACKAGE_SOURCES) $(VIEWPORT_JS_SOURCES) viewer-app/elm.json viewer-app/vite.config.mjs viewer-app/index.html viewer-app/main.js viewer-app/main.css packages/brick-frame-ui/theme.css
+	cd viewer-app && $(VITE) build
 	touch $@
+
+build/.elm-stamp-ci: packages/brick-frame-data/src/.data-nix-stamp viewer-app/.elm-tailwind/.stamp $(VIEWER_APP_SOURCES) $(ELM_PACKAGE_SOURCES) $(VIEWPORT_JS_SOURCES) viewer-app/elm.json viewer-app/vite.config.mjs viewer-app/index.html viewer-app/main.js viewer-app/main.css packages/brick-frame-ui/theme.css
+	cd viewer-app && $(VITE) build
+	touch $@
+
+# The viewer build empties build/, so the studio is rebuilt whenever it runs.
+build/.studio-stamp: build/.elm-stamp studio-app/.elm-tailwind/.stamp $(STUDIO_APP_SOURCES) $(ELM_PACKAGE_SOURCES) $(VIEWPORT_JS_SOURCES) studio-app/elm.json studio-app/vite.config.mjs studio-app/index.html studio-app/main.js studio-app/main.css packages/brick-frame-ui/theme.css
+	cd studio-app && $(VITE) build
+	touch $@
+
+build/.studio-stamp-ci: build/.elm-stamp-ci packages/brick-frame-data/src/.data-nix-stamp studio-app/.elm-tailwind/.stamp $(STUDIO_APP_SOURCES) $(ELM_PACKAGE_SOURCES) $(VIEWPORT_JS_SOURCES) studio-app/elm.json studio-app/vite.config.mjs studio-app/index.html studio-app/main.js studio-app/main.css packages/brick-frame-ui/theme.css
+	cd studio-app && $(VITE) build
+	touch $@
+
+.PHONY: studio-build
+studio-build: build/.studio-stamp ## Production build of the studio → build/studio/
 
 .PHONY: elm-build
 elm-build: build/.elm-stamp ## Production build of Elm SPA → build/
 
-build/.wc-stamp: elm-app/src/Data.elm elm-app/elm.json elm-app/vite.web-components.config.mjs elm-app/src/Main.elm elm-app/src/Ports.elm elm-app/geometry-worker.js elm-app/main.css $(WC_SOURCES)
-	cd elm-app && $(VITE) build --config vite.web-components.config.mjs
+build/.wc-stamp: packages/brick-frame-data/src/Data.elm viewer-app/elm.json viewer-app/vite.web-components.config.mjs viewer-app/src/Main.elm viewer-app/src/Ports.elm packages/brick-frame-viewport/geometry-worker.js viewer-app/main.css $(WC_SOURCES)
+	cd viewer-app && $(VITE) build --config vite.web-components.config.mjs
 	touch $@
 
-build/.wc-stamp-ci: elm-app/src/.data-nix-stamp elm-app/elm.json elm-app/vite.web-components.config.mjs elm-app/src/Main.elm elm-app/src/Ports.elm elm-app/geometry-worker.js elm-app/main.css $(WC_SOURCES)
-	cd elm-app && $(VITE) build --config vite.web-components.config.mjs
+build/.wc-stamp-ci: packages/brick-frame-data/src/.data-nix-stamp viewer-app/elm.json viewer-app/vite.web-components.config.mjs viewer-app/src/Main.elm viewer-app/src/Ports.elm packages/brick-frame-viewport/geometry-worker.js viewer-app/main.css $(WC_SOURCES)
+	cd viewer-app && $(VITE) build --config vite.web-components.config.mjs
 	touch $@
 
 .PHONY: wc-build
 wc-build: build/.wc-stamp ## Production build of Web Components bundle
 
 .PHONY: elm-test
-elm-test: elm-tailwind-gen elm-app/src/Data.elm ## Run Elm unit tests
-	cd elm-app && elm-test
+elm-test: elm-tailwind-gen packages/brick-frame-data/src/Data.elm ## Run Elm unit tests (viewer and studio apps)
+	cd viewer-app && elm-test
+	cd studio-app && elm-test
 
 .PHONY: elm-check
 elm-check: ## Check Elm formatting (no changes)
-	cd elm-app && elm-format --validate src/
+	cd viewer-app && elm-format --validate src/ tests/
+	cd studio-app && elm-format --validate src/ tests/
+	elm-format --validate $(SHARED_PACKAGE_DIRS)
 
 .PHONY: elm-format
 elm-format: ## Auto-format Elm source files
-	cd elm-app && elm-format --yes src/
+	cd viewer-app && elm-format --yes src/ tests/
+	cd studio-app && elm-format --yes src/ tests/
+	elm-format --yes $(SHARED_PACKAGE_DIRS)
 
 .PHONY: elm-review
-elm-review: ## Run elm-review LLM-agent rules (no changes)
-	cd elm-app && elm-review
+elm-review: ## Run elm-review LLM-agent rules (no changes) on both apps and the shared packages
+	cd viewer-app && elm-review
+	cd studio-app && elm-review
 
 .PHONY: elm-review-fix
 elm-review-fix: ## Run elm-review with auto-fix
-	cd elm-app && elm-review --fix
+	cd viewer-app && elm-review --fix
+	cd studio-app && elm-review --fix
 
 # ── Combined targets ──────────────────────────────────────────────────────────
 
@@ -125,22 +161,22 @@ elm-review-fix: ## Run elm-review with auto-fix
 dev: elm-dev ## Generate data + start Vite dev server
 
 .PHONY: build
-build: elm-build wc-build ## Generate data + production build → build/
+build: elm-build wc-build studio-build ## Generate data + production build of the viewer, web components and studio → build/
 
 .PHONY: dist-ci
-dist-ci: build/.elm-stamp-ci build/.wc-stamp-ci ## CI build: generator (Nix binary) + app + web components → build/
+dist-ci: build/.elm-stamp-ci build/.wc-stamp-ci build/.studio-stamp-ci ## CI build: generator (Nix binary) + viewer + web components + studio → build/
 
 .PHONY: watch
 watch: ## Watch Haskell sources and run Vite dev server
 	make generate
 	find src generator brick-frame.cabal -name "*.hs" -o -name "*.cabal" | entr -s 'make generate' &
-	cd elm-app && elm-tailwind-classes gen && $(VITE)
+	cd viewer-app && elm-tailwind-classes gen && $(VITE)
 
 .PHONY: watch-docs
 watch-docs: ## Start Vite for web-components docs playground watch mode
 	$(MAKE) generate
 	@echo "Open http://localhost:5173/docs/index.watch.html"
-	cd elm-app && $(VITE)
+	cd viewer-app && $(VITE)
 
 .PHONY: sync-ldraw
 sync-ldraw: ## Sync official LDraw library into local assets + write manifest
@@ -163,20 +199,33 @@ ldraw-missing-check: ## Check model references resolve via synced + generated LD
 	LDRAW_SYNC_DIR="$(LDRAW_SYNC_DIR)" \
 	./scripts/check-missing-ldraw-parts.sh
 
+.PHONY: ldraw-index
+ldraw-index: ## Build the studio's part index (parts-index.json) from the synced library
+	node scripts/build-part-index.mjs "$(LDRAW_SYNC_DIR)"
+
+.PHONY: ldraw-index-test
+ldraw-index-test: ## Test the part index builder
+	node --test scripts/*.test.mjs
+
+# The index runs last so it lists the generated replacement parts too.
 .PHONY: ldraw-missing
-ldraw-missing: ldraw-missing-generate ldraw-missing-check ## Generate + validate missing-part replacements
+ldraw-missing: ldraw-missing-generate ldraw-missing-check ldraw-index ## Generate + validate missing-part replacements, then rebuild the part index
 
 # ── Test & quality ────────────────────────────────────────────────────────────
 
 .PHONY: test
 test: check ## Run all tests
 	cabal test
+	$(MAKE) ldraw-index-test
 	$(MAKE) elm-test
 	$(MAKE) test-lib
 
 .PHONY: test-lib
-test-lib: elm-app/src/Data.elm ## Run brick-frame-simulator library unit tests
+test-lib: packages/brick-frame-data/src/Data.elm ## Run the shared package unit tests (simulator, viewport, simulation)
 	cd packages/brick-frame-simulator && elm-test
+	cd packages/brick-frame-viewport && elm-test
+	cd packages/brick-frame-simulation && elm-test
+	cd packages/brick-frame-ui && elm-test
 
 .PHONY: repl
 repl: ## Open GHCi REPL
@@ -203,4 +252,4 @@ format: ## Auto-format Haskell and Elm source files
 .PHONY: clean
 clean: ## Remove build artifacts and generated output
 	cabal clean
-	rm -rf build brick-data-generator .hpc elm-app/.elm-tailwind elm-app/elm-stuff elm-app/src/Data.elm elm-app/src/.data-nix-stamp build/.wc-stamp build/.wc-stamp-ci
+	rm -rf build brick-data-generator .hpc viewer-app/.elm-tailwind viewer-app/elm-stuff studio-app/.elm-tailwind studio-app/elm-stuff packages/brick-frame-data/src/Data.elm packages/brick-frame-data/src/.data-nix-stamp build/.wc-stamp build/.wc-stamp-ci build/.studio-stamp build/.studio-stamp-ci

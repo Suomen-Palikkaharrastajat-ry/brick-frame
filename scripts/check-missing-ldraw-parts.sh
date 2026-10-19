@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LDRAW_DIR="${LDRAW_SYNC_DIR:-elm-app/public/ldraw}"
+LDRAW_DIR="${LDRAW_SYNC_DIR:-viewer-app/public/ldraw}"
 PARTS_DIR="${LDRAW_DIR}/parts"
 PRIMS_DIR="${LDRAW_DIR}/p"
 REPORT_PATH="${LDRAW_MISSING_REPORT:-build/ldraw-missing-report.txt}"
@@ -17,7 +17,7 @@ mkdir -p "$(dirname "${REPORT_PATH}")"
 # library + generated build/vendor trees.
 mapfile -d '' model_files < <(
   find . \
-    \( -path './.git' -o -path './node_modules' -o -path './build' -o -path './dist-newstyle' -o -path './vendor' -o -path './elm-app/elm-stuff' -o -path './packages/brick-frame-simulator/elm-stuff' -o -path './elm-app/public/ldraw' \) -prune \
+    \( -path './.git' -o -path './node_modules' -o -path './build' -o -path './dist-newstyle' -o -path './vendor' -o -path './viewer-app/elm-stuff' -o -path './packages/brick-frame-simulator/elm-stuff' -o -path './viewer-app/public/ldraw' \) -prune \
     -o -type f \( -name '*.ldr' -o -name '*.mpd' \) -print0
 )
 

@@ -29,7 +29,7 @@ data LDrawColor = LDrawColor
 -- carries all 300+ official codes; a hand-kept subset silently rendered every
 -- unlisted code as magenta.
 ldConfigPath :: FilePath
-ldConfigPath = "elm-app/public/ldraw/LDConfig.ldr"
+ldConfigPath = "viewer-app/public/ldraw/LDConfig.ldr"
 
 -- Parse `0 !COLOUR <Name> CODE <n> VALUE #RRGGBB [EDGE ...] [ALPHA 0-255] ...`
 -- lines. Keyword order after the name is not fixed, so each keyword is located
@@ -311,12 +311,12 @@ readPartFile partName = do
     let namePath = Text.unpack partName
     let candidates
             | "s/" `Text.isPrefixOf` partName =
-                ["elm-app/public/ldraw/parts" </> namePath]
+                ["viewer-app/public/ldraw/parts" </> namePath]
             | "48/" `Text.isPrefixOf` partName =
-                ["elm-app/public/ldraw/p" </> namePath]
+                ["viewer-app/public/ldraw/p" </> namePath]
             | otherwise =
-                [ "elm-app/public/ldraw/parts" </> namePath
-                , "elm-app/public/ldraw/p" </> namePath
+                [ "viewer-app/public/ldraw/parts" </> namePath
+                , "viewer-app/public/ldraw/p" </> namePath
                 ]
     existing <- firstExistingFile candidates
     case existing of

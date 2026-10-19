@@ -49,7 +49,7 @@ generator):
 | `4716.dat` | 1 | Worm (treated as 1 tooth for ratio math) |
 
 Additional spur and specialty gears may be present; the full list is in
-`elm-app/src/Data.elm` (auto-generated — run `make generate` to rebuild).
+`packages/brick-frame-data/src/Data.elm` (auto-generated — run `make generate` to rebuild).
 
 Each detected gear becomes a `GearInstance`:
 
@@ -139,7 +139,7 @@ type alias MotorState =
 The first detected gear is auto-selected as motor when a model loads. The user
 can click any gear to reassign the motor.
 
-`PlaybackState` in `Main.elm` controls the timeline:
+`PlaybackState` in `Simulation` controls the timeline:
 
 ```elm
 type alias PlaybackState =
@@ -155,15 +155,25 @@ type alias PlaybackState =
 `currentTime` increments each animation frame by `dt × speedMultiplier` while
 running, and stops at `maxTime` (auto-pause).
 
+## Snapshot flow
+
+Analysis runs once per load. When `Viewport` reports `PartsReady`, the host calls
+`Simulation.analyse` with the top-level lines and part cache; that detects gears
+and components, builds the graph, and returns the lines the viewport should bake
+as the static scene (everything that is not a gear or riding on one). Moving
+parts are drawn separately by `Simulation.entities`. The studio's preview uses the
+same flow on a snapshot of the document (`Writer.writeDocument`) in a fresh
+`Viewport` + `Simulation`, so editing never disturbs the running simulation.
+
 ## Click-to-select motor gear
 
-On `MouseUp`, if the total mouse drag was < 3 px, `Main.elm` fires a ray-sphere
+On `MouseUp`, if the total mouse drag was < 3 px, the host (via `Simulation.pickGear`) fires a ray-sphere
 intersection test against every gear's bounding sphere (radius = `pitchRadius`).
 The nearest intersected gear is selected as the new motor gear.
 
 ## Limitations
 
-- **Co-axial rotation is top-level only.** `topLevelCoaxialGear` in `Main.elm`
+- **Co-axial rotation is top-level only.** `topLevelCoaxialGear` in `Simulation.Meshes`
   detects non-gear, non-component `SubFileRef` nodes in the root file that share
   an axle with a detected gear (parallel axis, centre within 2.5 LDU of the
   gear's axle line). Those parts are excluded from the static scene and rendered

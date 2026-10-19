@@ -10,8 +10,10 @@ devenv.local.yaml
 # --- Dependencies ---
 node_modules
 node_modules/
-elm-app/node_modules/
-elm-app/packages
+viewer-app/node_modules/
+viewer-app/packages
+studio-app/node_modules/
+studio-app/packages
 
 # --- Haskell build artifacts ---
 dist-newstyle/
@@ -19,17 +21,20 @@ template-generator
 brick-data-generator
 
 # --- Elm / frontend build artifacts ---
-elm-app/elm-stuff/
-elm-app/.elm-tailwind/
-elm-app/.vite/
-elm-app/public/ldraw/
-packages/brick-frame-simulator/elm-stuff/
+viewer-app/elm-stuff/
+studio-app/elm-stuff/
+viewer-app/.elm-tailwind/
+viewer-app/.vite/
+studio-app/.elm-tailwind/
+studio-app/.vite/
+viewer-app/public/ldraw/
+packages/*/elm-stuff/
 build/
 
 # --- Generated output ---
-elm-app/src/Data.elm
+packages/brick-frame-data/src/Data.elm
 packages/brick-frame-simulator/src/LDraw/ColorData.elm
-elm-app/src/.data-nix-stamp
+packages/brick-frame-data/src/.data-nix-stamp
 
 # --- Editor & OS ---
 .vscode/

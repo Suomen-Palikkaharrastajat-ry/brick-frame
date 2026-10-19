@@ -2,7 +2,7 @@
 set -euo pipefail
 
 CATALOG_PATH="${LDRAW_MISSING_CATALOG:-ldraw/missing/catalog.tsv}"
-LDRAW_DIR="${LDRAW_SYNC_DIR:-elm-app/public/ldraw}"
+LDRAW_DIR="${LDRAW_SYNC_DIR:-viewer-app/public/ldraw}"
 PARTS_DIR="${LDRAW_DIR}/parts"
 INLINE_DIR="${LDRAW_MISSING_INLINE_DIR:-ldraw/missing/inline}"
 MANIFEST_PATH="${LDRAW_MISSING_MANIFEST:-${LDRAW_DIR}/.generated-missing-parts.list}"

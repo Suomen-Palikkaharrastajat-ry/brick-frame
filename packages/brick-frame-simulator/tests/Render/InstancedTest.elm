@@ -95,6 +95,11 @@ viewProjection =
         (Camera.viewMatrix camera)
 
 
+rawBrick : Int -> Mat4.Mat4 -> Instanced.RawPlacement
+rawBrick color matrix =
+    { part = "3001.dat", color = color, matrix = matrix }
+
+
 
 -- ── Suite ─────────────────────────────────────────────────────────────────────
 
@@ -209,6 +214,84 @@ suite =
                         |> .proxyChunks
                         |> List.isEmpty
                         |> Expect.equal False
+            ]
+        , describe "incremental edits"
+            [ test "replaceSource adds the placements of a new source" <|
+                \_ ->
+                    let
+                        base =
+                            Instanced.build cache placements
+
+                        added =
+                            Instanced.replaceSource cache 7 [ rawBrick 4 (Mat4.makeTranslate3 0 0 100) ] base
+                    in
+                    Expect.all
+                        [ \scene -> Expect.equal 4 (List.length scene.placements)
+                        , \scene -> Expect.equal [ 7 ] (List.filter (\id -> id == 7) (List.map .source scene.placements))
+                        , \scene -> Expect.equal 3 (List.length base.placements)
+                        ]
+                        added
+            , test "replacing a source moves its placement and leaves the others alone" <|
+                \_ ->
+                    let
+                        base =
+                            Instanced.build cache [] |> Instanced.replaceSource cache 1 [ rawBrick 4 Mat4.identity ] |> Instanced.replaceSource cache 2 [ rawBrick 4 (Mat4.makeTranslate3 500 0 0) ]
+
+                        moved =
+                            Instanced.replaceSource cache 1 [ rawBrick 4 (Mat4.makeTranslate3 0 0 30) ] base
+
+                        centreOf source scene =
+                            scene.placements
+                                |> List.filter (\p -> p.source == source)
+                                |> List.map (.center >> Vec3.toRecord)
+                    in
+                    Expect.all
+                        [ \scene -> Expect.equal (centreOf 2 base) (centreOf 2 scene)
+                        , \scene -> Expect.notEqual (centreOf 1 base) (centreOf 1 scene)
+                        , \scene -> Expect.equal 2 (List.length scene.placements)
+                        ]
+                        moved
+            , test "removeSource drops the placements and their proxy cell" <|
+                \_ ->
+                    let
+                        one =
+                            Instanced.build cache [] |> Instanced.replaceSource cache 1 [ rawBrick 4 Mat4.identity ]
+                    in
+                    Instanced.removeSource 1 one
+                        |> Expect.all
+                            [ \scene -> Expect.equal [] scene.placements
+                            , \scene -> Expect.equal [] scene.proxyChunks
+                            ]
+            , test "a source can expand to several placements" <|
+                \_ ->
+                    Instanced.build cache []
+                        |> Instanced.replaceSource cache 3 [ rawBrick 4 Mat4.identity, rawBrick 1 (Mat4.makeTranslate3 20 0 0) ]
+                        |> .placements
+                        |> List.map .source
+                        |> Expect.equal [ 3, 3 ]
+            , test "a part missing from the cache is skipped" <|
+                \_ ->
+                    Instanced.build cache []
+                        |> Instanced.replaceSource cache 1 [ { part = "unknown.dat", color = 4, matrix = Mat4.identity } ]
+                        |> .placements
+                        |> Expect.equal []
+            , test "an incremental scene matches a scene built in one go" <|
+                \_ ->
+                    let
+                        raws =
+                            [ rawBrick 4 Mat4.identity, rawBrick 1 (Mat4.makeTranslate3 20 0 0), rawBrick 2 (Mat4.makeTranslate3 40 0 0) ]
+
+                        whole =
+                            Instanced.build cache raws
+
+                        stepwise =
+                            List.indexedMap Tuple.pair raws
+                                |> List.foldl (\( i, raw ) scene -> Instanced.replaceSource cache i [ raw ] scene) (Instanced.build cache [])
+
+                        summary scene =
+                            scene.placements |> List.map (\p -> ( p.part, Vec3.toRecord p.center, Vec4.toRecord p.color ))
+                    in
+                    Expect.equal (summary whole) (summary stepwise)
             ]
         , describe "frustum culling"
             [ test "a sphere at the camera target is visible" <|

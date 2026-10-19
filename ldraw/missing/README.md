@@ -11,7 +11,7 @@ in the synced official LDraw library.
 part|strategy|target|description|source_models
 ```
 
-- `part`: output filename under `elm-app/public/ldraw/parts/`
+- `part`: output filename under `viewer-app/public/ldraw/parts/`
 - `strategy`:
   - `alias`: generate a wrapper part that references another part
   - `inline`: copy static content from `ldraw/missing/inline/<target>`
