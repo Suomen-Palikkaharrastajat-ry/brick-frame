@@ -6,6 +6,7 @@ const defaults = runtimeDefaults()
 
 initBricksRuntime({
   elm: Elm.Main,
+  studioUrl: import.meta.env.VITE_STUDIO_URL ?? 'studio/',
   node: document.getElementById('app'),
   mode: 'simulator',
   ldrawBase: import.meta.env.VITE_LDRAW_BASE ?? defaults.defaultLdrawBase,

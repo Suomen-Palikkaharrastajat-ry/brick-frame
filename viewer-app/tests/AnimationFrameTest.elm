@@ -31,6 +31,7 @@ testFlags =
     , vibrance = Nothing
     , edgeWidth = Nothing
     , supportsPointerEvents = True
+    , studioUrl = ""
     }
 
 

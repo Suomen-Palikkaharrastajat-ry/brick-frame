@@ -566,6 +566,10 @@ function createExternalGeometryWorker(workerUrl) {
  * lives outside Elm: loading files (.ldr/.mpd/.dat and Studio .io archives), the
  * geometry worker, the URL hash, drag-and-drop, resize and runtime events.
  *
+ * Options beyond the obvious: `studioUrl` makes the viewer offer an "Edit in
+ * studio" link; `loadModelInJs` loads `defaultModel` in JavaScript and hands the
+ * text to Elm through `fileContentReceived`.
+ *
  * `elm` is the compiled Elm module of the host application (e.g. `Elm.Main`).
  * It must expose the ports `requestFileUpload`, `fileContentReceived`,
  * `fileLoadError`, `requestGeometryFlatten`, `geometryFlattened`,
@@ -587,6 +591,8 @@ export function initBricksRuntime(options) {
     controlsEnabled = false,
     initialMotorIndex = -1,
     initialRpm = 0,
+    studioUrl = '',
+    loadModelInJs = false,
     workerMode = defaultWorkerMode,
     workerUrl = defaultWorkerUrl,
     ambientStrength = undefined,
@@ -625,8 +631,10 @@ export function initBricksRuntime(options) {
   // Extensionless URLs (for example blob: URLs in docs playground) can also point to .io
   // payloads, so route those through the JS loader too where we can sniff ZIP magic bytes.
   const defaultModelExtension = inferFileExtension(String(defaultModel ?? ''))
+  // `loadModelInJs` forces this path for every URL, for hosts (the studio) that
+  // read the model text themselves instead of leaving the fetch to Elm.
   const defaultModelNeedsJsLoader =
-    defaultModelExtension === '.io' || defaultModelExtension === null
+    loadModelInJs || defaultModelExtension === '.io' || defaultModelExtension === null
 
   const app = elm.init({
     node,
@@ -647,6 +655,7 @@ export function initBricksRuntime(options) {
       edgeWidth: sanitizedEdgeWidth,
       // Attach only one of the touch/pointer listener families. Binding both
       // double-tracks fingers on iOS Safari, which fires both.
+      studioUrl: String(studioUrl ?? ''),
       supportsPointerEvents: typeof window !== 'undefined' && 'PointerEvent' in window,
     },
   })

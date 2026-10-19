@@ -37,8 +37,13 @@ import Ports
 import Render.Camera as Camera
 import Render.Style as Style
 import Simulation
+import UI.Button as Button
 import UI.FileUpload as FileUpload
+import UI.ShortcutHelp as ShortcutHelp
+import UI.Status as Status
 import UI.Theme as Theme
+import UI.Touch as Touch
+import UI.ViewPad as ViewPad
 import Viewport
 import Viewport.Framing exposing (ViewPreset(..))
 import Viewport.Hash as Hash
@@ -61,6 +66,7 @@ type alias Flags =
     , vibrance : Maybe Float
     , edgeWidth : Maybe Float
     , supportsPointerEvents : Bool
+    , studioUrl : String
     }
 
 
@@ -82,6 +88,7 @@ type alias Model =
     , uiMode : UiMode
     , viewerControlsEnabled : Bool
     , showShortcutHelp : Bool
+    , studioUrl : String
     }
 
 
@@ -122,6 +129,7 @@ init flags =
       , uiMode = parseUiMode flags.uiMode
       , viewerControlsEnabled = flags.controlsEnabled
       , showShortcutHelp = False
+      , studioUrl = String.trim flags.studioUrl
       }
     , Cmd.batch
         [ Cmd.map ViewportMsg viewportCmd
@@ -525,6 +533,61 @@ view model =
         ]
 
 
+viewShortcutHelp : Html Msg
+viewShortcutHelp =
+    ShortcutHelp.view { rows = Shortcuts.helpRows, onClose = ToggleShortcutHelp }
+
+
+viewPad : Model -> Html Msg
+viewPad model =
+    ViewPad.view
+        { walking = model.viewport.camera.navigation == Camera.Walk
+        , helpOpen = model.showShortcutHelp
+        , play =
+            if model.simulation.simulationAvailable then
+                Just
+                    { running = model.simulation.playback.running
+                    , onToggle = SimulationMsg Simulation.ToggleMotor
+                    }
+
+            else
+                Nothing
+        , onFit = ViewportMsg Viewport.FitView
+        , onToggleWalk = ViewportMsg Viewport.ToggleWalkMode
+        , onToggleHelp = ToggleShortcutHelp
+        , onStartRotate = \azimuth elevation -> ViewportMsg (Viewport.StartHoldRotate azimuth elevation)
+        , onEndRotate = ViewportMsg Viewport.EndHoldRotate
+        }
+
+
+viewStatus : Model -> Html Msg
+viewStatus model =
+    Status.view
+        { error = model.viewport.errorMsg
+        , onDismiss = ViewportMsg Viewport.DismissError
+        , phase =
+            case model.viewport.loadPhase of
+                Viewport.Ready ->
+                    Status.Done
+
+                Viewport.Idle ->
+                    Status.Done
+
+                Viewport.FetchingTopLevel _ ->
+                    Status.Fetching
+
+                Viewport.ResolvingParts ->
+                    Status.ResolvingParts
+                        { loaded = model.viewport.partsLoaded
+                        , total = model.viewport.partsTotal
+                        , percent = model.viewport.loadingProgressPct
+                        }
+
+                Viewport.FlatteningGeometry ->
+                    Status.Finalizing model.viewport.loadingProgressPct
+        }
+
+
 viewOverlay : Model -> Html Msg
 viewOverlay model =
     let
@@ -532,7 +595,7 @@ viewOverlay model =
             case model.uiMode of
                 ViewerMode ->
                     if model.viewerControlsEnabled then
-                        [ viewViewerControls model ]
+                        [ viewPad model ]
 
                     else
                         []
@@ -561,104 +624,6 @@ viewOverlay model =
                     []
                )
         )
-
-
-{-| The keyboard shortcut reference.
-
-Content comes from `UI.Shortcuts.helpRows` so it cannot drift away from the
-bindings it documents.
-
--}
-viewShortcutHelp : Html Msg
-viewShortcutHelp =
-    div
-        [ Attr.style "position" "absolute"
-        , Attr.style "top" "50%"
-        , Attr.style "left" "50%"
-        , Attr.style "transform" "translate(-50%, -50%)"
-        , Attr.style "max-width" "min(560px, calc(100% - 24px))"
-        , Attr.style "max-height" "calc(100% - 24px)"
-        , Attr.style "overflow" "auto"
-        , Attr.style "pointer-events" "auto"
-        , Attr.style "padding" "16px 20px"
-        , Attr.style "background" Theme.panelSurface
-        , Attr.style "color" Theme.textPrimary
-        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-        , Attr.style "border-radius" "8px"
-        , Attr.style "box-shadow" "0 10px 32px color-mix(in srgb, var(--color-brand) 16%, transparent)"
-        , Attr.style "font-size" "12px"
-        , Attr.attribute "role" "dialog"
-        , Attr.attribute "aria-label" "Keyboard shortcuts"
-        ]
-        (div
-            [ Attr.style "display" "flex"
-            , Attr.style "align-items" "center"
-            , Attr.style "justify-content" "space-between"
-            , Attr.style "gap" "12px"
-            , Attr.style "margin-bottom" "12px"
-            ]
-            [ div
-                [ Attr.style "font-weight" "600"
-                , Attr.style "font-size" "13px"
-                ]
-                [ text "Keyboard shortcuts" ]
-            , button
-                [ Html.Events.onClick ToggleShortcutHelp
-                , onTouchTap ToggleShortcutHelp
-                , Attr.title "Close"
-                , Attr.attribute "aria-label" "Close"
-                , Attr.style "padding" "2px 4px"
-                , Attr.style "background" "transparent"
-                , Attr.style "color" Theme.textMuted
-                , Attr.style "border" "none"
-                , Attr.style "cursor" "pointer"
-                , Attr.style "display" "flex"
-                ]
-                [ featherIcon "x" ]
-            ]
-            :: List.map viewShortcutGroup Shortcuts.helpRows
-            ++ [ div
-                    [ Attr.style "margin-top" "12px"
-                    , Attr.style "color" Theme.textMuted
-                    ]
-                    [ text "Street level flies through walls — there is no collision." ]
-               ]
-        )
-
-
-{-| One headed group of the shortcut reference.
--}
-viewShortcutGroup : ( String, List ( String, String ) ) -> Html Msg
-viewShortcutGroup ( heading, rows ) =
-    div [ Attr.style "margin-bottom" "10px" ]
-        (div
-            [ Attr.style "color" Theme.textMuted
-            , Attr.style "text-transform" "uppercase"
-            , Attr.style "letter-spacing" "0.06em"
-            , Attr.style "font-size" "10px"
-            , Attr.style "margin-bottom" "4px"
-            ]
-            [ text heading ]
-            :: List.map viewShortcutRow rows
-        )
-
-
-{-| One key/description line of the shortcut reference.
--}
-viewShortcutRow : ( String, String ) -> Html Msg
-viewShortcutRow ( keys, description ) =
-    div
-        [ Attr.style "display" "flex"
-        , Attr.style "gap" "12px"
-        , Attr.style "line-height" "1.8"
-        ]
-        [ div
-            [ Attr.style "flex" "0 0 110px"
-            , Attr.style "font-family" "monospace"
-            ]
-            [ text keys ]
-        , div [] [ text description ]
-        ]
 
 
 viewDebug : Model -> Html Msg
@@ -772,7 +737,7 @@ viewGearPanel model =
                                         ]
                                     , button
                                         [ Html.Events.onClick ToggleControlsPanel
-                                        , onTouchTap ToggleControlsPanel
+                                        , Touch.onTap ToggleControlsPanel
                                         , Attr.style "padding" "2px 8px"
                                         , Attr.style "background" Theme.panelSubtleBackground
                                         , Attr.style "color" Theme.textPrimary
@@ -912,7 +877,7 @@ viewGearRow model graph ratios inst =
         , if not isMotor then
             button
                 [ Html.Events.onClick (SimulationMsg (Simulation.SetMotorGear inst.id))
-                , onTouchTap (SimulationMsg (Simulation.SetMotorGear inst.id))
+                , Touch.onTap (SimulationMsg (Simulation.SetMotorGear inst.id))
                 , Attr.style "margin-top" "3px"
                 , Attr.style "padding" "2px 8px"
                 , Attr.style "background" Theme.panelSubtleBackground
@@ -958,7 +923,7 @@ viewMotorControls model =
             ]
             [ button
                 [ Html.Events.onClick (SimulationMsg Simulation.ToggleMotor)
-                , onTouchTap (SimulationMsg Simulation.ToggleMotor)
+                , Touch.onTap (SimulationMsg Simulation.ToggleMotor)
                 , Attr.style "flex" "1"
                 , Attr.style "padding" "5px 0"
                 , Attr.style "background"
@@ -991,7 +956,7 @@ viewMotorControls model =
                 ]
             , button
                 [ Html.Events.onClick (SimulationMsg Simulation.Stop)
-                , onTouchTap (SimulationMsg Simulation.Stop)
+                , Touch.onTap (SimulationMsg Simulation.Stop)
                 , Attr.style "padding" "5px 8px"
                 , Attr.style "background" Theme.panelSubtleBackground
                 , Attr.style "color" Theme.textPrimary
@@ -1049,269 +1014,8 @@ viewMotorControls model =
         ]
 
 
-onTouchTap : msg -> Html.Attribute msg
-onTouchTap msg =
-    Html.Events.preventDefaultOn "touchstart" (Decode.succeed ( msg, True ))
-
-
-viewViewerControls : Model -> Html Msg
-viewViewerControls model =
-    let
-        step =
-            0.08
-    in
-    div
-        [ Attr.style "position" "absolute"
-        , Attr.style "right" "12px"
-        , Attr.style "bottom" "12px"
-        , Attr.style "display" "grid"
-        , Attr.style "grid-template-columns" "repeat(3, 36px)"
-        , Attr.style "grid-template-rows" "repeat(3, 32px)"
-        , Attr.style "gap" "4px"
-        , Attr.style "pointer-events" "auto"
-        , Attr.style "touch-action" "none"
-        , Attr.style "padding" "8px"
-        , Attr.style "background" Theme.panelBackground
-        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-        , Attr.style "border-radius" "8px"
-        , Attr.style "box-shadow" "0 10px 32px color-mix(in srgb, var(--color-brand) 8%, transparent)"
-        ]
-        [ viewerFitViewButton
-        , viewerRotateButton (featherIcon "chevron-up") (ViewportMsg (Viewport.StartHoldRotate 0 -step))
-        , viewerWalkButton model
-        , viewerRotateButton (featherIcon "chevron-left") (ViewportMsg (Viewport.StartHoldRotate step 0))
-        , if model.simulation.simulationAvailable then
-            viewerCenterPlayButton model
-
-          else
-            div [] []
-        , viewerRotateButton (featherIcon "chevron-right") (ViewportMsg (Viewport.StartHoldRotate -step 0))
-        , div [] []
-        , viewerRotateButton (featherIcon "chevron-down") (ViewportMsg (Viewport.StartHoldRotate 0 step))
-        , viewerHelpButton model
-        ]
-
-
-{-| Drop to street level, or step back out.
-
-Shown as engaged while walking, following the play button's precedent, because
-the same drag means two different things depending on the mode.
-
--}
-viewerWalkButton : Model -> Html Msg
-viewerWalkButton model =
-    let
-        walking =
-            model.viewport.camera.navigation == Camera.Walk
-
-        label =
-            if walking then
-                "Leave street level"
-
-            else
-                "View from street level"
-    in
-    button
-        (Html.Events.onClick (ViewportMsg Viewport.ToggleWalkMode)
-            :: onTouchTap (ViewportMsg Viewport.ToggleWalkMode)
-            :: Attr.title label
-            :: Attr.attribute "aria-label" label
-            :: Attr.attribute "aria-pressed"
-                (if walking then
-                    "true"
-
-                 else
-                    "false"
-                )
-            :: viewerButtonStyles walking
-        )
-        [ featherIcon "user" ]
-
-
-{-| Show or hide the keyboard shortcut list.
--}
-viewerHelpButton : Model -> Html Msg
-viewerHelpButton model =
-    button
-        (Html.Events.onClick ToggleShortcutHelp
-            :: onTouchTap ToggleShortcutHelp
-            :: Attr.title "Keyboard shortcuts"
-            :: Attr.attribute "aria-label" "Keyboard shortcuts"
-            :: viewerButtonStyles model.showShortcutHelp
-        )
-        [ featherIcon "help-circle" ]
-
-
-{-| Shared styling for the viewer pad's toggle buttons.
-
-`active` swaps in the brand colours, so a mode that changes what the mouse does
-is visible at a glance.
-
--}
-viewerButtonStyles : Bool -> List (Html.Attribute Msg)
-viewerButtonStyles active =
-    [ Attr.style "width" "36px"
-    , Attr.style "height" "32px"
-    , Attr.style "padding" "0"
-    , Attr.style "background"
-        (if active then
-            Theme.brandYellow
-
-         else
-            Theme.panelSubtleBackground
-        )
-    , Attr.style "color"
-        (if active then
-            Theme.brand
-
-         else
-            Theme.textPrimary
-        )
-    , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-    , Attr.style "border-radius" "4px"
-    , Attr.style "cursor" "pointer"
-    , Attr.style "display" "flex"
-    , Attr.style "align-items" "center"
-    , Attr.style "justify-content" "center"
-    ]
-
-
-{-| Re-frame the whole model. The only way back to the auto-fit view once the
-user has orbited away from it.
--}
-viewerFitViewButton : Html Msg
-viewerFitViewButton =
-    button
-        [ Html.Events.onClick (ViewportMsg Viewport.FitView)
-        , onTouchTap (ViewportMsg Viewport.FitView)
-        , Attr.title "Fit model to view"
-        , Attr.attribute "aria-label" "Fit model to view"
-        , Attr.style "width" "36px"
-        , Attr.style "height" "32px"
-        , Attr.style "padding" "0"
-        , Attr.style "background" Theme.panelSubtleBackground
-        , Attr.style "color" Theme.textPrimary
-        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-        , Attr.style "border-radius" "4px"
-        , Attr.style "cursor" "pointer"
-        , Attr.style "display" "flex"
-        , Attr.style "align-items" "center"
-        , Attr.style "justify-content" "center"
-        ]
-        [ featherIcon "maximize" ]
-
-
-viewerRotateButton : Html Msg -> Msg -> Html Msg
-viewerRotateButton icon msg =
-    button
-        [ Html.Events.on "pointerdown" (Decode.succeed msg)
-        , Html.Events.on "pointerup" (Decode.succeed (ViewportMsg Viewport.EndHoldRotate))
-        , Html.Events.on "pointercancel" (Decode.succeed (ViewportMsg Viewport.EndHoldRotate))
-        , Html.Events.on "pointerleave" (Decode.succeed (ViewportMsg Viewport.EndHoldRotate))
-        , Html.Events.on "mouseup" (Decode.succeed (ViewportMsg Viewport.EndHoldRotate))
-        , Html.Events.preventDefaultOn "touchstart" (Decode.succeed ( msg, True ))
-        , Html.Events.preventDefaultOn "touchend" (Decode.succeed ( ViewportMsg Viewport.EndHoldRotate, True ))
-        , Html.Events.preventDefaultOn "touchcancel" (Decode.succeed ( ViewportMsg Viewport.EndHoldRotate, True ))
-        , Attr.style "width" "36px"
-        , Attr.style "height" "32px"
-        , Attr.style "padding" "0"
-        , Attr.style "background" Theme.panelSubtleBackground
-        , Attr.style "color" Theme.textPrimary
-        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-        , Attr.style "border-radius" "4px"
-        , Attr.style "cursor" "pointer"
-        , Attr.style "font-family" "monospace"
-        , Attr.style "font-size" "12px"
-        , Attr.style "display" "flex"
-        , Attr.style "align-items" "center"
-        , Attr.style "justify-content" "center"
-        ]
-        [ icon ]
-
-
-viewerCenterPlayButton : Model -> Html Msg
-viewerCenterPlayButton model =
-    button
-        [ Html.Events.onClick (SimulationMsg Simulation.ToggleMotor)
-        , onTouchTap (SimulationMsg Simulation.ToggleMotor)
-        , Attr.style "width" "36px"
-        , Attr.style "height" "32px"
-        , Attr.style "padding" "0"
-        , Attr.style "background"
-            (if model.simulation.playback.running then
-                Theme.brandYellow
-
-             else
-                Theme.panelSubtleBackground
-            )
-        , Attr.style "color"
-            (if model.simulation.playback.running then
-                Theme.brand
-
-             else
-                Theme.textPrimary
-            )
-        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-        , Attr.style "border-radius" "4px"
-        , Attr.style "cursor" "pointer"
-        , Attr.style "font-family" "monospace"
-        , Attr.style "font-size" "12px"
-        , Attr.style "display" "flex"
-        , Attr.style "align-items" "center"
-        , Attr.style "justify-content" "center"
-        ]
-        [ featherIcon
-            (if model.simulation.playback.running then
-                "pause"
-
-             else
-                "play"
-            )
-        ]
-
-
-featherIcon : String -> Html Msg
-featherIcon name =
-    let
-        icon =
-            case name of
-                "chevron-up" ->
-                    FeatherIcons.chevronUp
-
-                "chevron-down" ->
-                    FeatherIcons.chevronDown
-
-                "chevron-left" ->
-                    FeatherIcons.chevronLeft
-
-                "chevron-right" ->
-                    FeatherIcons.chevronRight
-
-                "pause" ->
-                    FeatherIcons.pause
-
-                "maximize" ->
-                    FeatherIcons.maximize
-
-                "user" ->
-                    FeatherIcons.user
-
-                "help-circle" ->
-                    FeatherIcons.helpCircle
-
-                "x" ->
-                    FeatherIcons.x
-
-                _ ->
-                    FeatherIcons.play
-    in
-    icon
-        |> FeatherIcons.withSize 14
-        |> FeatherIcons.toHtml [ Attr.attribute "aria-hidden" "true" ]
-
-
 viewToolbar : Model -> Html Msg
-viewToolbar _ =
+viewToolbar model =
     div
         [ Attr.style "position" "absolute"
         , Attr.style "bottom" "16px"
@@ -1324,114 +1028,20 @@ viewToolbar _ =
         ]
         (FileUpload.view
             { onRequestFileUpload = RequestFileUpload }
+            ++ studioLink model
         )
 
 
-viewStatus : Model -> Html Msg
-viewStatus model =
-    case model.viewport.errorMsg of
-        Just err ->
-            div
-                [ Attr.style "position" "absolute"
-                , Attr.style "top" "50%"
-                , Attr.style "left" "50%"
-                , Attr.style "transform" "translate(-50%, -50%)"
-                , Attr.style "color" Theme.brandRed
-                , Attr.style "font-family" "monospace"
-                , Attr.style "font-size" "14px"
-                , Attr.style "text-align" "center"
-                , Attr.style "background" Theme.panelSurface
-                , Attr.style "padding" "16px 24px"
-                , Attr.style "border-radius" "8px"
-                , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-                , Attr.style "box-shadow" "0 16px 48px color-mix(in srgb, var(--color-brand) 12%, transparent)"
-                , Attr.style "pointer-events" "auto"
-                ]
-                [ div [] [ text err ]
-                , button
-                    [ Html.Events.onClick (ViewportMsg Viewport.DismissError)
-                    , Attr.style "margin-top" "10px"
-                    , Attr.style "padding" "4px 12px"
-                    , Attr.style "background" Theme.panelSubtleBackground
-                    , Attr.style "color" Theme.textPrimary
-                    , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-                    , Attr.style "border-radius" "4px"
-                    , Attr.style "cursor" "pointer"
-                    , Attr.style "font-family" "monospace"
-                    , Attr.style "font-size" "12px"
-                    ]
-                    [ text "Dismiss" ]
-                ]
+{-| "Edit in studio", carrying the current camera in the URL hash. Only offered
+when the host configured a studio URL.
+-}
+studioLink : Model -> List (Html Msg)
+studioLink model =
+    if model.studioUrl == "" then
+        []
 
-        Nothing ->
-            case model.viewport.loadPhase of
-                Viewport.Ready ->
-                    text ""
-
-                Viewport.Idle ->
-                    text ""
-
-                Viewport.FetchingTopLevel _ ->
-                    viewLoadingBox "Fetching model…" Nothing
-
-                Viewport.ResolvingParts ->
-                    viewLoadingBox
-                        ("Preparing model… "
-                            ++ String.fromInt model.viewport.partsLoaded
-                            ++ " / "
-                            ++ String.fromInt model.viewport.partsTotal
-                        )
-                        (Just (round model.viewport.loadingProgressPct))
-
-                Viewport.FlatteningGeometry ->
-                    viewLoadingBox
-                        "Preparing model… finalizing geometry"
-                        (Just (round model.viewport.loadingProgressPct))
-
-
-viewLoadingBox : String -> Maybe Int -> Html Msg
-viewLoadingBox label maybePct =
-    div
-        [ Attr.style "position" "absolute"
-        , Attr.style "top" "50%"
-        , Attr.style "left" "50%"
-        , Attr.style "transform" "translate(-50%, -50%)"
-        , Attr.style "color" Theme.textPrimary
-        , Attr.style "font-family" "monospace"
-        , Attr.style "font-size" "13px"
-        , Attr.style "text-align" "center"
-        , Attr.style "background" Theme.panelSurface
-        , Attr.style "padding" "20px 28px"
-        , Attr.style "border-radius" "8px"
-        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-        , Attr.style "box-shadow" "0 16px 48px color-mix(in srgb, var(--color-brand) 10%, transparent)"
-        , Attr.style "min-width" "260px"
-        ]
-        (div [] [ text label ]
-            :: (case maybePct of
-                    Just pct ->
-                        [ div
-                            [ Attr.style "margin-top" "10px"
-                            , Attr.style "height" "4px"
-                            , Attr.style "background" Theme.panelSubtleBackground
-                            , Attr.style "border-radius" "2px"
-                            , Attr.style "overflow" "hidden"
-                            ]
-                            [ div
-                                [ Attr.style "height" "100%"
-                                , Attr.style "width" (String.fromInt pct ++ "%")
-                                , Attr.style "background" Theme.brandYellow
-                                , Attr.style "border-radius" "2px"
-                                , Attr.style "transition" "width 0.2s"
-                                ]
-                                []
-                            ]
-                        ]
-
-                    Nothing ->
-                        []
-               )
-        )
+    else
+        [ Button.link (model.studioUrl ++ "#" ++ Hash.encodeCamera model.viewport.camera) "Edit in studio" ]
 
 
 

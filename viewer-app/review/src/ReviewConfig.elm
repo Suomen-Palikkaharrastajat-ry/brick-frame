@@ -2,6 +2,7 @@ module ReviewConfig exposing (config)
 
 {-| elm-review configuration for this codebase.
 
+
 ## Goal: LLM coding agent optimisation
 
 These rules enforce conventions that keep the codebase easy for LLM coding
@@ -22,13 +23,19 @@ import LlmAgent.RequireTypeAnnotation
 import Review.Rule as Rule exposing (Rule)
 
 
+
 -- Directories containing auto-generated Elm code that should not be linted.
+
+
 generatedDirectories : List String
 generatedDirectories =
     [ ".elm-tailwind/" ]
 
 
+
 -- Individual generated files that should not be linted.
+
+
 generatedFiles : List String
 generatedFiles =
     [ "../packages/brick-frame-data/src/Data.elm"
