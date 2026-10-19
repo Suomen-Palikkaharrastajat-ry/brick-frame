@@ -307,7 +307,11 @@ update msg model =
             ( next, Cmd.batch (Cmd.map ViewportMsg viewportCmd :: eventCmds) )
 
         FileTextReceived text ->
-            openDocument (Document.parse text) model
+            if model.drag /= Nothing then
+                ( model, Cmd.none )
+
+            else
+                openDocument (Document.parse text) model
 
         FileFailed message ->
             update (ViewportMsg (Viewport.FileLoadError message)) model
@@ -316,13 +320,25 @@ update msg model =
             ( model, Ports.requestFileUpload () )
 
         NewDocument ->
-            openDocument Document.empty model
+            if model.drag /= Nothing then
+                ( model, Cmd.none )
+
+            else
+                let
+                    ( opened, openCmd ) =
+                        openDocument Document.empty model
+                in
+                ( opened, Cmd.batch [ openCmd, Ports.saveDraft "" ] )
 
         ToggleHelp ->
             ( { model | helpOpen = not model.helpOpen }, Cmd.none )
 
         UseTool tool ->
-            ( { model | tool = tool }, Cmd.none )
+            if model.drag /= Nothing then
+                ( model, Cmd.none )
+
+            else
+                ( { model | tool = tool }, Cmd.none )
 
         Undo ->
             stepHistory Edit.undo model
@@ -337,12 +353,20 @@ update msg model =
             whenSelected duplicate model
 
         SelectAll ->
-            ( { model | selection = Set.fromList (List.map .id (Document.mainPlacements model.document)) }
-            , Cmd.none
-            )
+            if model.drag /= Nothing then
+                ( model, Cmd.none )
+
+            else
+                ( { model | selection = Set.fromList (List.map .id (Document.mainPlacements model.document)) }
+                , Cmd.none
+                )
 
         ClearSelection ->
-            ( { model | selection = Set.empty }, Cmd.none )
+            if model.drag /= Nothing then
+                ( model, Cmd.none )
+
+            else
+                ( { model | selection = Set.empty }, Cmd.none )
 
         RotateSelection axis sign ->
             whenSelected
@@ -451,22 +475,26 @@ update msg model =
                     ( model, Cmd.none )
 
         PickColour code ->
-            let
-                picked =
-                    { model | activeColour = code }
+            if model.drag /= Nothing then
+                ( model, Cmd.none )
 
-                ( recoloured, recolourCmd ) =
-                    whenSelected (\ids -> commit (Recolor (List.map (\id -> ( id, code )) ids))) picked
+            else
+                let
+                    picked =
+                        { model | activeColour = code }
 
-                ( previewed, previewCmd ) =
-                    case model.palette.armed of
-                        Just part ->
-                            armPart part.file recoloured
+                    ( recoloured, recolourCmd ) =
+                        whenSelected (\ids -> commit (Recolor (List.map (\id -> ( id, code )) ids))) picked
 
-                        Nothing ->
-                            ( recoloured, Cmd.none )
-            in
-            ( previewed, Cmd.batch [ recolourCmd, previewCmd ] )
+                    ( previewed, previewCmd ) =
+                        case model.palette.armed of
+                            Just part ->
+                                armPart part.file recoloured
+
+                            Nothing ->
+                                ( recoloured, Cmd.none )
+                in
+                ( previewed, Cmd.batch [ recolourCmd, previewCmd ] )
 
         PreviewMsg previewMsg ->
             let
@@ -526,20 +554,24 @@ update msg model =
                     ( model, Cmd.none )
 
         SelectPlacement id shift ->
-            ( { model
-                | selection =
-                    if shift then
-                        if Set.member id model.selection then
-                            Set.remove id model.selection
+            if model.drag /= Nothing then
+                ( model, Cmd.none )
+
+            else
+                ( { model
+                    | selection =
+                        if shift then
+                            if Set.member id model.selection then
+                                Set.remove id model.selection
+
+                            else
+                                Set.insert id model.selection
 
                         else
-                            Set.insert id model.selection
-
-                    else
-                        Set.singleton id
-              }
-            , Cmd.none
-            )
+                            Set.singleton id
+                  }
+                , Cmd.none
+                )
 
         OpenPanel panel ->
             ( { model | panel = panel }, Cmd.none )
@@ -615,24 +647,28 @@ colour, and select it.
 -}
 addPart : String -> Model -> ( Model, Cmd Msg )
 addPart file model =
-    let
-        -- The camera looks at a render-space (Y up) point; the document is Y down.
-        target =
-            Gizmo.toRender model.viewport.camera.target
+    if model.drag /= Nothing then
+        ( model, Cmd.none )
 
-        snap v =
-            Edit.snap (toFloat model.gridStep) v
+    else
+        let
+            -- The camera looks at a render-space (Y up) point; the document is Y down.
+            target =
+                Gizmo.toRender model.viewport.camera.target
 
-        placement =
-            Mat4.makeTranslate3 (snap (Vec3.getX target)) (snap (Vec3.getY target)) (snap (Vec3.getZ target))
+            snap v =
+                Edit.snap (toFloat model.gridStep) v
 
-        newId =
-            model.document.nextId
+            placement =
+                Mat4.makeTranslate3 (snap (Vec3.getX target)) (snap (Vec3.getY target)) (snap (Vec3.getZ target))
 
-        ( document, history ) =
-            Edit.record (Add [ { part = file, color = model.activeColour, matrix = placement } ]) model.document model.history
-    in
-    syncDocument { model | document = document, history = history, selection = Set.singleton newId }
+            newId =
+                model.document.nextId
+
+            ( document, history ) =
+                Edit.record (Add [ { part = file, color = model.activeColour, matrix = placement } ]) model.document model.history
+        in
+        syncDocument { model | document = document, history = history, selection = Set.singleton newId }
 
 
 httpError : Http.Error -> String
@@ -693,23 +729,31 @@ nextStep steps current =
 -}
 whenSelected : (List Int -> Model -> ( Model, Cmd Msg )) -> Model -> ( Model, Cmd Msg )
 whenSelected edit model =
-    case Set.toList model.selection of
-        [] ->
-            ( model, Cmd.none )
+    if model.drag /= Nothing then
+        ( model, Cmd.none )
 
-        ids ->
-            edit ids model
+    else
+        case Set.toList model.selection of
+            [] ->
+                ( model, Cmd.none )
+
+            ids ->
+                edit ids model
 
 
 {-| Do an edit: record it for undo, then bring the viewport and draft up to date.
 -}
 commit : Command -> Model -> ( Model, Cmd Msg )
 commit command model =
-    let
-        ( document, history ) =
-            Edit.record command model.document model.history
-    in
-    syncDocument { model | document = document, history = history }
+    if model.drag /= Nothing then
+        ( model, Cmd.none )
+
+    else
+        let
+            ( document, history ) =
+                Edit.record command model.document model.history
+        in
+        syncDocument { model | document = document, history = history }
 
 
 {-| Copy the selection, offset by one grid step along X, and select the copies.
@@ -744,11 +788,15 @@ duplicate ids model =
 
 stepHistory : (Document -> History -> ( Document, History )) -> Model -> ( Model, Cmd Msg )
 stepHistory step model =
-    let
-        ( document, history ) =
-            step model.document model.history
-    in
-    syncDocument { model | document = document, history = history }
+    if model.drag /= Nothing then
+        ( model, Cmd.none )
+
+    else
+        let
+            ( document, history ) =
+                step model.document model.history
+        in
+        syncDocument { model | document = document, history = history }
 
 
 {-| Push the document to the viewport, forget which placements changed, drop
@@ -778,6 +826,33 @@ syncDocument model =
     in
     ( withTimer
     , Cmd.batch (hintCmd :: Cmd.map ViewportMsg viewportCmd :: Ports.saveDraft (Writer.writeDocument model.document) :: eventCmds)
+    )
+
+
+{-| Push the live drag document to the viewport and drop selected ids that no longer exist,
+without scheduling gear hints or saving the draft until the drag completes.
+-}
+syncDocumentLive : Model -> ( Model, Cmd Msg )
+syncDocumentLive model =
+    let
+        ( viewport, viewportCmd, events ) =
+            Viewport.applyDocument model.document model.viewport
+
+        present =
+            Document.mainPlacements model.document |> List.map .id |> Set.fromList
+
+        synced =
+            { model
+                | viewport = viewport
+                , document = Document.clearTouched model.document
+                , selection = Set.filter (\id -> Set.member id present) model.selection
+            }
+
+        ( final, eventCmds ) =
+            handleEvents events ( synced, [] )
+    in
+    ( final
+    , Cmd.batch (Cmd.map ViewportMsg viewportCmd :: eventCmds)
     )
 
 
@@ -821,7 +896,7 @@ openDocument document model =
             scheduleHints next
     in
     ( withTimer
-    , Cmd.batch (hintCmd :: Cmd.map ViewportMsg viewportCmd :: Ports.saveDraft (Writer.writeDocument document) :: eventCmds)
+    , Cmd.batch (hintCmd :: Cmd.map ViewportMsg viewportCmd :: eventCmds)
     )
 
 
@@ -866,7 +941,11 @@ handleEvent event ( model, cmds ) =
                     ( model, cmds )
 
         Viewport.DragEnded _ _ ->
-            ( endDrag model, cmds )
+            let
+                ( next, endCmd ) =
+                    endDrag model
+            in
+            ( next, cmds ++ [ endCmd ] )
 
         Viewport.KeyAccepted keyEvent ->
             let
@@ -987,42 +1066,59 @@ moveDrag drag point model =
     let
         amount =
             Gizmo.dragAmount (toFloat model.gridStep) drag.handle drag.start point
-
-        delta =
-            Vec3.scale amount (Edit.axisVector drag.handle.axis)
-
-        ( moved, _ ) =
-            Edit.apply (Translate drag.ids delta) drag.original
-
-        -- `original` was taken after a sync, so its touched set is empty; the
-        -- translated copy lists exactly the placements that moved.
-        ( next, cmd ) =
-            syncDocument { model | document = moved, drag = Just { drag | amount = amount } }
     in
-    ( next, cmd )
+    if amount == drag.amount then
+        ( model, Cmd.none )
+
+    else
+        let
+            delta =
+                Vec3.scale amount (Edit.axisVector drag.handle.axis)
+
+            ( moved, _ ) =
+                Edit.apply (Translate drag.ids delta) drag.original
+
+            -- `original` was taken after a sync, so its touched set is empty; the
+            -- translated copy lists exactly the placements that moved.
+            ( next, cmd ) =
+                syncDocumentLive { model | document = moved, drag = Just { drag | amount = amount } }
+        in
+        ( next, cmd )
 
 
-{-| Finish a drag: the document already shows the move, so only its undo needs
-recording.
+{-| Finish a drag: the document already shows the move, so record its undo,
+schedule hints and save the draft once.
 -}
-endDrag : Model -> Model
+endDrag : Model -> ( Model, Cmd Msg )
 endDrag model =
     case model.drag of
         Just drag ->
             if drag.amount == 0 then
-                { model | drag = Nothing }
+                ( { model | drag = Nothing }, Cmd.none )
 
             else
-                { model
-                    | drag = Nothing
-                    , history =
-                        Edit.pushApplied
-                            (Translate drag.ids (Vec3.scale -drag.amount (Edit.axisVector drag.handle.axis)))
-                            model.history
-                }
+                let
+                    updated =
+                        { model
+                            | drag = Nothing
+                            , history =
+                                Edit.pushApplied
+                                    (Translate drag.ids (Vec3.scale -drag.amount (Edit.axisVector drag.handle.axis)))
+                                    model.history
+                        }
+
+                    ( withTimer, hintCmd ) =
+                        scheduleHints updated
+                in
+                ( withTimer
+                , Cmd.batch
+                    [ hintCmd
+                    , Ports.saveDraft (Writer.writeDocument updated.document)
+                    ]
+                )
 
         Nothing ->
-            model
+            ( model, Cmd.none )
 
 
 shortcutContext : Model -> { helpVisible : Bool, walking : Bool }

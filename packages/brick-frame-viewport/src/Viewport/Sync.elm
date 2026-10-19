@@ -70,13 +70,23 @@ type alias Plan =
     }
 
 
-{-| The state after a full build of `document`: every main placement is built.
+{-| The state after a full build of `document`: placements whose parts are all
+ready are marked built; any with unresolved parts remain in `pending` so the
+next `plan` / `reconcile` picks them up and fetches what is missing.
 -}
 initialState : Document -> Set String -> List Sourced -> State
 initialState document ready sourced =
+    let
+        isResolved s =
+            not (List.isEmpty s.raws)
+                && List.all (\raw -> Set.member raw.part ready) s.raws
+
+        ( builtSourced, unbuiltSourced ) =
+            List.partition isResolved sourced
+    in
     { document = document
-    , built = Dict.fromList (List.map (\s -> ( s.source, s.fingerprint )) sourced)
-    , pending = Set.empty
+    , built = Dict.fromList (List.map (\s -> ( s.source, s.fingerprint )) builtSourced)
+    , pending = Set.fromList (List.map .source unbuiltSourced)
     , subfilesSignature = Document.subfilesSignature document
     , readyParts = ready
     }

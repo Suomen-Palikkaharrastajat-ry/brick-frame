@@ -570,6 +570,11 @@ rebuildChunk parts cell placements key index =
             Dict.remove key index
 
 
+minChunkCellSize : Float
+minChunkCellSize =
+    200.0
+
+
 {-| Edge length of one spatial cell, chosen so the model's longest axis is cut
 into `chunkDivisions` slices. Flat models such as a city layout leave the
 vertical axis as a single slice, which is what we want.
@@ -583,7 +588,7 @@ chunkCellSize boundsMin boundsMax =
         longest =
             List.foldl max 0 [ Vec3.getX extent, Vec3.getY extent, Vec3.getZ extent ]
     in
-    max 1 (longest / toFloat chunkDivisions)
+    max minChunkCellSize (longest / toFloat chunkDivisions)
 
 
 {-| Slices per axis for proxy chunking. Six gives a few dozen occupied cells on

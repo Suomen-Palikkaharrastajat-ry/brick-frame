@@ -806,8 +806,15 @@ updateInner msg model =
 
             else
                 let
+                    hasModifier =
+                        event.ctrl || event.meta || event.alt
+
                     heldModel =
-                        { model | heldKeys = Set.insert (Shortcuts.normalizeKey event.key) model.heldKeys }
+                        if hasModifier then
+                            model
+
+                        else
+                            { model | heldKeys = Set.insert (Shortcuts.normalizeKey event.key) model.heldKeys }
                 in
                 -- A held key repeats at the OS rate; movement is integrated per
                 -- frame instead, so only the first press does discrete work.
@@ -1439,11 +1446,14 @@ handleTopLevelText text model =
             else
                 Set.empty
 
+        cleanedCache =
+            Set.foldl Dict.remove model.partCache model.submodelNames
+
         ( seededCache, lines ) =
             if isMpd then
                 let
                     ( newCache, mainFile ) =
-                        Resolve.seedFromMpd text model.partCache
+                        Resolve.seedFromMpd text cleanedCache
 
                     mainLines =
                         case mainFile of
@@ -1461,7 +1471,7 @@ handleTopLevelText text model =
                 ( newCache, mainLines )
 
             else
-                ( model.partCache, Parser.parseFile text )
+                ( cleanedCache, Parser.parseFile text )
     in
     beginLoad { lines = lines, cache = seededCache, submodelNames = submodelNames, document = Nothing } model
 
@@ -1544,10 +1554,13 @@ loadDocument document model =
         subfiles =
             Document.subfiles document
 
+        cleanedCache =
+            Set.foldl Dict.remove model.partCache model.submodelNames
+
         seeded =
             List.foldl
                 (\( name, lines ) acc -> Dict.insert name (Loaded lines) acc)
-                model.partCache
+                cleanedCache
                 subfiles
     in
     beginLoad
@@ -1728,7 +1741,7 @@ pickSource x y model =
                 |> List.filterMap
                     (\p ->
                         Pick.raySphereHit origin direction p.center p.radius
-                            |> Maybe.map (\t -> ( t, p.source ))
+                            |> Maybe.map (\t -> ( ( t + p.radius, p.radius ), p.source ))
                     )
                 |> List.sortBy Tuple.first
                 |> List.head

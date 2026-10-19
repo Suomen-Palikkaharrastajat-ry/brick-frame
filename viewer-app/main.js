@@ -3,6 +3,8 @@ import { initBricksRuntime, runtimeDefaults } from '../packages/brick-frame-view
 import { Elm } from './src/Main.elm'
 
 const defaults = runtimeDefaults()
+const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+const requestedModel = hashParams.get('src')
 
 initBricksRuntime({
   elm: Elm.Main,
@@ -12,7 +14,7 @@ initBricksRuntime({
   ldrawBase: import.meta.env.VITE_LDRAW_BASE ?? defaults.defaultLdrawBase,
   ldrawFallbackBase: import.meta.env.VITE_LDRAW_FALLBACK_BASE ?? defaults.defaultFallbackBase,
   maxRpm: import.meta.env.VITE_MAX_RPM ?? defaults.defaultMaxRpm,
-  defaultModel: defaults.defaultModelUrl,
+  defaultModel: requestedModel ?? defaults.defaultModelUrl,
   initialHash: window.location.hash ?? '',
   syncUrlHash: true,
   useWindowResize: true,

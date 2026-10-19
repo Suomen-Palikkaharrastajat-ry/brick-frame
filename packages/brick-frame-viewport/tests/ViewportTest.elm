@@ -8,6 +8,7 @@ import Dict
 import Expect
 import Http
 import LDraw.Document as Document exposing (Document)
+import LDraw.Parser as Parser
 import LDraw.Resolve as Resolve exposing (PartStatus(..))
 import LDraw.Types exposing (LDrawLine(..))
 import Math.Matrix4 as Mat4
@@ -599,4 +600,69 @@ documentSuite =
                 in
                 ( Viewport.pickSource 400 300 framed, Viewport.pickSource 5 5 framed )
                     |> Expect.equal ( Just 0, Nothing )
+        , test "pickSource prefers a smaller brick sitting on a large baseplate" <|
+            \_ ->
+                let
+                    doc =
+                        Document.empty
+                            |> Document.addPlacement "" { part = "base.dat", color = 2, matrix = Mat4.identity }
+                            |> (\( d, _ ) -> Document.addPlacement "" { part = "brick.dat", color = 4, matrix = Mat4.identity } d)
+                            |> Tuple.first
+
+                    baseGeometry =
+                        "3 16 -100 0 -100 100 0 -100 100 0 100\n3 16 -100 0 -100 100 0 100 -100 0 100"
+
+                    brickGeometry =
+                        "3 16 -5 0 -5 5 0 -5 5 0 5"
+
+                    customCache =
+                        Dict.fromList
+                            [ ( "base.dat", Loaded (Parser.parseFile baseGeometry) )
+                            , ( "brick.dat", Loaded (Parser.parseFile brickGeometry) )
+                            ]
+
+                    ( model, _, _ ) =
+                        Viewport.loadDocument doc { studio | partCache = customCache, width = 800, height = 600 }
+                in
+                Expect.equal (Just 1) (Viewport.pickSource 400 300 model)
+        , test "a part added while loading is fetched and appears when resolved" <|
+            \_ ->
+                let
+                    docWithNew =
+                        Document.addPlacement "" { part = "9999.dat", color = 4, matrix = Mat4.identity } (bricks 1)
+                            |> Tuple.first
+
+                    ( initialLoading, _, _ ) =
+                        Viewport.loadDocument (bricks 1) { studio | partCache = Dict.empty }
+
+                    ( waiting, _, _ ) =
+                        Viewport.applyDocument docWithNew initialLoading
+
+                    ( initialBrickLoaded, _, _ ) =
+                        Viewport.update (PartLoaded "3001.dat" (Ok "3 16 0 0 0 10 0 0 0 0 10")) waiting
+
+                    ( secondLoaded, _, _ ) =
+                        Viewport.update (PartLoaded "9999.dat" (Ok "3 16 0 0 0 10 0 0 0 0 10")) initialBrickLoaded
+                in
+                Expect.equal [ 0, 1 ] (List.sort (sources secondLoaded))
+        , test "a removed submodel is cleaned from partCache on loadDocument" <|
+            \_ ->
+                let
+                    mpd1 =
+                        Document.parse "0 FILE main.ldr\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 sub.ldr\n0 FILE sub.ldr\n3 16 0 0 0 10 0 0 0 0 10\n"
+
+                    mpd2 =
+                        Document.parse "0 FILE main.ldr\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n"
+
+                    ( loaded1, _, _ ) =
+                        Viewport.loadDocument mpd1 studio
+
+                    ( loaded2, _, _ ) =
+                        Viewport.loadDocument mpd2 loaded1
+                in
+                Expect.all
+                    [ \_ -> Expect.equal True (Dict.member "sub.ldr" loaded1.partCache)
+                    , \_ -> Expect.equal False (Dict.member "sub.ldr" loaded2.partCache)
+                    ]
+                    ()
         ]

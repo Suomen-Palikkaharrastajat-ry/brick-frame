@@ -45,6 +45,7 @@ import UI.Status as Status
 import UI.Theme as Theme
 import UI.Touch as Touch
 import UI.ViewPad as ViewPad
+import Url
 import Viewport
 import Viewport.Framing exposing (ViewPreset(..))
 import Viewport.Hash as Hash
@@ -90,6 +91,7 @@ type alias Model =
     , viewerControlsEnabled : Bool
     , showShortcutHelp : Bool
     , studioUrl : String
+    , currentModelUrl : Maybe String
     }
 
 
@@ -100,6 +102,16 @@ type alias Model =
 init : Flags -> ( Model, Cmd Msg )
 init flags =
     let
+        trimmedModelUrl =
+            String.trim flags.defaultModelUrl
+
+        currentModelUrl =
+            if String.isEmpty trimmedModelUrl then
+                Nothing
+
+            else
+                Just trimmedModelUrl
+
         ( viewport, viewportCmd ) =
             Viewport.init
                 { ldrawBase = flags.ldrawBase
@@ -131,6 +143,7 @@ init flags =
       , viewerControlsEnabled = flags.controlsEnabled
       , showShortcutHelp = False
       , studioUrl = String.trim flags.studioUrl
+      , currentModelUrl = currentModelUrl
       }
     , Cmd.batch
         [ Cmd.map ViewportMsg viewportCmd
@@ -262,8 +275,18 @@ updateInner msg model =
 
                 ( next, eventCmds ) =
                     handleViewportEvents events ( { model | viewport = viewport }, [] )
+
+                updatedModelUrl =
+                    case viewportMsg of
+                        Viewport.FileContentReceived _ ->
+                            Nothing
+
+                        _ ->
+                            next.currentModelUrl
             in
-            ( next, Cmd.batch (Cmd.map ViewportMsg viewportCmd :: eventCmds) )
+            ( { next | currentModelUrl = updatedModelUrl }
+            , Cmd.batch (Cmd.map ViewportMsg viewportCmd :: eventCmds)
+            )
 
         SimulationMsg simulationMsg ->
             let
@@ -1021,8 +1044,9 @@ viewToolbar model =
         )
 
 
-{-| "Edit in studio", carrying the current camera in the URL hash. Only offered
-when the host configured a studio URL.
+{-| "Edit in studio", carrying the model and the current camera in the URL hash.
+Only offered when the host configured a studio URL and the current model came
+from a URL (local/uploaded files have no URL to pass).
 -}
 studioLink : Model -> List (Html Msg)
 studioLink model =
@@ -1030,7 +1054,27 @@ studioLink model =
         []
 
     else
-        [ Button.link (model.studioUrl ++ "#" ++ Hash.encodeCamera model.viewport.camera) "Edit in studio" ]
+        case model.currentModelUrl of
+            Just url ->
+                let
+                    cameraHash =
+                        Hash.encodeCamera model.viewport.camera
+
+                    href =
+                        model.studioUrl
+                            ++ "#src="
+                            ++ Url.percentEncode url
+                            ++ (if String.isEmpty cameraHash then
+                                    ""
+
+                                else
+                                    "&" ++ cameraHash
+                               )
+                in
+                [ Button.link href "Edit in studio" ]
+
+            Nothing ->
+                []
 
 
 

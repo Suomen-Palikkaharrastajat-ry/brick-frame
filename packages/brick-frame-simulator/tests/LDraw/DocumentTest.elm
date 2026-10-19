@@ -76,6 +76,33 @@ suite =
                         |> Document.placements
                         |> List.map .id
                         |> Expect.equal [ 0, 1, 2, 3 ]
+            , test "MPD with leading blank line drops phantom unnamed submodel" <|
+                \_ ->
+                    let
+                        doc =
+                            Document.parse "\n0 FILE main.ldr\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n"
+                    in
+                    Expect.all
+                        [ \d -> Expect.equal "main.ldr" (Document.mainSubmodel d).name
+                        , \d -> Expect.equal 1 (List.length (Document.mainPlacements d))
+                        , \d -> Expect.equal [ "main.ldr" ] (List.map .name d.submodels)
+                        , \d -> Expect.equal False (String.contains "0 FILE \n" (Writer.writeDocument d))
+                        ]
+                        doc
+            , test "MPD with leading comment preserves comment in first named submodel" <|
+                \_ ->
+                    let
+                        doc =
+                            Document.parse "0 // Preamble\n0 FILE main.ldr\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n"
+                    in
+                    Expect.all
+                        [ \d -> Expect.equal "main.ldr" (Document.mainSubmodel d).name
+                        , \d -> Expect.equal 1 (List.length (Document.mainPlacements d))
+                        , \d -> Expect.equal [ "main.ldr" ] (List.map .name d.submodels)
+                        , \d -> Expect.equal True (String.contains "0 // Preamble" (Writer.writeDocument d))
+                        , \d -> Expect.equal False (String.contains "0 FILE \n" (Writer.writeDocument d))
+                        ]
+                        doc
             ]
         , describe "toLines"
             [ test "matches the existing parser for the main model" <|
