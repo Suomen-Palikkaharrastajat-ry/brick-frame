@@ -1,0 +1,177 @@
+module LDraw.DocumentTest exposing (suite)
+
+{-| Round-trip tests for `LDraw.Document` and `LDraw.Writer`.
+-}
+
+import Expect
+import LDraw.Document as Document exposing (Document)
+import LDraw.Fixtures as Fixtures
+import LDraw.Format as Format
+import LDraw.Parser as Parser
+import LDraw.Types exposing (LDrawLine)
+import LDraw.Writer as Writer
+import Math.Matrix4 as Mat4
+import Test exposing (Test, describe, test)
+
+
+suite : Test
+suite =
+    describe "LDraw.Document / LDraw.Writer"
+        [ describe "parse >> write >> parse is identity"
+            [ roundTrip "smile.ldr" Fixtures.smile
+            , roundTrip "wheeler.ldr" Fixtures.wheeler
+            , roundTrip "MPD with submodels" Fixtures.mpdModel
+            , roundTrip "Studio type 11 + META" Fixtures.studioModel
+            ]
+        , describe "write is stable after one normalising pass"
+            [ stable "smile.ldr" Fixtures.smile
+            , stable "wheeler.ldr" Fixtures.wheeler
+            , stable "MPD" Fixtures.mpdModel
+            , stable "Studio" Fixtures.studioModel
+            ]
+        , describe "verbatim lines"
+            [ test "META, comments and blank lines survive" <|
+                \_ ->
+                    Fixtures.studioModel
+                        |> Document.parse
+                        |> Writer.writeDocument
+                        |> String.contains "0 !CUSTOM studio-metadata keep me"
+                        |> Expect.equal True
+            , test "Studio type 11 tokens are written back" <|
+                \_ ->
+                    Fixtures.studioModel
+                        |> Document.parse
+                        |> Writer.writeDocument
+                        |> String.contains "11 4 uid-7 0 3 -40 -14 45.21 -1 0 0 0 1 0 0 0 -1 3647.dat"
+                        |> Expect.equal True
+            , test "tiny floats do not become exponents" <|
+                \_ ->
+                    Fixtures.studioModel
+                        |> Document.parse
+                        |> Writer.writeDocument
+                        |> String.contains "e-"
+                        |> Expect.equal False
+            ]
+        , describe "MPD structure"
+            [ test "submodel order and names are kept" <|
+                \_ ->
+                    Document.parse Fixtures.mpdModel
+                        |> .submodels
+                        |> List.map .name
+                        |> Expect.equal [ "Main.ldr", "Sub Group.ldr" ]
+            , test "plain LDR has one unnamed submodel and no FILE header" <|
+                \_ ->
+                    let
+                        doc =
+                            Document.parse Fixtures.wheeler
+                    in
+                    Expect.all
+                        [ \d -> Expect.equal False (Document.isMultiFile d)
+                        , \d -> Expect.equal False (String.contains "0 FILE" (Writer.writeDocument d))
+                        ]
+                        doc
+            , test "placement ids are unique and sequential" <|
+                \_ ->
+                    Document.parse Fixtures.mpdModel
+                        |> Document.placements
+                        |> List.map .id
+                        |> Expect.equal [ 0, 1, 2, 3 ]
+            ]
+        , describe "toLines"
+            [ test "matches the existing parser for the main model" <|
+                \_ ->
+                    Fixtures.wheeler
+                        |> Document.parse
+                        |> Document.toLines
+                        |> List.map describeLine
+                        |> Expect.equal (Parser.parseFile Fixtures.wheeler |> List.map describeLine)
+            ]
+        , describe "editing"
+            [ test "addPlacement returns a fresh id and appends to the main model" <|
+                \_ ->
+                    let
+                        ( doc, id ) =
+                            Document.parse Fixtures.mpdModel
+                                |> Document.addPlacement "Main.ldr" { part = "3648.dat", color = 4, matrix = Mat4.identity }
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal 4 id
+                        , \d -> Expect.equal 5 (List.length (Document.placements d))
+                        , \d -> Expect.equal True (String.contains "3648.dat" (Writer.writeDocument d))
+                        ]
+                        doc
+            , test "removePlacement drops only that placement" <|
+                \_ ->
+                    Document.parse Fixtures.mpdModel
+                        |> Document.removePlacement 1
+                        |> Document.placements
+                        |> List.map .id
+                        |> Expect.equal [ 0, 2, 3 ]
+            , test "updatePlacement changes colour and keeps position in file" <|
+                \_ ->
+                    Document.parse Fixtures.mpdModel
+                        |> Document.updatePlacement 1 (\p -> { p | color = 14 })
+                        |> Document.getPlacement 1
+                        |> Maybe.map .color
+                        |> Expect.equal (Just 14)
+            ]
+        ]
+
+
+roundTrip : String -> String -> Test
+roundTrip label text =
+    test label <|
+        \_ ->
+            let
+                once =
+                    Document.parse text
+            in
+            Document.parse (Writer.writeDocument once)
+                |> summary
+                |> Expect.equal (summary once)
+
+
+stable : String -> String -> Test
+stable label text =
+    test label <|
+        \_ ->
+            let
+                once =
+                    Writer.writeDocument (Document.parse text)
+            in
+            Writer.writeDocument (Document.parse once)
+                |> Expect.equal once
+
+
+{-| Comparable view of a document (`Mat4` is compared through its record).
+-}
+summary : Document -> List ( String, List String )
+summary doc =
+    doc.submodels
+        |> List.map
+            (\s ->
+                ( s.name
+                , List.map
+                    (\e ->
+                        case e of
+                            Document.PlacementEntry p ->
+                                String.join "|"
+                                    [ String.fromInt p.id
+                                    , p.part
+                                    , p.fileText
+                                    , String.fromInt p.color
+                                    , String.join "," p.extra
+                                    , Debug.toString (Mat4.toRecord p.matrix)
+                                    ]
+
+                            Document.Raw text ->
+                                "raw:" ++ text
+                    )
+                    s.entries
+                )
+            )
+
+
+describeLine : LDrawLine -> String
+describeLine =
+    Format.lineToText
