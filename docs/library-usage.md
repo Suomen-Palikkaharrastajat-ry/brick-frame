@@ -133,7 +133,7 @@ See `viewer-app/elm.json` for the full list used by the demo app.
 
 ### 3. Generate Data.elm
 
-The host app must have an `viewer-app/src/Data.elm` (or equivalent path) produced
+The host app must have an `packages/brick-frame-data/src/Data.elm` (or equivalent path) produced
 by the Haskell generator. Run `make generate` once before first build. This
 file exports pre-loaded part data and the color table — it is **never edited
 by hand**.

@@ -11,6 +11,10 @@ export default defineConfig(({ mode }) => {
     cacheDir: '.vite',
     plugins: [elm({ debug: false })],
     base,
+    server: {
+      // The runtime and the geometry worker live in packages/brick-frame-viewport.
+      fs: { allow: ['..'] },
+    },
     build: {
       outDir: '../build/docs',
       emptyOutDir: false,

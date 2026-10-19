@@ -22,5 +22,9 @@ export default defineConfig(({ mode }) => {
       emptyOutDir: true,
     },
     base,
+    server: {
+      // The runtime and the geometry worker live in packages/brick-frame-viewport.
+      fs: { allow: ['..'] },
+    },
   }
 })

@@ -26,7 +26,7 @@ library
     , filepath   ^>=1.4
     , text       ^>=2.0
 
--- Haskell generator: reads/fetches data and writes viewer-app/src/Data.elm
+-- Haskell generator: reads/fetches data and writes packages/brick-frame-data/src/Data.elm
 executable generator
   import:        defaults
   main-is:       Main.hs

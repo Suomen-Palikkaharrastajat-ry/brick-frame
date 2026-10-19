@@ -45,37 +45,37 @@ HS_SOURCES := $(shell find src generator -name '*.hs') brick-frame.cabal $(wildc
 VIEWER_APP_SOURCES := $(shell find viewer-app/src packages/brick-frame-viewport/src packages/brick-frame-simulation/src packages/brick-frame-simulator/src -name '*.elm' ! -name 'Data.elm' ! -name 'ColorData.elm')
 # Shared package code that is elm-format clean. The older simulator modules and
 # the generated ColorData module are not validated yet.
-SHARED_PACKAGE_DIRS := packages/brick-frame-viewport packages/brick-frame-simulation packages/brick-frame-simulator/src/LDraw/Document.elm packages/brick-frame-simulator/src/LDraw/Format.elm packages/brick-frame-simulator/src/LDraw/Writer.elm packages/brick-frame-simulator/src/Render/Pick.elm packages/brick-frame-simulator/tests/LDraw/DocumentTest.elm packages/brick-frame-simulator/tests/LDraw/Fixtures.elm
+SHARED_PACKAGE_DIRS := packages/brick-frame-viewport packages/brick-frame-simulation packages/brick-frame-ui packages/brick-frame-simulator/src/LDraw/Document.elm packages/brick-frame-simulator/src/LDraw/Format.elm packages/brick-frame-simulator/src/LDraw/Writer.elm packages/brick-frame-simulator/src/Render/Pick.elm packages/brick-frame-simulator/tests/LDraw/DocumentTest.elm packages/brick-frame-simulator/tests/LDraw/Fixtures.elm
 ELM_PACKAGE_SOURCES := $(shell find vendor/master-builder/packages -name '*.elm' -o -name '*.css' 2>/dev/null)
-WC_SOURCES := $(shell find viewer-app/web-components viewer-app/runtime -name '*.js' 2>/dev/null)
+WC_SOURCES := $(shell find viewer-app/web-components packages/brick-frame-viewport/runtime -name '*.js' 2>/dev/null)
 
 brick-data-generator: $(HS_SOURCES)
 	cabal build generator
 	cp $$(cabal list-bin generator) $@
 
-GENERATED_ELM := viewer-app/src/Data.elm packages/brick-frame-simulator/src/LDraw/ColorData.elm
+GENERATED_ELM := packages/brick-frame-data/src/Data.elm packages/brick-frame-simulator/src/LDraw/ColorData.elm
 
 .PHONY: generate
-generate: viewer-app/src/Data.elm ## Run Haskell generator to produce generated Elm data modules
+generate: packages/brick-frame-data/src/Data.elm ## Run Haskell generator to produce generated Elm data modules
 
 # Both generated modules come out of a single generator run; Data.elm stands in
 # for the pair as the make target.
-viewer-app/src/Data.elm: brick-data-generator viewer-app/public/ldraw/LDConfig.ldr
+packages/brick-frame-data/src/Data.elm: brick-data-generator viewer-app/public/ldraw/LDConfig.ldr
 	./brick-data-generator
-	cd viewer-app && elm-format --yes $(patsubst viewer-app/%,%,$(filter viewer-app/%,$(GENERATED_ELM))) $(addprefix ../,$(filter-out viewer-app/%,$(GENERATED_ELM)))
+	elm-format --yes $(GENERATED_ELM)
 
-viewer-app/src/.data-nix-stamp:
+packages/brick-frame-data/src/.data-nix-stamp:
 	$(GENERATOR_NIX)
 	touch $@
 
 .PHONY: elm-dev
-elm-dev: viewer-app/src/Data.elm ## Start Elm + Vite dev server (hot reload)
+elm-dev: packages/brick-frame-data/src/Data.elm ## Start Elm + Vite dev server (hot reload)
 	cd viewer-app && $(VITE)
 
 .PHONY: elm-tailwind-gen
 elm-tailwind-gen: viewer-app/.elm-tailwind/.stamp ## Generate typed Tailwind Elm modules into viewer-app/.elm-tailwind/
 
-viewer-app/.elm-tailwind/.stamp: viewer-app/elm.json viewer-app/vite.config.mjs viewer-app/main.css $(VIEWER_APP_SOURCES) $(ELM_PACKAGE_SOURCES) viewer-app/src/Data.elm
+viewer-app/.elm-tailwind/.stamp: viewer-app/elm.json viewer-app/vite.config.mjs viewer-app/main.css $(VIEWER_APP_SOURCES) $(ELM_PACKAGE_SOURCES) packages/brick-frame-data/src/Data.elm
 	cd viewer-app && elm-tailwind-classes gen
 	mkdir -p viewer-app/.elm-tailwind
 	touch $@
@@ -84,18 +84,18 @@ build/.elm-stamp: viewer-app/.elm-tailwind/.stamp $(VIEWER_APP_SOURCES) $(ELM_PA
 	cd viewer-app && $(VITE) build
 	touch $@
 
-build/.elm-stamp-ci: viewer-app/src/.data-nix-stamp viewer-app/.elm-tailwind/.stamp $(VIEWER_APP_SOURCES) $(ELM_PACKAGE_SOURCES) viewer-app/elm.json viewer-app/vite.config.mjs viewer-app/index.html viewer-app/main.js viewer-app/main.css
+build/.elm-stamp-ci: packages/brick-frame-data/src/.data-nix-stamp viewer-app/.elm-tailwind/.stamp $(VIEWER_APP_SOURCES) $(ELM_PACKAGE_SOURCES) viewer-app/elm.json viewer-app/vite.config.mjs viewer-app/index.html viewer-app/main.js viewer-app/main.css
 	cd viewer-app && $(VITE) build
 	touch $@
 
 .PHONY: elm-build
 elm-build: build/.elm-stamp ## Production build of Elm SPA → build/
 
-build/.wc-stamp: viewer-app/src/Data.elm viewer-app/elm.json viewer-app/vite.web-components.config.mjs viewer-app/src/Main.elm viewer-app/src/Ports.elm viewer-app/geometry-worker.js viewer-app/main.css $(WC_SOURCES)
+build/.wc-stamp: packages/brick-frame-data/src/Data.elm viewer-app/elm.json viewer-app/vite.web-components.config.mjs viewer-app/src/Main.elm viewer-app/src/Ports.elm packages/brick-frame-viewport/geometry-worker.js viewer-app/main.css $(WC_SOURCES)
 	cd viewer-app && $(VITE) build --config vite.web-components.config.mjs
 	touch $@
 
-build/.wc-stamp-ci: viewer-app/src/.data-nix-stamp viewer-app/elm.json viewer-app/vite.web-components.config.mjs viewer-app/src/Main.elm viewer-app/src/Ports.elm viewer-app/geometry-worker.js viewer-app/main.css $(WC_SOURCES)
+build/.wc-stamp-ci: packages/brick-frame-data/src/.data-nix-stamp viewer-app/elm.json viewer-app/vite.web-components.config.mjs viewer-app/src/Main.elm viewer-app/src/Ports.elm packages/brick-frame-viewport/geometry-worker.js viewer-app/main.css $(WC_SOURCES)
 	cd viewer-app && $(VITE) build --config vite.web-components.config.mjs
 	touch $@
 
@@ -103,7 +103,7 @@ build/.wc-stamp-ci: viewer-app/src/.data-nix-stamp viewer-app/elm.json viewer-ap
 wc-build: build/.wc-stamp ## Production build of Web Components bundle
 
 .PHONY: elm-test
-elm-test: elm-tailwind-gen viewer-app/src/Data.elm ## Run Elm unit tests
+elm-test: elm-tailwind-gen packages/brick-frame-data/src/Data.elm ## Run Elm unit tests
 	cd viewer-app && elm-test
 
 .PHONY: elm-check
@@ -180,10 +180,11 @@ test: check ## Run all tests
 	$(MAKE) test-lib
 
 .PHONY: test-lib
-test-lib: viewer-app/src/Data.elm ## Run the shared package unit tests (simulator, viewport, simulation)
+test-lib: packages/brick-frame-data/src/Data.elm ## Run the shared package unit tests (simulator, viewport, simulation)
 	cd packages/brick-frame-simulator && elm-test
 	cd packages/brick-frame-viewport && elm-test
 	cd packages/brick-frame-simulation && elm-test
+	cd packages/brick-frame-ui && elm-test
 
 .PHONY: repl
 repl: ## Open GHCi REPL
@@ -210,4 +211,4 @@ format: ## Auto-format Haskell and Elm source files
 .PHONY: clean
 clean: ## Remove build artifacts and generated output
 	cabal clean
-	rm -rf build brick-data-generator .hpc viewer-app/.elm-tailwind viewer-app/elm-stuff viewer-app/src/Data.elm viewer-app/src/.data-nix-stamp build/.wc-stamp build/.wc-stamp-ci
+	rm -rf build brick-data-generator .hpc viewer-app/.elm-tailwind viewer-app/elm-stuff packages/brick-frame-data/src/Data.elm packages/brick-frame-data/src/.data-nix-stamp build/.wc-stamp build/.wc-stamp-ci

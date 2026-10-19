@@ -1,4 +1,5 @@
-import { initBricksRuntime } from '../runtime/initBricksRuntime.js'
+import { initBricksRuntime } from '../../packages/brick-frame-viewport/runtime/initBricksRuntime.js'
+import { Elm } from '../src/Main.elm'
 
 const DEFAULT_HEIGHT = '420px'
 
@@ -87,6 +88,7 @@ class BaseBricksElement extends HTMLElement {
     const initialHash = this.cameraHashFromAttributes()
 
     this.runtime = initBricksRuntime({
+      elm: Elm.Main,
       node: this.mount,
       mode: this.mode,
       defaultModel: this.getAttribute('src') ?? undefined,

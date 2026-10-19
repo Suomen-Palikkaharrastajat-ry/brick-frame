@@ -1,5 +1,4 @@
 import { unzipSync, inflateSync } from 'fflate'
-import { Elm } from '../src/Main.elm'
 import GeometryWorker from '../geometry-worker.js?worker'
 import geometryWorkerSource from '../geometry-worker.js?raw'
 
@@ -562,8 +561,20 @@ function createExternalGeometryWorker(workerUrl) {
   return { worker: new GeometryWorker(), objectUrl: null }
 }
 
+/**
+ * Mount an Elm application that hosts a `Viewport` and wire up everything that
+ * lives outside Elm: loading files (.ldr/.mpd/.dat and Studio .io archives), the
+ * geometry worker, the URL hash, drag-and-drop, resize and runtime events.
+ *
+ * `elm` is the compiled Elm module of the host application (e.g. `Elm.Main`).
+ * It must expose the ports `requestFileUpload`, `fileContentReceived`,
+ * `fileLoadError`, `requestGeometryFlatten`, `geometryFlattened`,
+ * `geometryFlattenFailed` and `setUrlHash`; `viewportResized` and `runtimeEvent`
+ * are optional. See docs/library-usage.md for the flag and port contract.
+ */
 export function initBricksRuntime(options) {
   const {
+    elm,
     node,
     mode = 'simulator',
     ldrawBase = import.meta.env.VITE_LDRAW_BASE ?? defaultLdrawBase,
@@ -591,6 +602,9 @@ export function initBricksRuntime(options) {
   if (!node) {
     throw new Error('initBricksRuntime requires a mount node')
   }
+  if (!elm || typeof elm.init !== 'function') {
+    throw new Error('initBricksRuntime requires the compiled Elm module as `elm`')
+  }
 
   const maxRpmRaw = Number(maxRpm)
   const sanitizedMaxRpm = Number.isFinite(maxRpmRaw) && maxRpmRaw >= 1 ? maxRpmRaw : defaultMaxRpm
@@ -614,7 +628,7 @@ export function initBricksRuntime(options) {
   const defaultModelNeedsJsLoader =
     defaultModelExtension === '.io' || defaultModelExtension === null
 
-  const app = Elm.Main.init({
+  const app = elm.init({
     node,
     flags: {
       ldrawBase,

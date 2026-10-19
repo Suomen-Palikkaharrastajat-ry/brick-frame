@@ -27,9 +27,9 @@ packages/*/elm-stuff/
 build/
 
 # --- Generated output ---
-viewer-app/src/Data.elm
+packages/brick-frame-data/src/Data.elm
 packages/brick-frame-simulator/src/LDraw/ColorData.elm
-viewer-app/src/.data-nix-stamp
+packages/brick-frame-data/src/.data-nix-stamp
 
 # --- Editor & OS ---
 .vscode/
