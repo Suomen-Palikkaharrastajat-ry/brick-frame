@@ -2,7 +2,7 @@
 set -euo pipefail
 
 LDRAW_SYNC_URL="${LDRAW_SYNC_URL:-https://library.ldraw.org/library/updates/complete.zip}"
-LDRAW_SYNC_DIR="${LDRAW_SYNC_DIR:-elm-app/public/ldraw}"
+LDRAW_SYNC_DIR="${LDRAW_SYNC_DIR:-viewer-app/public/ldraw}"
 LDRAW_SYNC_LOCK="${LDRAW_SYNC_LOCK:-ldraw-sync.lock.json}"
 LDRAW_NOTICE_FILE="${LDRAW_NOTICE_FILE:-THIRD_PARTY_NOTICES}"
 

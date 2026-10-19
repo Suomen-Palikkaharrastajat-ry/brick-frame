@@ -6,10 +6,10 @@ import System.Directory (createDirectoryIfMissing)
 
 main :: IO ()
 main = do
-    createDirectoryIfMissing True "elm-app/src"
+    createDirectoryIfMissing True "viewer-app/src"
     elmModule <- generateElmModule
-    Text.writeFile "elm-app/src/Data.elm" elmModule
-    putStrLn "generator: wrote elm-app/src/Data.elm"
+    Text.writeFile "viewer-app/src/Data.elm" elmModule
+    putStrLn "generator: wrote viewer-app/src/Data.elm"
 
     createDirectoryIfMissing True "packages/brick-frame-simulator/src/LDraw"
     colorDataModule <- generateColorDataModule

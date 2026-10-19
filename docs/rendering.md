@@ -22,7 +22,7 @@ negating every Y coordinate during geometry flattening. This negation is
 applied in two places:
 
 - `LDraw.Geometry.flatten` (Elm, [packages/brick-frame-simulator/src/LDraw/Geometry.elm](../packages/brick-frame-simulator/src/LDraw/Geometry.elm)) — for the Elm-side path.
-- `geometry-worker.js` ([elm-app/geometry-worker.js](../elm-app/geometry-worker.js)) — for the Web Worker path.
+- `geometry-worker.js` ([viewer-app/geometry-worker.js](../viewer-app/geometry-worker.js)) — for the Web Worker path.
 
 All world positions stored in `GearInstance.worldPosition` and
 `GearInstance.worldMatrix` are already in Y-up space.

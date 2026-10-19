@@ -49,7 +49,7 @@ generator):
 | `4716.dat` | 1 | Worm (treated as 1 tooth for ratio math) |
 
 Additional spur and specialty gears may be present; the full list is in
-`elm-app/src/Data.elm` (auto-generated — run `make generate` to rebuild).
+`viewer-app/src/Data.elm` (auto-generated — run `make generate` to rebuild).
 
 Each detected gear becomes a `GearInstance`:
 

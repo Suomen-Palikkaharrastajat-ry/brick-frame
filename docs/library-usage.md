@@ -3,7 +3,7 @@
 `packages/brick-frame-simulator/` is a self-contained Elm source package that
 provides LDraw parsing, 3D rendering, gear detection, and gear physics as
 **pure functions**. It has no ports of its own — those live in the host
-application. The `elm-app/` demo wires everything together and serves as a
+application. The `viewer-app/` demo wires everything together and serves as a
 reference implementation.
 
 ## Web Components distribution
@@ -129,11 +129,11 @@ Your `elm.json` `"dependencies"` must include:
 "elm/browser": "1.0.2 <= v < 2.0.0"
 ```
 
-See `elm-app/elm.json` for the full list used by the demo app.
+See `viewer-app/elm.json` for the full list used by the demo app.
 
 ### 3. Generate Data.elm
 
-The host app must have an `elm-app/src/Data.elm` (or equivalent path) produced
+The host app must have an `viewer-app/src/Data.elm` (or equivalent path) produced
 by the Haskell generator. Run `make generate` once before first build. This
 file exports pre-loaded part data and the color table — it is **never edited
 by hand**.
@@ -152,10 +152,10 @@ The package delegates two operations to JavaScript via ports:
 | `fileLoadError` | JS → Elm | File read error string |
 | `setUrlHash` | Elm → JS | Update `window.location.hash` |
 
-Copy `elm-app/src/Ports.elm` and `elm-app/geometry-worker.js` into your app and
-wire them up in your JS entry point as in `elm-app/main.js`.
+Copy `viewer-app/src/Ports.elm` and `viewer-app/geometry-worker.js` into your app and
+wire them up in your JS entry point as in `viewer-app/main.js`.
 
-`elm-app/main.js` also includes an in-session cache for geometry worker results
+`viewer-app/main.js` also includes an in-session cache for geometry worker results
 keyed by flatten payload, so repeated loads of the same model can skip repeat
 flatten work.
 
@@ -189,7 +189,7 @@ flatten work.
 ## Minimal integration walkthrough
 
 The steps below sketch the loading and rendering lifecycle. The demo app
-`elm-app/src/Main.elm` is the complete reference.
+`viewer-app/src/Main.elm` is the complete reference.
 
 ### Step 1 — Initialise the part cache
 
@@ -244,7 +244,7 @@ introduce new sub-file references that require further fetches.
 ### Step 4 — Flatten geometry
 
 Once all parts are loaded, offload the flatten step to the Web Worker via the
-`requestGeometryFlatten` port (see `elm-app/geometry-worker.js` for the worker
+`requestGeometryFlatten` port (see `viewer-app/geometry-worker.js` for the worker
 implementation). When `geometryFlattened` fires back, decode the JSON payload
 and build the scene:
 
@@ -381,7 +381,7 @@ converting pixels into a synthetic wheel delta.
 
 | Export | Type | Description |
 |--------|------|-------------|
-| `ldrawColors` | `Dict Int { r, g, b, alpha }` | Every official LDraw colour, parsed from `elm-app/public/ldraw/LDConfig.ldr` |
+| `ldrawColors` | `Dict Int { r, g, b, alpha }` | Every official LDraw colour, parsed from `viewer-app/public/ldraw/LDConfig.ldr` |
 | `embeddedParts` | `Dict String String` | Pre-loaded LDraw part text for core gears and their dependencies |
 | `lodParts` | `Dict String String` | Simplified (LOD) versions of embedded parts |
 | `gearParts` | `List { partFile, teeth, pitchRadius }` | Known gear specs |
