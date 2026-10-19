@@ -22,6 +22,7 @@ brick-data-generator
 
 # --- Elm / frontend build artifacts ---
 viewer-app/elm-stuff/
+studio-app/elm-stuff/
 viewer-app/.elm-tailwind/
 viewer-app/.vite/
 studio-app/.elm-tailwind/
