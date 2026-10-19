@@ -23,7 +23,7 @@ viewer-app/elm-stuff/
 viewer-app/.elm-tailwind/
 viewer-app/.vite/
 viewer-app/public/ldraw/
-packages/brick-frame-simulator/elm-stuff/
+packages/*/elm-stuff/
 build/
 
 # --- Generated output ---

@@ -1,4 +1,4 @@
-module UI.Shortcuts exposing
+module Viewport.Shortcuts exposing
     ( Action(..)
     , KeyEvent
     , Look
@@ -15,16 +15,15 @@ module UI.Shortcuts exposing
 
 {-| Keyboard shortcut mapping.
 
-Pure, so it can be unit-tested — `Main.update` is not exposed, so key dispatch
-would otherwise have no coverage at all. This module names its own `Action` type
-rather than `Main.Msg`, both to avoid a circular import and to follow the house
-rule that every `Msg` constructor lives in `Main`.
+Pure, so it can be unit-tested — key dispatch would otherwise have no coverage
+at all. This module names its own `Action` type rather than any host `Msg`, so
+it stays free of the application that maps actions to messages.
 
 
 ## Two kinds of key
 
 Discrete keys fire once on keydown and map through `actionFor`. Movement and look
-keys are _held_: `Main` tracks the pressed set and asks `movementFor` / `lookFor`
+keys are _held_: `Viewport` tracks the pressed set and asks `movementFor` / `lookFor`
 for a per-frame delta, so several can be active at once (forward and strafe
 together) and so speed is a function of frame time rather than of the operating
 system's key-repeat rate.

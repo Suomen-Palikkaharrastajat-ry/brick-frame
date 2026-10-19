@@ -1,4 +1,4 @@
-module ShortcutsTest exposing (suite)
+module Viewport.ShortcutsTest exposing (suite)
 
 {-| Unit tests for keyboard shortcut mapping.
 
@@ -11,7 +11,7 @@ embedding the viewer.
 import Expect
 import Set
 import Test exposing (Test, describe, test)
-import UI.Shortcuts as Shortcuts exposing (Action(..))
+import Viewport.Shortcuts as Shortcuts exposing (Action(..))
 
 
 {-| A plain key press on the canvas, with no modifiers held.
@@ -59,7 +59,7 @@ action key =
 
 suite : Test
 suite =
-    describe "UI.Shortcuts"
+    describe "Viewport.Shortcuts"
         [ describe "discrete shortcuts"
             [ test "space toggles playback, in both spellings" <|
                 \_ ->

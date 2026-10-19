@@ -42,7 +42,10 @@ develop: devenv.local.nix devenv.local.yaml ## Bootstrap devenv shell + VS Code
 all: build ## Build everything
 
 HS_SOURCES := $(shell find src generator -name '*.hs') brick-frame.cabal $(wildcard cabal.project*)
-VIEWER_APP_SOURCES := $(shell find viewer-app/src -name '*.elm' ! -name 'Data.elm')
+VIEWER_APP_SOURCES := $(shell find viewer-app/src packages/brick-frame-viewport/src packages/brick-frame-simulation/src packages/brick-frame-simulator/src -name '*.elm' ! -name 'Data.elm' ! -name 'ColorData.elm')
+# Shared package code that is elm-format clean. The older simulator modules and
+# the generated ColorData module are not validated yet.
+SHARED_PACKAGE_DIRS := packages/brick-frame-viewport packages/brick-frame-simulation packages/brick-frame-simulator/src/LDraw/Document.elm packages/brick-frame-simulator/src/LDraw/Format.elm packages/brick-frame-simulator/src/LDraw/Writer.elm packages/brick-frame-simulator/src/Render/Pick.elm packages/brick-frame-simulator/tests/LDraw/DocumentTest.elm packages/brick-frame-simulator/tests/LDraw/Fixtures.elm
 ELM_PACKAGE_SOURCES := $(shell find vendor/master-builder/packages -name '*.elm' -o -name '*.css' 2>/dev/null)
 WC_SOURCES := $(shell find viewer-app/web-components viewer-app/runtime -name '*.js' 2>/dev/null)
 
@@ -105,11 +108,13 @@ elm-test: elm-tailwind-gen viewer-app/src/Data.elm ## Run Elm unit tests
 
 .PHONY: elm-check
 elm-check: ## Check Elm formatting (no changes)
-	cd viewer-app && elm-format --validate src/
+	cd viewer-app && elm-format --validate src/ tests/
+	elm-format --validate $(SHARED_PACKAGE_DIRS)
 
 .PHONY: elm-format
 elm-format: ## Auto-format Elm source files
-	cd viewer-app && elm-format --yes src/
+	cd viewer-app && elm-format --yes src/ tests/
+	elm-format --yes $(SHARED_PACKAGE_DIRS)
 
 .PHONY: elm-review
 elm-review: ## Run elm-review LLM-agent rules (no changes)
@@ -175,8 +180,10 @@ test: check ## Run all tests
 	$(MAKE) test-lib
 
 .PHONY: test-lib
-test-lib: viewer-app/src/Data.elm ## Run brick-frame-simulator library unit tests
+test-lib: viewer-app/src/Data.elm ## Run the shared package unit tests (simulator, viewport, simulation)
 	cd packages/brick-frame-simulator && elm-test
+	cd packages/brick-frame-viewport && elm-test
+	cd packages/brick-frame-simulation && elm-test
 
 .PHONY: repl
 repl: ## Open GHCi REPL

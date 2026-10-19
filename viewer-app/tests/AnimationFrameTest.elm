@@ -5,9 +5,10 @@ module AnimationFrameTest exposing (suite)
 -}
 
 import Expect
-import Main exposing (Flags, HeldControl(..), LoadPhase(..))
+import Main exposing (Flags)
 import Set
 import Test exposing (Test, describe, test)
+import Viewport exposing (HeldControl(..), LoadPhase(..))
 
 
 {-| Flags that produce an idle baseline model: an empty `defaultModelUrl` leaves
@@ -38,6 +39,11 @@ idleModel =
     Main.init testFlags |> Tuple.first
 
 
+withViewport : (Viewport.Model -> Viewport.Model) -> Viewport.Model
+withViewport change =
+    change idleModel.viewport
+
+
 suite : Test
 suite =
     describe "Main.needsAnimationFrame"
@@ -48,32 +54,35 @@ suite =
         , test "playback running → True" <|
             \_ ->
                 let
+                    simulation =
+                        idleModel.simulation
+
                     playback =
-                        idleModel.playback
+                        simulation.playback
                 in
                 Main.needsAnimationFrame
-                    { idleModel | playback = { playback | running = True } }
+                    { idleModel | simulation = { simulation | playback = { playback | running = True } } }
                     |> Expect.equal True
         , test "flattening geometry → True" <|
             \_ ->
                 Main.needsAnimationFrame
-                    { idleModel | loadPhase = FlatteningGeometry }
+                    { idleModel | viewport = withViewport (\v -> { v | loadPhase = FlatteningGeometry }) }
                     |> Expect.equal True
         , test "held rotate control → True" <|
             \_ ->
                 Main.needsAnimationFrame
-                    { idleModel | heldControl = HoldRotate 1 0 }
+                    { idleModel | viewport = withViewport (\v -> { v | heldControl = HoldRotate 1 0 }) }
                     |> Expect.equal True
         , test "held movement key → True" <|
             \_ ->
                 Main.needsAnimationFrame
-                    { idleModel | heldKeys = Set.singleton "w" }
+                    { idleModel | viewport = withViewport (\v -> { v | heldKeys = Set.singleton "w" }) }
                     |> Expect.equal True
         , test "held speed modifier alone → False" <|
             \_ ->
                 -- Shift changes nothing on its own, so it must not keep the
                 -- render loop awake.
                 Main.needsAnimationFrame
-                    { idleModel | heldKeys = Set.singleton "Shift" }
+                    { idleModel | viewport = withViewport (\v -> { v | heldKeys = Set.singleton "Shift" }) }
                     |> Expect.equal False
         ]
