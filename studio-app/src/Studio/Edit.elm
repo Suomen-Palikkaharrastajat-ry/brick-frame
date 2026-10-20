@@ -75,8 +75,12 @@ type Command
     | Recolor (List ( Int, Int ))
     | SetMatrix (List ( Int, Mat4 ))
     | Add (List NewPart)
+    | AddIn String (List NewPart)
     | Remove (List Int)
-    | Restore (List ( Int, Placement ))
+    | Restore (List ( String, Int, Placement ))
+    | GroupIntoSubmodel String (List Int)
+    | ExplodeSubmodel Int
+    | ReplaceDoc Document Document
     | Group (List Command)
 
 
@@ -133,11 +137,14 @@ apply command doc =
             )
 
         Add parts ->
+            apply (AddIn "" parts) doc
+
+        AddIn submodel parts ->
             let
                 ( added, ids ) =
                     List.foldl
                         (\part ( d, acc ) ->
-                            Document.addPlacement "" part d
+                            Document.addPlacement submodel part d
                                 |> Tuple.mapSecond (\id -> acc ++ [ id ])
                         )
                         ( doc, [] )
@@ -147,24 +154,36 @@ apply command doc =
 
         Remove ids ->
             let
-                present =
+                located =
                     ids
-                        |> List.filterMap
-                            (\id ->
-                                Maybe.map2 Tuple.pair
-                                    (Document.indexOfPlacement id doc)
-                                    (Document.getPlacement id doc)
-                            )
-                        |> List.sortBy Tuple.first
+                        |> List.filterMap (\id -> Document.locatePlacement id doc)
+                        |> List.sortBy (\( _, idx, _ ) -> idx)
             in
-            ( List.foldl (\( _, p ) d -> Document.removePlacement p.id d) doc present
-            , Restore present
+            ( List.foldl (\( _, _, p ) d -> Document.removePlacement p.id d) doc located
+            , Restore located
             )
 
         Restore entries ->
-            ( List.foldl (\( index, p ) d -> Document.insertPlacement index p d) doc entries
-            , Remove (List.map (Tuple.second >> .id) entries)
+            ( List.foldl (\( subName, index, p ) d -> Document.insertPlacementIn subName index p d) doc entries
+            , Remove (List.map (\( _, _, p ) -> p.id) entries)
             )
+
+        GroupIntoSubmodel name ids ->
+            let
+                grouped =
+                    Document.groupIntoSubmodel name ids doc
+            in
+            ( grouped, ReplaceDoc grouped doc )
+
+        ExplodeSubmodel id ->
+            let
+                exploded =
+                    Document.explodeSubmodel id doc
+            in
+            ( exploded, ReplaceDoc exploded doc )
+
+        ReplaceDoc _ target ->
+            ( target, ReplaceDoc target doc )
 
         Group commands ->
             let

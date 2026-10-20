@@ -4,8 +4,10 @@ module WorkspaceTest exposing (suite)
 and what the page does with the viewport's events.
 -}
 
+import Dict
 import Expect
 import Http
+import LDraw.Connectivity as Connectivity exposing (CollisionMode(..))
 import LDraw.Document as Document
 import LDraw.Writer as Writer
 import Math.Matrix4 as Mat4
@@ -42,6 +44,8 @@ flags =
     , supportsPointerEvents = True
     , studioUrl = ""
     , draft = Nothing
+    , favorites = Nothing
+    , recentParts = Nothing
     }
 
 
@@ -62,6 +66,7 @@ suite =
     describe "Studio.Workspace"
         [ editingSuite
         , panelSuite
+        , snappingSuite
         , test "starts with an empty document that is ready to show" <|
             \_ ->
                 Expect.all
@@ -586,19 +591,162 @@ editingSuite =
                 \_ ->
                     shortcut { key = "w", ctrl = True, shift = False, target = "BODY" }
                         |> Expect.equal Nothing
-            , test "Escape only clears a selection when nothing else claims it" <|
+            , test "Escape clears selection before exiting a submodel, and Enter enters a submodel" <|
                 \_ ->
-                    ( shortcutIn { hasSelection = True, helpVisible = False, walking = False } "Escape"
-                    , shortcutIn { hasSelection = True, helpVisible = True, walking = False } "Escape"
-                    , shortcutIn { hasSelection = False, helpVisible = False, walking = False } "Escape"
+                    [ shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False } "Escape"
+                    , shortcutIn { hasSelection = True, helpVisible = True, walking = False, inSubmodel = False } "Escape"
+                    , shortcutIn { hasSelection = False, helpVisible = False, walking = False, inSubmodel = False } "Escape"
+                    , shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = True } "Escape"
+                    , shortcutIn { hasSelection = False, helpVisible = False, walking = False, inSubmodel = True } "Escape"
+                    , shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False } "Enter"
+                    ]
+                        |> Expect.equal
+                            [ Just Shortcuts.ClearSelection
+                            , Nothing
+                            , Nothing
+                            , Just Shortcuts.ClearSelection
+                            , Just Shortcuts.ExitSubmodel
+                            , Just Shortcuts.EnterSubmodel
+                            ]
+            , test "Ctrl+G groups and Ctrl+Shift+G explodes" <|
+                \_ ->
+                    ( shortcut { key = "g", ctrl = True, shift = False, target = "BODY" }
+                    , shortcut { key = "g", ctrl = True, shift = True, target = "BODY" }
                     )
-                        |> Expect.equal ( Just Shortcuts.ClearSelection, Nothing, Nothing )
+                        |> Expect.equal ( Just Shortcuts.GroupSubmodel, Just Shortcuts.ExplodeSubmodel )
             , test "the viewport keys are not taken" <|
                 \_ ->
                     [ "w", "a", "s", "d", "f", "g", "1", "+", "?" ]
-                        |> List.map (shortcutIn { hasSelection = True, helpVisible = False, walking = False })
+                        |> List.map (shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False })
                         |> List.all ((==) Nothing)
                         |> Expect.equal True
+            ]
+        , describe "submodels"
+            [ test "grouping selected parts creates a submodel and undo restores the scene" <|
+                \_ ->
+                    let
+                        grouped =
+                            loaded
+                                |> click (screenOf 0 loaded)
+                                |> step GroupSelection
+
+                        undone =
+                            step Undo grouped
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ 2 ] (selected grouped)
+                        , \_ -> Expect.equal [ "submodel_1.ldr", "3001.dat" ] (List.map .part (Document.mainPlacements grouped.document))
+                        , \_ -> Expect.equal (Just [ 1, 2 ]) (Maybe.map (.placements >> List.map .source >> List.sort) grouped.viewport.instancedScene)
+                        , \_ -> Expect.equal [ "3001.dat", "3001.dat" ] (List.map .part (Document.mainPlacements undone.document))
+                        , \_ -> Expect.equal (Just [ 0, 1 ]) (Maybe.map (.placements >> List.map .source >> List.sort) undone.viewport.instancedScene)
+                        ]
+                        ()
+            , test "entering a submodel opens its child bricks for 3D picking and ghosts parent bricks" <|
+                \_ ->
+                    let
+                        ( subX, subY ) =
+                            screenOf 0 loaded
+
+                        entered =
+                            loaded
+                                |> click ( subX, subY )
+                                |> step GroupSelection
+                                |> step EnterSubmodel
+
+                        clickedChild =
+                            click ( subX, subY ) entered
+
+                        clickedGhostedParent =
+                            click (screenOf 1 loaded) entered
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal "submodel_1.ldr" entered.context.activeSubmodel
+                        , \_ -> Expect.equal [ 0 ] (selected clickedChild)
+                        , \_ -> Expect.equal [] (selected clickedGhostedParent)
+                        ]
+                        ()
+            , test "double-clicking a submodel reference enters it and ExitSubmodel returns to root" <|
+                \_ ->
+                    let
+                        ( subX, subY ) =
+                            screenOf 0 loaded
+
+                        withSubmodel =
+                            loaded
+                                |> click ( subX, subY )
+                                |> step GroupSelection
+                                |> step ClearSelection
+
+                        entered =
+                            step (ViewportMsg (Viewport.DoubleClick subX subY)) withSubmodel
+
+                        exited =
+                            step ExitSubmodel entered
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal "submodel_1.ldr" entered.context.activeSubmodel
+                        , \_ -> Expect.equal 1 (List.length entered.context.path)
+                        , \_ -> Expect.equal "main.ldr" exited.context.activeSubmodel
+                        , \_ -> Expect.equal [] exited.context.path
+                        , \_ -> Expect.equal Nothing exited.viewport.activeSources
+                        ]
+                        ()
+            , test "selecting sibling submodels in the tree switches context without nesting paths" <|
+                \_ ->
+                    let
+                        withTwoSubmodels =
+                            loaded
+                                |> step (SelectPlacement 0 False)
+                                |> step GroupSelection
+                                |> step (SelectPlacement 1 False)
+                                |> step GroupSelection
+
+                        inFirst =
+                            step (SelectSubmodel "submodel_1.ldr") withTwoSubmodels
+
+                        inSecond =
+                            step (SelectSubmodel "submodel_2.ldr") inFirst
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ "submodel_1.ldr" ] (List.map .submodelName inFirst.context.path)
+                        , \_ -> Expect.equal [ "submodel_2.ldr" ] (List.map .submodelName inSecond.context.path)
+                        ]
+                        ()
+            , test "undoing submodel creation while inside the submodel returns to the root context" <|
+                \_ ->
+                    let
+                        undoneFromInside =
+                            loaded
+                                |> step (SelectPlacement 0 False)
+                                |> step GroupSelection
+                                |> step EnterSubmodel
+                                |> step Undo
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [] undoneFromInside.context.path
+                        , \_ -> Expect.equal "" undoneFromInside.context.activeSubmodel
+                        , \_ -> Expect.equal Nothing undoneFromInside.viewport.activeSources
+                        ]
+                        ()
+            , test "exploding a submodel inlines its parts and is undoable" <|
+                \_ ->
+                    let
+                        grouped =
+                            loaded
+                                |> step (SelectPlacement 0 False)
+                                |> step GroupSelection
+
+                        exploded =
+                            step ExplodeSelection grouped
+
+                        undone =
+                            step Undo exploded
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ "3001.dat", "3001.dat" ] (List.map .part (Document.mainPlacements exploded.document))
+                        , \_ -> Expect.equal [ "submodel_1.ldr", "3001.dat" ] (List.map .part (Document.mainPlacements undone.document))
+                        ]
+                        ()
             ]
         , describe "files"
             [ test "an opened file starts with a clean history and selection" <|
@@ -656,7 +804,7 @@ editingSuite =
 
 shortcut : { key : String, ctrl : Bool, shift : Bool, target : String } -> Maybe Shortcuts.Action
 shortcut { key, ctrl, shift, target } =
-    Shortcuts.actionFor { hasSelection = True, helpVisible = False, walking = False }
+    Shortcuts.actionFor { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False }
         { key = key
         , shift = shift
         , ctrl = ctrl
@@ -826,6 +974,50 @@ panelSuite =
                         |> List.head
                         |> Maybe.map (\p -> Mat4.transform p.matrix (vec3 0 0 0) |> Vec3.toRecord)
                         |> Expect.equal (Just { x = 20, y = 20, z = 40 })
+            , test "toggling a favorite adds and removes it" <|
+                \_ ->
+                    let
+                        starred =
+                            withCatalogue |> step (PaletteToggleFavorite "3001.dat")
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal (Set.singleton "3001.dat") m.palette.favorites
+                        , \m -> Expect.equal Set.empty (step (PaletteToggleFavorite "3001.dat") m).palette.favorites
+                        ]
+                        starred
+            , test "adding parts records them in recentParts most-recent-first without duplicates" <|
+                \_ ->
+                    withCatalogue
+                        |> step (ManualPart "3001.dat")
+                        |> step AddManualPart
+                        |> step (ManualPart "3023.dat")
+                        |> step AddManualPart
+                        |> step (ManualPart "3001.dat")
+                        |> step AddManualPart
+                        |> .palette
+                        |> .recentParts
+                        |> Expect.equal [ "3001.dat", "3023.dat" ]
+            , test "inspecting a part arms it for the 3D preview and rotates the turntable" <|
+                \_ ->
+                    let
+                        inspected =
+                            withCatalogue
+                                |> step (PaletteInspect (Just part3001))
+                                |> step (PaletteRotateTurntable 120)
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal (Just part3001) m.palette.inspectingPart
+                        , \m -> Expect.equal (Just part3001) m.palette.armed
+                        , \m -> Expect.within (Expect.Absolute 0.001) (degrees 120) m.preview.camera.azimuth
+                        ]
+                        inspected
+            , test "thumbnailLoaded stores thumbnails matching the active colour and ignores stale colours" <|
+                \_ ->
+                    withCatalogue
+                        |> step (ThumbnailLoaded { file = "3001.dat", color = 4, url = "data:image/png;base64,red" })
+                        |> step (ThumbnailLoaded { file = "3023.dat", color = 1, url = "data:image/png;base64,blue" })
+                        |> .thumbnails
+                        |> Expect.equal (Dict.singleton "3001.dat" "data:image/png;base64,red")
             ]
         , describe "colours"
             [ test "picking a colour with a selection recolours it, as one undo step" <|
@@ -955,4 +1147,315 @@ panelSuite =
                         ]
                         loaded
             ]
+        ]
+
+
+snappingSuite : Test
+snappingSuite =
+    describe "snapping and collision detection"
+        [ test "cycling snap distance cycles through predefined steps" <|
+            \_ ->
+                let
+                    s0 =
+                        start.snapDistance
+
+                    s1 =
+                        (step NextSnapDistance start).snapDistance
+
+                    s2 =
+                        (start |> step NextSnapDistance |> step NextSnapDistance).snapDistance
+
+                    s3 =
+                        (start |> step NextSnapDistance |> step NextSnapDistance |> step NextSnapDistance).snapDistance
+
+                    sBack =
+                        start
+                            |> step NextSnapDistance
+                            |> step NextSnapDistance
+                            |> step NextSnapDistance
+                            |> step NextSnapDistance
+                in
+                Expect.all
+                    [ \_ -> Expect.equal 12.0 s0
+                    , \_ -> Expect.equal 20.0 s1
+                    , \_ -> Expect.equal 8.0 s2
+                    , \_ -> Expect.equal 0.0 s3
+                    , \_ -> Expect.equal 12.0 sBack.snapDistance
+                    ]
+                    ()
+        , test "cycling collision mode cycles Strict -> Soft -> Off -> Strict" <|
+            \_ ->
+                let
+                    m0 =
+                        start
+
+                    m1 =
+                        step NextCollisionMode m0
+
+                    m2 =
+                        step NextCollisionMode m1
+
+                    m3 =
+                        step NextCollisionMode m2
+                in
+                Expect.all
+                    [ \_ -> Expect.equal CollisionStrict m0.collisionMode
+                    , \_ -> Expect.equal CollisionSoft m1.collisionMode
+                    , \_ -> Expect.equal CollisionOff m2.collisionMode
+                    , \_ -> Expect.equal CollisionStrict m3.collisionMode
+                    ]
+                    ()
+        , test "Alt key press and release toggles altHeld" <|
+            \_ ->
+                let
+                    dummyKey key alt =
+                        { key = key
+                        , shift = False
+                        , ctrl = False
+                        , meta = False
+                        , alt = alt
+                        , repeat = False
+                        , targetTag = "BODY"
+                        , targetEditable = False
+                        }
+
+                    mAltPressed =
+                        step (ViewportMsg (Viewport.KeyPressed (dummyKey "Alt" True))) start
+
+                    mAltReleased =
+                        step (KeyUp "Alt") mAltPressed
+                in
+                Expect.all
+                    [ \_ -> Expect.equal True mAltPressed.altHeld
+                    , \_ -> Expect.equal False mAltReleased.altHeld
+                    ]
+                    ()
+        , test "Arrow and 'r' keys cycle snapRotationStep when snapping during drag" <|
+            \_ ->
+                let
+                    dummyKey key alt =
+                        { key = key
+                        , shift = False
+                        , ctrl = False
+                        , meta = False
+                        , alt = alt
+                        , repeat = False
+                        , targetTag = "BODY"
+                        , targetEditable = False
+                        }
+
+                    dummyPoint =
+                        vec3 0 0 0
+
+                    dummyDir =
+                        vec3 0 1 0
+
+                    dummyGuide =
+                        Connectivity.StudRingGuide dummyPoint dummyDir False
+
+                    dummyCandidate =
+                        { draggedPoint =
+                            { id = 0
+                            , connType = Connectivity.AntiStud
+                            , localPosition = dummyPoint
+                            , normal = dummyDir
+                            , tangent = vec3 1 0 0
+                            }
+                        , targetPoint =
+                            { placementId = 1
+                            , pointId = 0
+                            , connType = Connectivity.Stud
+                            , worldPosition = dummyPoint
+                            , worldNormal = vec3 0 -1 0
+                            , worldTangent = vec3 1 0 0
+                            }
+                        , targetPlacementId = 1
+                        , targetWorldPosition = dummyPoint
+                        , targetWorldNormal = vec3 0 -1 0
+                        , snapMatrix = Mat4.identity
+                        , distance = 2.0
+                        , guide = dummyGuide
+                        }
+
+                    readyWithSnap =
+                        { start
+                            | drag =
+                                Just
+                                    { kind =
+                                        Gizmo.LinearDrag
+                                            { axis = AxisX
+                                            , origin = dummyPoint
+                                            , tip = dummyPoint
+                                            , length = 50
+                                            , screenStart = ( 100, 100 )
+                                            , screenEnd = ( 150, 100 )
+                                            }
+                                    , ids = []
+                                    , start = ( 100, 100 )
+                                    , lastPoint = ( 100, 100 )
+                                    , original = start.document
+                                    , amount = 0
+                                    }
+                            , activeSnap = Just dummyCandidate
+                            , snapRotationStep = 0
+                        }
+
+                    stepRight =
+                        step (ViewportMsg (Viewport.KeyPressed (dummyKey "ArrowRight" False))) readyWithSnap
+
+                    stepR =
+                        step (ViewportMsg (Viewport.KeyPressed (dummyKey "r" False))) stepRight
+
+                    stepLeft =
+                        step (ViewportMsg (Viewport.KeyPressed (dummyKey "ArrowLeft" False))) stepR
+                in
+                Expect.all
+                    [ \_ -> Expect.equal 1 stepRight.snapRotationStep
+                    , \_ -> Expect.equal 2 stepR.snapRotationStep
+                    , \_ -> Expect.equal 1 stepLeft.snapRotationStep
+                    ]
+                    ()
+        , test "CollisionStrict mode reverts document to pre-drag state on endDrag when colliding" <|
+            \_ ->
+                let
+                    origDoc =
+                        start.document
+
+                    vp =
+                        start.viewport
+
+                    modelWithCollidingDrag =
+                        { start
+                            | viewport = { vp | captured = True, mousePressed = True }
+                            , collisionMode = CollisionStrict
+                            , collidingPlacements = Set.fromList [ 1, 2 ]
+                            , drag =
+                                Just
+                                    { kind =
+                                        Gizmo.LinearDrag
+                                            { axis = AxisX
+                                            , origin = vec3 0 0 0
+                                            , tip = vec3 0 0 0
+                                            , length = 50
+                                            , screenStart = ( 100, 100 )
+                                            , screenEnd = ( 150, 100 )
+                                            }
+                                    , ids = [ 1 ]
+                                    , start = ( 100, 100 )
+                                    , lastPoint = ( 150, 100 )
+                                    , original = origDoc
+                                    , amount = 50
+                                    }
+                        }
+
+                    afterEndDrag =
+                        step (ViewportMsg (Viewport.MouseUp 150 100)) modelWithCollidingDrag
+                in
+                Expect.all
+                    [ \m -> Expect.equal Nothing m.drag
+                    , \m -> Expect.equal origDoc m.document
+                    , \m -> Expect.equal Set.empty m.collidingPlacements
+                    ]
+                    afterEndDrag
+        , test "CollisionSoft mode allows drop and retains collidingPlacements on endDrag" <|
+            \_ ->
+                let
+                    ( docWithTwo, _ ) =
+                        Edit.apply
+                            (Edit.Add
+                                [ { part = "3001.dat", color = 4, matrix = Mat4.identity }
+                                , { part = "3001.dat", color = 14, matrix = Mat4.makeTranslate3 20 0 0 }
+                                ]
+                            )
+                            start.document
+
+                    ( movedDoc, _ ) =
+                        Edit.apply
+                            (Edit.Translate [ 0 ] (vec3 10 0 0))
+                            docWithTwo
+
+                    vp =
+                        start.viewport
+
+                    modelWithSoftCollision =
+                        { start
+                            | viewport = { vp | captured = True, mousePressed = True }
+                            , document = movedDoc
+                            , collisionMode = CollisionSoft
+                            , collidingPlacements = Set.fromList [ 0, 1 ]
+                            , drag =
+                                Just
+                                    { kind =
+                                        Gizmo.LinearDrag
+                                            { axis = AxisX
+                                            , origin = vec3 0 0 0
+                                            , tip = vec3 0 0 0
+                                            , length = 50
+                                            , screenStart = ( 100, 100 )
+                                            , screenEnd = ( 150, 100 )
+                                            }
+                                    , ids = [ 0 ]
+                                    , start = ( 100, 100 )
+                                    , lastPoint = ( 150, 100 )
+                                    , original = docWithTwo
+                                    , amount = 10
+                                    }
+                        }
+
+                    afterEndDrag =
+                        step (ViewportMsg (Viewport.MouseUp 150 100)) modelWithSoftCollision
+                in
+                Expect.all
+                    [ \m -> Expect.equal Nothing m.drag
+                    , \m -> Expect.equal movedDoc m.document
+                    , \m -> Expect.equal (Set.fromList [ 0, 1 ]) m.collidingPlacements
+                    ]
+                    afterEndDrag
+        , test "Alt key press during drag immediately moves drag to non-snapped state" <|
+            \_ ->
+                let
+                    dummyKey key alt =
+                        { key = key
+                        , shift = False
+                        , ctrl = False
+                        , meta = False
+                        , alt = alt
+                        , repeat = False
+                        , targetTag = "BODY"
+                        , targetEditable = False
+                        }
+
+                    modelDuringDrag =
+                        { start
+                            | drag =
+                                Just
+                                    { kind =
+                                        Gizmo.LinearDrag
+                                            { axis = AxisX
+                                            , origin = vec3 0 0 0
+                                            , tip = vec3 0 0 0
+                                            , length = 50
+                                            , screenStart = ( 100, 100 )
+                                            , screenEnd = ( 150, 100 )
+                                            }
+                                    , ids = []
+                                    , start = ( 100, 100 )
+                                    , lastPoint = ( 120, 100 )
+                                    , original = start.document
+                                    , amount = 20
+                                    }
+                            , altHeld = False
+                        }
+
+                    mAltPressed =
+                        step (ViewportMsg (Viewport.KeyPressed (dummyKey "Alt" True))) modelDuringDrag
+
+                    mAltReleased =
+                        step (KeyUp "Alt") mAltPressed
+                in
+                Expect.all
+                    [ \_ -> Expect.equal True mAltPressed.altHeld
+                    , \_ -> Expect.equal False mAltReleased.altHeld
+                    ]
+                    ()
         ]

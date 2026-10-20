@@ -347,6 +347,9 @@ handleViewportEvent event ( model, cmds ) =
                 Nothing ->
                     ( model, cmds ++ [ Ports.setUrlHash (Hash.encodeCamera viewport.camera) ] )
 
+        Viewport.DoubleClicked _ _ ->
+            ( model, cmds )
+
         Viewport.Tapped _ _ ->
             ( model, cmds )
 

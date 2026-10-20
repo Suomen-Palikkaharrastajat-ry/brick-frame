@@ -6,9 +6,13 @@ port module Ports exposing
     , geometryFlattened
     , requestFileUpload
     , requestGeometryFlatten
+    , requestThumbnails
     , saveDraft
+    , saveFavorites
+    , saveRecents
     , saveRequested
     , setUrlHash
+    , thumbnailLoaded
     , viewportResized
     )
 
@@ -76,3 +80,23 @@ port saveDraft : String -> Cmd msg
 {-| The browser asked to save (Ctrl+S), which the page intercepts.
 -}
 port saveRequested : (() -> msg) -> Sub msg
+
+
+{-| Save starred favorites list to local storage.
+-}
+port saveFavorites : List String -> Cmd msg
+
+
+{-| Save recently used part history to local storage.
+-}
+port saveRecents : List String -> Cmd msg
+
+
+{-| Request on-demand isometric thumbnail generation for parts in an active colour.
+-}
+port requestThumbnails : List { file : String, color : Int } -> Cmd msg
+
+
+{-| Receive generated or cached thumbnail image data URL from IndexedDB.
+-}
+port thumbnailLoaded : ({ file : String, color : Int, url : String } -> msg) -> Sub msg

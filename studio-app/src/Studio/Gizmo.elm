@@ -6,6 +6,7 @@ module Studio.Gizmo exposing
     , dragAmount
     , dragArcAngle
     , handles
+    , handlesWithFrame
     , hit
     , hitArc
     , jointArcHandle
@@ -22,7 +23,7 @@ on screen regardless of camera zoom.
 
 -}
 
-import Math.Matrix4 as Mat4
+import Math.Matrix4 as Mat4 exposing (Mat4)
 import Math.Vector3 as Vec3 exposing (Vec3, vec3)
 import Render.Camera as Camera exposing (Camera)
 import Studio.Edit as Edit exposing (Axis(..))
@@ -104,30 +105,44 @@ project camera width height point =
 -}
 handles : Camera -> Int -> Int -> Vec3 -> List Handle
 handles camera width height center =
+    handlesWithFrame Mat4.identity camera width height center
+
+
+{-| The three handles for a selection centred at `localCenter` inside a
+coordinate frame transformed by `frameTransform` (document coordinates).
+-}
+handlesWithFrame : Mat4 -> Camera -> Int -> Int -> Vec3 -> List Handle
+handlesWithFrame frameTransform camera width height localCenter =
     let
+        worldOrigin =
+            Mat4.transform frameTransform localCenter
+
         eye =
             Camera.position camera
 
         length =
-            0.14 * max 1 (Vec3.distance eye (toRender center))
+            0.14 * max 1 (Vec3.distance eye (toRender worldOrigin))
 
         make axis =
             let
-                tip =
-                    Vec3.add center (Vec3.scale length (Edit.axisVector axis))
+                localTip =
+                    Vec3.add localCenter (Vec3.scale length (Edit.axisVector axis))
+
+                worldTip =
+                    Mat4.transform frameTransform localTip
             in
             Maybe.map2
                 (\start end ->
                     { axis = axis
-                    , origin = center
-                    , tip = tip
+                    , origin = worldOrigin
+                    , tip = worldTip
                     , length = length
                     , screenStart = start
                     , screenEnd = end
                     }
                 )
-                (project camera width height (toRender center))
-                (project camera width height (toRender tip))
+                (project camera width height (toRender worldOrigin))
+                (project camera width height (toRender worldTip))
     in
     List.filterMap make [ AxisX, AxisY, AxisZ ]
 

@@ -4,7 +4,8 @@ module GizmoTest exposing (suite)
 -}
 
 import Expect
-import Math.Vector3 exposing (vec3)
+import Math.Matrix4 as Mat4
+import Math.Vector3 as Vec3 exposing (vec3)
 import Render.Camera as Camera
 import Studio.Edit exposing (Axis(..))
 import Studio.Gizmo as Gizmo
@@ -91,6 +92,27 @@ suite =
                     Expect.within (Expect.Relative 0.01)
                         (screenLength camera)
                         (screenLength { camera | distance = 800 })
+            , test "handlesWithFrame rotates handle directions by the frame's orientation" <|
+                \_ ->
+                    let
+                        rotZ90 =
+                            Mat4.makeRotate (degrees 90) (vec3 0 0 1)
+
+                        xHandle =
+                            Gizmo.handlesWithFrame rotZ90 camera width height (vec3 0 0 0)
+                                |> List.filter (\h -> h.axis == AxisX)
+                                |> List.head
+                    in
+                    case xHandle of
+                        Just h ->
+                            Expect.all
+                                [ \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getX h.tip)
+                                , \_ -> Expect.greaterThan 1 (Vec3.getY h.tip)
+                                ]
+                                ()
+
+                        Nothing ->
+                            Expect.fail "expected rotated X handle"
             ]
         , describe "hit"
             [ test "a point on a handle's line picks it" <|
