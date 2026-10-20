@@ -90,6 +90,38 @@ export function storeCachedThumbnail(db, file, color, url) {
   })
 }
 
+const IDENTITY_MATRIX = [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]
+
+const BUILTIN_PRIMITIVES = {
+  'box5.dat': [
+    '4 16 -1 -1 -1 -1 1 -1 1 1 -1 1 -1 -1',
+    '4 16 1 -1 1 1 1 1 -1 1 1 -1 -1 1',
+    '4 16 -1 -1 1 -1 1 1 -1 1 -1 -1 -1 -1',
+    '4 16 1 -1 -1 1 1 -1 1 1 1 1 -1 1',
+    '4 16 -1 -1 1 -1 -1 -1 1 -1 -1 1 -1 1',
+  ].join('\n'),
+  'box4.dat': [
+    '4 16 -1 -1 -1 -1 1 -1 1 1 -1 1 -1 -1',
+    '4 16 1 -1 1 1 1 1 -1 1 1 -1 -1 1',
+    '4 16 -1 -1 1 -1 1 1 -1 1 -1 -1 -1 -1',
+    '4 16 1 -1 -1 1 1 -1 1 1 1 1 -1 1',
+  ].join('\n'),
+  'box3u2p.dat': [
+    '4 16 1 -1 -1 1 1 -1 1 1 1 1 -1 1',
+    '4 16 -1 -1 1 -1 1 1 -1 1 -1 -1 -1 -1',
+    '4 16 -1 -1 -1 1 -1 -1 1 -1 1 -1 -1 1',
+  ].join('\n'),
+  'stud.dat': [
+    '4 16 -6 -4 -6 -6 -4 6 6 -4 6 6 -4 -6',
+    '4 16 -6 0 -6 -6 -4 -6 6 -4 -6 6 0 -6',
+    '4 16 6 0 6 6 -4 6 -6 -4 6 -6 0 6',
+    '4 16 -6 0 6 -6 -4 6 -6 -4 -6 -6 0 -6',
+    '4 16 6 0 -6 6 -4 -6 6 -4 6 6 0 6',
+  ].join('\n'),
+}
+
+const datTextCache = new Map()
+
 function normalizeVector([x, y, z]) {
   const len = Math.sqrt(x * x + y * y + z * z) || 1
   return [x / len, y / len, z / len]
@@ -101,6 +133,117 @@ function crossProduct([ax, ay, az], [bx, by, bz]) {
     az * bx - ax * bz,
     ax * by - ay * bx,
   ]
+}
+
+function transformPoint([vx, vy, vz], m) {
+  const [x, y, z, a, b, c, d, e, f, g, h, i] = m
+  return [
+    a * vx + b * vy + c * vz + x,
+    d * vx + e * vy + f * vz + y,
+    g * vx + h * vy + i * vz + z,
+  ]
+}
+
+function multiplyMatrices(m1, m2) {
+  const [x1, y1, z1, a1, b1, c1, d1, e1, f1, g1, h1, i1] = m1
+  const [x2, y2, z2, a2, b2, c2, d2, e2, f2, g2, h2, i2] = m2
+  return [
+    a1 * x2 + b1 * y2 + c1 * z2 + x1,
+    d1 * x2 + e1 * y2 + f1 * z2 + y1,
+    g1 * x2 + h1 * y2 + i1 * z2 + z1,
+    a1 * a2 + b1 * d2 + c1 * g2,
+    a1 * b2 + b1 * e2 + c1 * h2,
+    a1 * c2 + b1 * f2 + c1 * i2,
+    d1 * a2 + e1 * d2 + f1 * g2,
+    d1 * b2 + e1 * e2 + f1 * h2,
+    d1 * c2 + e1 * f2 + f1 * i2,
+    g1 * a2 + h1 * d2 + i1 * g2,
+    g1 * b2 + h1 * e2 + i1 * h2,
+    g1 * c2 + h1 * f2 + i1 * i2,
+  ]
+}
+
+/**
+ * Parse direct triangles/quads and subfile references from LDraw text.
+ */
+export function parseLDrawGeometry(datText, matrix = IDENTITY_MATRIX) {
+  const triangles = []
+  const subfiles = []
+  if (!datText) return { triangles, subfiles }
+
+  const lines = datText.split(/\r?\n/)
+  for (const line of lines) {
+    const tokens = line.trim().split(/\s+/)
+    if (tokens[0] === '1' && tokens.length >= 15) {
+      const subMatrix = [
+        parseFloat(tokens[2]), parseFloat(tokens[3]), parseFloat(tokens[4]),
+        parseFloat(tokens[5]), parseFloat(tokens[6]), parseFloat(tokens[7]),
+        parseFloat(tokens[8]), parseFloat(tokens[9]), parseFloat(tokens[10]),
+        parseFloat(tokens[11]), parseFloat(tokens[12]), parseFloat(tokens[13]),
+      ]
+      const subfile = tokens.slice(14).join(' ').toLowerCase().replace(/\\/g, '/')
+      subfiles.push({ file: subfile, matrix: multiplyMatrices(matrix, subMatrix) })
+    } else if (tokens[0] === '3' && tokens.length >= 11) {
+      const v0 = transformPoint([parseFloat(tokens[2]), parseFloat(tokens[3]), parseFloat(tokens[4])], matrix)
+      const v1 = transformPoint([parseFloat(tokens[5]), parseFloat(tokens[6]), parseFloat(tokens[7])], matrix)
+      const v2 = transformPoint([parseFloat(tokens[8]), parseFloat(tokens[9]), parseFloat(tokens[10])], matrix)
+      triangles.push([v0, v1, v2])
+    } else if (tokens[0] === '4' && tokens.length >= 14) {
+      const v0 = transformPoint([parseFloat(tokens[2]), parseFloat(tokens[3]), parseFloat(tokens[4])], matrix)
+      const v1 = transformPoint([parseFloat(tokens[5]), parseFloat(tokens[6]), parseFloat(tokens[7])], matrix)
+      const v2 = transformPoint([parseFloat(tokens[8]), parseFloat(tokens[9]), parseFloat(tokens[10])], matrix)
+      const v3 = transformPoint([parseFloat(tokens[11]), parseFloat(tokens[12]), parseFloat(tokens[13])], matrix)
+      triangles.push([v0, v1, v2])
+      triangles.push([v0, v2, v3])
+    }
+  }
+
+  return { triangles, subfiles }
+}
+
+async function fetchDatText(file, ldrawBase) {
+  const normalized = file.toLowerCase().replace(/\\/g, '/')
+  if (BUILTIN_PRIMITIVES[normalized]) {
+    return BUILTIN_PRIMITIVES[normalized]
+  }
+  const cacheKey = `${ldrawBase}:${normalized}`
+  if (datTextCache.has(cacheKey)) {
+    return datTextCache.get(cacheKey)
+  }
+
+  const base = ldrawBase.replace(/\/+$/, '')
+  const urls = [`${base}/parts/${normalized}`, `${base}/p/${normalized}`]
+  for (const url of urls) {
+    try {
+      const resp = await fetch(url)
+      if (resp.ok) {
+        const text = await resp.text()
+        datTextCache.set(cacheKey, text)
+        return text
+      }
+    } catch (_) {}
+  }
+
+  datTextCache.set(cacheKey, null)
+  return null
+}
+
+async function collectPartTriangles(file, ldrawBase, matrix = IDENTITY_MATRIX, depth = 0) {
+  const datText = await fetchDatText(file, ldrawBase)
+  if (!datText) return []
+
+  const { triangles, subfiles } = parseLDrawGeometry(datText, matrix)
+  if (depth < 2) {
+    for (const sub of subfiles) {
+      if (BUILTIN_PRIMITIVES[sub.file] || sub.file.startsWith('s/')) {
+        const subTris = await collectPartTriangles(sub.file, ldrawBase, sub.matrix, depth + 1)
+        for (const tri of subTris) {
+          triangles.push(tri)
+        }
+      }
+    }
+  }
+  return triangles
 }
 
 /**
@@ -118,41 +261,10 @@ export async function renderIsometricThumbnail(file, color, ldrawBase) {
   ctx.clearRect(0, 0, size, size)
 
   const rgb = COLOR_TABLE[color] || [160, 165, 169]
+  const triangles = await collectPartTriangles(file, ldrawBase)
 
-  // Try to fetch part geometry from ldrawBase
-  let datText = null
-  try {
-    const url = `${ldrawBase.replace(/\/+$/, '')}/parts/${file}`
-    const resp = await fetch(url)
-    if (resp.ok) {
-      datText = await resp.text()
-    }
-  } catch (_) {}
-
-  const triangles = []
-  if (datText) {
-    const lines = datText.split(/\r?\n/)
-    for (const line of lines) {
-      const tokens = line.trim().split(/\s+/)
-      if (tokens[0] === '3' && tokens.length >= 11) {
-        triangles.push([
-          [parseFloat(tokens[2]), parseFloat(tokens[3]), parseFloat(tokens[4])],
-          [parseFloat(tokens[5]), parseFloat(tokens[6]), parseFloat(tokens[7])],
-          [parseFloat(tokens[8]), parseFloat(tokens[9]), parseFloat(tokens[10])],
-        ])
-      } else if (tokens[0] === '4' && tokens.length >= 14) {
-        const v0 = [parseFloat(tokens[2]), parseFloat(tokens[3]), parseFloat(tokens[4])]
-        const v1 = [parseFloat(tokens[5]), parseFloat(tokens[6]), parseFloat(tokens[7])]
-        const v2 = [parseFloat(tokens[8]), parseFloat(tokens[9]), parseFloat(tokens[10])]
-        const v3 = [parseFloat(tokens[11]), parseFloat(tokens[12]), parseFloat(tokens[13])]
-        triangles.push([v0, v1, v2])
-        triangles.push([v0, v2, v3])
-      }
-    }
-  }
-
-  // If part has no direct triangles (e.g. primitive subfiles or not found), render synthetic 3D brick
-  if (triangles.length === 0) {
+  // If part has insufficient triangles (e.g. missing subfiles), render synthetic 3D brick
+  if (triangles.length < 4) {
     renderSyntheticBrick(ctx, rgb, size)
   } else {
     renderMesh(ctx, triangles, rgb, size)
@@ -277,6 +389,8 @@ function renderMesh(ctx, triangles, [r, g, b], size) {
 
   const spanX = Math.max(1, pMaxX - pMinX)
   const spanY = Math.max(1, pMaxY - pMinY)
+  const midX = (pMinX + pMaxX) / 2
+  const midY = (pMinY + pMaxY) / 2
   const scale = (size - 20) / Math.max(spanX, spanY)
 
   // Sort back-to-front
@@ -289,18 +403,18 @@ function renderMesh(ctx, triangles, [r, g, b], size) {
   ctx.strokeStyle = 'rgba(0,0,0,0.2)'
 
   for (const { p0, p1, p2, normal } of projectedTris) {
-    const diff = Math.max(0, normal[0] * light[0] + normal[1] * light[1] + normal[2] * light[2])
+    const diff = Math.abs(normal[0] * light[0] + normal[1] * light[1] + normal[2] * light[2])
     const intensity = 0.35 + 0.65 * diff
     const fillR = Math.min(255, Math.round(r * intensity))
     const fillG = Math.min(255, Math.round(g * intensity))
     const fillB = Math.min(255, Math.round(b * intensity))
 
-    const x0 = size / 2 + p0.x * scale
-    const y0 = size / 2 - p0.y * scale
-    const x1 = size / 2 + p1.x * scale
-    const y1 = size / 2 - p1.y * scale
-    const x2 = size / 2 + p2.x * scale
-    const y2 = size / 2 - p2.y * scale
+    const x0 = size / 2 + (p0.x - midX) * scale
+    const y0 = size / 2 - (p0.y - midY) * scale
+    const x1 = size / 2 + (p1.x - midX) * scale
+    const y1 = size / 2 - (p1.y - midY) * scale
+    const x2 = size / 2 + (p2.x - midX) * scale
+    const y2 = size / 2 - (p2.y - midY) * scale
 
     ctx.fillStyle = `rgb(${fillR},${fillG},${fillB})`
     ctx.beginPath()

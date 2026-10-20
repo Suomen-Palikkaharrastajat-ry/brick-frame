@@ -67,6 +67,25 @@ suite =
                     ColorAvailability.isOfficial "3001.dat" 999
                         |> Expect.equal False
             ]
+        , describe "normalizePartId and officialColorsForPart"
+            [ test "normalizes path prefixes and uppercase extensions" <|
+                \_ ->
+                    ColorAvailability.normalizePartId "parts\\3001.DAT"
+                        |> Expect.equal "3001"
+            , test "officialColorsForPart matches isOfficial for both known and fallback parts" <|
+                \_ ->
+                    Expect.all
+                        [ \_ ->
+                            ColorAvailability.officialColorsForPart "3001.dat"
+                                |> List.all (\c -> ColorAvailability.isOfficial "3001.dat" c)
+                                |> Expect.equal True
+                        , \_ ->
+                            ColorAvailability.officialColorsForPart "99999.dat"
+                                |> List.member 7
+                                |> Expect.equal (ColorAvailability.isOfficial "99999.dat" 7)
+                        ]
+                        ()
+            ]
         , describe "parseDimensionsFromDescription"
             [ test "parses Brick 2 x 4" <|
                 \_ ->
@@ -76,6 +95,18 @@ suite =
                 \_ ->
                     ColorAvailability.parseDimensionsFromDescription "Plate 1 x 2"
                         |> Expect.equal ( 1, 2, 1 )
+            , test "parses 3D Brick 1 x 2 x 5" <|
+                \_ ->
+                    ColorAvailability.parseDimensionsFromDescription "Brick 1 x 2 x 5"
+                        |> Expect.equal ( 1, 2, 15 )
+            , test "continues scanning past non-numeric x token" <|
+                \_ ->
+                    ColorAvailability.parseDimensionsFromDescription "Brick with x pattern 2 x 4"
+                        |> Expect.equal ( 2, 4, 3 )
+            , test "preserves Brick height when description mentions Plate later" <|
+                \_ ->
+                    ColorAvailability.parseDimensionsFromDescription "Brick, Modified 1 x 2 with Plate"
+                        |> Expect.equal ( 1, 2, 3 )
             , test "defaults for parts without dimensions" <|
                 \_ ->
                     ColorAvailability.parseDimensionsFromDescription "Minifig Torso"
@@ -89,6 +120,10 @@ suite =
             , test "detects axle" <|
                 \_ ->
                     ColorAvailability.isGearOrAxle "Technic" "Technic Axle 4"
+                        |> Expect.equal True
+            , test "detects gear from category name" <|
+                \_ ->
+                    ColorAvailability.isGearOrAxle "Technic Gear" "24 Tooth Crown"
                         |> Expect.equal True
             , test "does not flag normal brick" <|
                 \_ ->

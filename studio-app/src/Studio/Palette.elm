@@ -7,6 +7,7 @@ module Studio.Palette exposing
     , filterParts
     , init
     , initWith
+    , resultLimit
     , view
     )
 
@@ -23,7 +24,7 @@ import Html exposing (Html, button, div, img, input, option, select, span, text)
 import Html.Attributes as Attr
 import Html.Events
 import Json.Decode as Decode
-import LDraw.ColorAvailability as ColorAvailability exposing (ColorAvailability(..), PartMetadata)
+import LDraw.ColorAvailability as ColorAvailability exposing (ColorAvailability(..))
 import Set exposing (Set)
 import Studio.PartIndex as PartIndex exposing (Part, PartIndex)
 import UI.Theme as Theme
@@ -471,7 +472,8 @@ cardTopBar config part isFavorite availability =
         , Attr.style "align-items" "center"
         ]
         [ button
-            [ Html.Events.on "click" (Decode.succeed (config.onToggleFavorite part.file))
+            [ Html.Events.stopPropagationOn "click"
+                (Decode.succeed ( config.onToggleFavorite part.file, True ))
             , Attr.style "background" "transparent"
             , Attr.style "border" "none"
             , Attr.style "cursor" "pointer"
@@ -557,7 +559,8 @@ cardThumbnail maybeUrl file =
 cardInspectButton : Config msg -> Part -> Html msg
 cardInspectButton config part =
     button
-        [ Html.Events.on "click" (Decode.succeed (config.onInspect (Just part)))
+        [ Html.Events.stopPropagationOn "click"
+            (Decode.succeed ( config.onInspect (Just part), True ))
         , Attr.style "margin-top" "4px"
         , Attr.style "padding" "1px 4px"
         , Attr.style "font-size" "9px"

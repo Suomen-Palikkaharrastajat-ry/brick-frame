@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { buildIndex, parsePartHeader, writeIndex, parseRebrickablePartColors, renderSvgThumbnail, batchRenderThumbnails } from './build-part-index.mjs'
+import { parseLDrawGeometry } from '../studio-app/thumbnail-pipeline.js'
 
 const brick = `0 Brick  2 x  4
 0 Name: 3001.dat
@@ -89,4 +90,16 @@ test('batchRenderThumbnails generates thumbnail files in output directory', () =
   assert.equal(count, 2)
   assert.ok(fs.existsSync(path.join(dir, '3001.svg')))
   assert.ok(fs.existsSync(path.join(dir, '3023.svg')))
+})
+
+test('parseLDrawGeometry extracts triangles, quads and normalized subfile references', () => {
+  const dat = `1 16 10 20 30 1 0 0 0 1 0 0 0 1 s\\3001s01.dat
+3 16 0 0 0 10 0 0 0 10 0
+4 16 -40 0 -20 -40 24 -20 40 24 -20 40 0 -20
+`
+  const { triangles, subfiles } = parseLDrawGeometry(dat)
+  assert.equal(triangles.length, 3)
+  assert.equal(subfiles.length, 1)
+  assert.equal(subfiles[0].file, 's/3001s01.dat')
+  assert.deepEqual(subfiles[0].matrix.slice(0, 3), [10, 20, 30])
 })

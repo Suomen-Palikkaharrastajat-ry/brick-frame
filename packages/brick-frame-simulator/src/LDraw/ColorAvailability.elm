@@ -19,7 +19,6 @@ out of production, or unofficial), along with physical dimensions and part metad
 -}
 
 import Dict exposing (Dict)
-import Set exposing (Set)
 
 
 {-| Availability status of a part in a specific LDraw color.
@@ -42,13 +41,18 @@ type alias PartMetadata =
     }
 
 
-{-| Clean a file name into a normalized part ID (e.g., "3001.dat" -> "3001").
+{-| Clean a file name into a normalized part ID (e.g., "parts/3001.dat" -> "3001").
 -}
 normalizePartId : String -> String
 normalizePartId file =
     file
         |> String.toLower
         |> String.trim
+        |> String.replace "\\" "/"
+        |> String.split "/"
+        |> List.reverse
+        |> List.head
+        |> Maybe.withDefault ""
         |> (\name ->
                 if String.endsWith ".dat" name then
                     String.dropRight 4 name
@@ -312,8 +316,8 @@ officialColorsForPart file =
             Dict.keys colorMap
 
         Nothing ->
-            -- Fallback standard palette for catalogue parts
-            [ 0, 1, 2, 4, 14, 15, 19, 70, 71, 72 ]
+            -- Fallback standard + retired classic palette for catalogue parts
+            [ 0, 1, 2, 4, 7, 8, 9, 10, 14, 15, 19, 70, 71, 72 ]
 
 
 isRetiredClassicColor : Int -> Bool
@@ -342,7 +346,10 @@ isGearOrAxle category description =
         || String.contains "cog" desc
         || String.contains "bevel" desc
         || String.contains "worm" desc
-        || (cat == "technic" && (String.contains "gear" desc || String.contains "axle" desc))
+        || String.contains "pinion" desc
+        || String.contains "differential" desc
+        || String.contains "gear" cat
+        || String.contains "axle" cat
 
 
 {-| Parse part dimensions in studs ($W \\times L \\times H$).
@@ -351,31 +358,49 @@ Bricks are 3 units high (in plates), plates and tiles are 1 unit high.
 parseDimensionsFromDescription : String -> ( Int, Int, Int )
 parseDimensionsFromDescription description =
     let
+        low =
+            String.toLower (String.trim description)
+
         words =
-            String.words (String.toLower description)
+            String.words low
 
-        height =
-            if String.startsWith "plate" (String.toLower description) || String.contains "plate" (String.toLower description) then
+        defaultHeight =
+            if String.startsWith "brick" low then
+                3
+
+            else if String.startsWith "plate" low || String.startsWith "tile" low then
                 1
 
-            else if String.startsWith "tile" (String.toLower description) || String.contains "tile" (String.toLower description) then
+            else if String.contains "plate" low || String.contains "tile" low then
                 1
 
-            else if String.startsWith "brick" (String.toLower description) || String.contains "brick" (String.toLower description) then
+            else if String.contains "brick" low then
                 3
 
             else
                 1
 
+        extractNumbers : List String -> Maybe ( Int, Int, Maybe Int )
         extractNumbers list =
             case list of
-                w1 :: "x" :: w2 :: _ ->
-                    case ( String.toInt w1, String.toInt w2 ) of
-                        ( Just a, Just b ) ->
-                            Just ( a, b )
+                w1 :: "x" :: w2 :: "x" :: h3 :: rest ->
+                    case ( String.toInt w1, String.toInt w2, String.toInt h3 ) of
+                        ( Just a, Just b, Just c ) ->
+                            Just ( a, b, Just (c * defaultHeight) )
+
+                        ( Just a, Just b, Nothing ) ->
+                            Just ( a, b, Nothing )
 
                         _ ->
-                            Nothing
+                            extractNumbers ("x" :: w2 :: "x" :: h3 :: rest)
+
+                w1 :: "x" :: w2 :: rest ->
+                    case ( String.toInt w1, String.toInt w2 ) of
+                        ( Just a, Just b ) ->
+                            Just ( a, b, Nothing )
+
+                        _ ->
+                            extractNumbers ("x" :: w2 :: rest)
 
                 _ :: rest ->
                     extractNumbers rest
@@ -384,11 +409,11 @@ parseDimensionsFromDescription description =
                     Nothing
     in
     case extractNumbers words of
-        Just ( w, l ) ->
-            ( w, l, height )
+        Just ( w, l, maybeH ) ->
+            ( w, l, Maybe.withDefault defaultHeight maybeH )
 
         Nothing ->
-            ( 1, 1, height )
+            ( 1, 1, defaultHeight )
 
 
 {-| Estimate part weight in grams from dimensions and category.

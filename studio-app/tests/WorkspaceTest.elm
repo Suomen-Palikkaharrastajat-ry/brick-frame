@@ -4,6 +4,7 @@ module WorkspaceTest exposing (suite)
 and what the page does with the viewport's events.
 -}
 
+import Dict
 import Expect
 import Http
 import LDraw.Document as Document
@@ -769,6 +770,50 @@ panelSuite =
                         |> List.head
                         |> Maybe.map (\p -> Mat4.transform p.matrix (vec3 0 0 0) |> Vec3.toRecord)
                         |> Expect.equal (Just { x = 20, y = 20, z = 40 })
+            , test "toggling a favorite adds and removes it" <|
+                \_ ->
+                    let
+                        starred =
+                            withCatalogue |> step (PaletteToggleFavorite "3001.dat")
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal (Set.singleton "3001.dat") m.palette.favorites
+                        , \m -> Expect.equal Set.empty (step (PaletteToggleFavorite "3001.dat") m).palette.favorites
+                        ]
+                        starred
+            , test "adding parts records them in recentParts most-recent-first without duplicates" <|
+                \_ ->
+                    withCatalogue
+                        |> step (ManualPart "3001.dat")
+                        |> step AddManualPart
+                        |> step (ManualPart "3023.dat")
+                        |> step AddManualPart
+                        |> step (ManualPart "3001.dat")
+                        |> step AddManualPart
+                        |> .palette
+                        |> .recentParts
+                        |> Expect.equal [ "3001.dat", "3023.dat" ]
+            , test "inspecting a part arms it for the 3D preview and rotates the turntable" <|
+                \_ ->
+                    let
+                        inspected =
+                            withCatalogue
+                                |> step (PaletteInspect (Just part3001))
+                                |> step (PaletteRotateTurntable 120)
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal (Just part3001) m.palette.inspectingPart
+                        , \m -> Expect.equal (Just part3001) m.palette.armed
+                        , \m -> Expect.within (Expect.Absolute 0.001) (degrees 120) m.preview.camera.azimuth
+                        ]
+                        inspected
+            , test "thumbnailLoaded stores thumbnails matching the active colour and ignores stale colours" <|
+                \_ ->
+                    withCatalogue
+                        |> step (ThumbnailLoaded { file = "3001.dat", color = 4, url = "data:image/png;base64,red" })
+                        |> step (ThumbnailLoaded { file = "3023.dat", color = 1, url = "data:image/png;base64,blue" })
+                        |> .thumbnails
+                        |> Expect.equal (Dict.singleton "3001.dat" "data:image/png;base64,red")
             ]
         , describe "colours"
             [ test "picking a colour with a selection recolours it, as one undo step" <|

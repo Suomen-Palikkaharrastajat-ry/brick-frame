@@ -522,11 +522,24 @@ update msg model =
             ( updated, requestVisibleThumbnails updated )
 
         PaletteInspect maybePart ->
-            let
-                palette =
-                    model.palette
-            in
-            ( { model | palette = { palette | inspectingPart = maybePart } }, Cmd.none )
+            case maybePart of
+                Just part ->
+                    let
+                        ( armedModel, armCmd ) =
+                            armPart part.file model
+                                |> (\( m, cmd ) -> ( withArmed (Just part) m, cmd ))
+
+                        palette =
+                            armedModel.palette
+                    in
+                    ( { armedModel | palette = { palette | inspectingPart = Just part } }, armCmd )
+
+                Nothing ->
+                    let
+                        palette =
+                            model.palette
+                    in
+                    ( { model | palette = { palette | inspectingPart = Nothing } }, Cmd.none )
 
         PaletteRotateTurntable angle ->
             let
@@ -810,11 +823,16 @@ requestVisibleThumbnails model =
     case model.palette.index of
         Palette.Loaded index ->
             let
-                visible =
-                    Palette.filterParts 32 model.palette model.activeColour index
+                missing =
+                    Palette.filterParts Palette.resultLimit model.palette model.activeColour index
+                        |> List.filter (\p -> not (Dict.member p.file model.thumbnails))
             in
-            Ports.requestThumbnails
-                (List.map (\p -> { file = p.file, color = model.activeColour }) visible)
+            if List.isEmpty missing then
+                Cmd.none
+
+            else
+                Ports.requestThumbnails
+                    (List.map (\p -> { file = p.file, color = model.activeColour }) missing)
 
         _ ->
             Cmd.none
@@ -1538,10 +1556,24 @@ viewPreview model =
 
 viewColours : Model -> Html Msg
 viewColours model =
+    let
+        activePart =
+            case model.palette.armed of
+                Just part ->
+                    Just part.file
+
+                Nothing ->
+                    case Set.toList model.selection |> List.filterMap (\id -> Document.getPlacement id model.document) of
+                        placement :: _ ->
+                            Just placement.fileText
+
+                        [] ->
+                            Nothing
+    in
     Colours.view
         { current = model.activeColour
         , onPick = PickColour
-        , armedPart = Maybe.map .file model.palette.armed
+        , armedPart = activePart
         , filterOfficialOnly = model.palette.colorFilterMode == Palette.OfficialOnly
         , onToggleFilter = PaletteToggleColorFilter
         }
