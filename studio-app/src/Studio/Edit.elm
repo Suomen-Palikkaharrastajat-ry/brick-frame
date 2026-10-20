@@ -11,6 +11,7 @@ module Studio.Edit exposing
     , pushApplied
     , record
     , redo
+    , rotationAboutAxis
     , selectionCenter
     , snap
     , undo
@@ -70,6 +71,7 @@ type alias NewPart =
 type Command
     = Translate (List Int) Vec3
     | Rotate (List Int) { pivot : Vec3, axis : Axis, radians : Float }
+    | RotateAroundAxis (List Int) { pivot : Vec3, axis : Vec3, radians : Float }
     | Recolor (List ( Int, Int ))
     | SetMatrix (List ( Int, Mat4 ))
     | Add (List NewPart)
@@ -93,8 +95,13 @@ apply command doc =
             )
 
         Rotate ids { pivot, axis, radians } ->
-            ( transform ids (Mat4.mul (rotationAbout pivot axis radians) >> clean) doc
-            , Rotate ids { pivot = pivot, axis = axis, radians = -radians }
+            apply (RotateAroundAxis ids { pivot = pivot, axis = axisVector axis, radians = radians }) doc
+                |> Tuple.mapSecond
+                    (\_ -> Rotate ids { pivot = pivot, axis = axis, radians = -radians })
+
+        RotateAroundAxis ids { pivot, axis, radians } ->
+            ( transform ids (Mat4.mul (rotationAboutAxis pivot axis radians) >> clean) doc
+            , RotateAroundAxis ids { pivot = pivot, axis = axis, radians = -radians }
             )
 
         Recolor pairs ->
@@ -206,8 +213,26 @@ transform ids change doc =
 
 rotationAbout : Vec3 -> Axis -> Float -> Mat4
 rotationAbout pivot axis radians =
+    rotationAboutAxis pivot (axisVector axis) radians
+
+
+{-| Rotation matrix around an arbitrary 3D pivot point and axis vector.
+-}
+rotationAboutAxis : Vec3 -> Vec3 -> Float -> Mat4
+rotationAboutAxis pivot axis radians =
+    let
+        len =
+            Vec3.length axis
+
+        unitAxis =
+            if len < 0.0001 then
+                Vec3.vec3 0 1 0
+
+            else
+                Vec3.scale (1 / len) axis
+    in
     Mat4.mul
-        (Mat4.mul (Mat4.makeTranslate pivot) (Mat4.makeRotate radians (axisVector axis)))
+        (Mat4.mul (Mat4.makeTranslate pivot) (Mat4.makeRotate radians unitAxis))
         (Mat4.makeTranslate (Vec3.negate pivot))
 
 

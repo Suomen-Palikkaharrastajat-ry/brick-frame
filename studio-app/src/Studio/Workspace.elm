@@ -27,6 +27,7 @@ import Browser.Events
 import Data
 import Dict exposing (Dict)
 import EmbeddedParts
+import Gear.Joint as Joint
 import Html exposing (Html, button, div, span, text)
 import Html.Attributes as Attr
 import Html.Events
@@ -54,7 +55,7 @@ import Render.Style as Style
 import Set exposing (Set)
 import Studio.Colours as Colours
 import Studio.Edit as Edit exposing (Axis(..), Command(..), History)
-import Studio.Gizmo as Gizmo exposing (Handle)
+import Studio.Gizmo as Gizmo exposing (ArcHandle, DragHandle(..), Handle)
 import Studio.Hints as Hints
 import Studio.Inspector as Inspector
 import Studio.Layout as Layout exposing (Layout, Panel(..))
@@ -164,7 +165,7 @@ document as it was then (every step is computed from it, so the drag can wander
 and come back without drift) and how far it has gone.
 -}
 type alias Drag =
-    { handle : Handle
+    { kind : DragHandle
     , ids : List Int
     , start : ( Float, Float )
     , lastPoint : ( Float, Float )
@@ -1849,6 +1850,74 @@ currentHandles model =
         []
 
 
+{-| The rotational arc handles for the current selection when the rotate tool is active.
+-}
+currentArcHandles : Model -> List ArcHandle
+currentArcHandles model =
+    if model.tool == RotateTool then
+        case model.drag of
+            Just { kind } ->
+                case kind of
+                    ArcDrag arcHandle ->
+                        [ arcHandle ]
+
+                    LinearDrag _ ->
+                        []
+
+            Nothing ->
+                let
+                    mainPlacements =
+                        Document.mainPlacements model.document
+
+                    joints =
+                        Joint.detectJoints mainPlacements
+
+                    selectedJoints =
+                        List.filter
+                            (\j ->
+                                Set.member j.parentPlacementId model.selection
+                                    || Set.member j.childPlacementId model.selection
+                            )
+                            joints
+                in
+                case selectedJoints of
+                    firstJoint :: _ ->
+                        case firstJoint.jointType of
+                            Joint.RevoluteJoint rev ->
+                                case
+                                    Gizmo.jointArcHandle
+                                        model.viewport.camera
+                                        model.viewport.width
+                                        model.viewport.height
+                                        firstJoint.pivotWorld
+                                        rev.axis
+                                of
+                                    Just handle ->
+                                        [ handle ]
+
+                                    Nothing ->
+                                        defaultArcHandles model
+
+                            _ ->
+                                defaultArcHandles model
+
+                    [] ->
+                        defaultArcHandles model
+
+    else
+        []
+
+
+defaultArcHandles : Model -> List ArcHandle
+defaultArcHandles model =
+    case Edit.selectionCenter (Set.toList model.selection) model.document of
+        Just center ->
+            Gizmo.arcHandles model.viewport.camera model.viewport.width model.viewport.height center
+
+        Nothing ->
+            []
+
+
 {-| How close, in pixels, a press has to be to a handle to grab it.
 -}
 grabRadius : Float
@@ -1862,7 +1931,20 @@ startDrag point model =
         Gizmo.hit grabRadius point (currentHandles model)
             |> Maybe.map
                 (\handle ->
-                    { handle = handle
+                    { kind = LinearDrag handle
+                    , ids = Set.toList model.selection
+                    , start = point
+                    , lastPoint = point
+                    , original = model.document
+                    , amount = 0
+                    }
+                )
+
+    else if model.tool == RotateTool then
+        Gizmo.hitArc grabRadius point (currentArcHandles model)
+            |> Maybe.map
+                (\arcHandle ->
+                    { kind = ArcDrag arcHandle
                     , ids = Set.toList model.selection
                     , start = point
                     , lastPoint = point
@@ -1876,16 +1958,48 @@ startDrag point model =
 
 
 {-| Follow the pointer: the document is the drag's original with the snapped
-move applied, shown live but not yet recorded for undo.
+move or rotation applied, shown live but not yet recorded for undo.
 -}
 moveDrag : Drag -> ( Float, Float ) -> Model -> ( Model, Cmd Msg )
 moveDrag drag point model =
+    case drag.kind of
+        LinearDrag handle ->
+            moveLinearDrag drag handle point model
+
+        ArcDrag arcHandle ->
+            let
+                step =
+                    degrees (toFloat model.rotateStep)
+
+                amount =
+                    Gizmo.dragArcAngle step arcHandle drag.start point
+            in
+            if amount == drag.amount then
+                ( model, Cmd.none )
+
+            else
+                let
+                    ( moved, _ ) =
+                        Edit.apply
+                            (RotateAroundAxis drag.ids
+                                { pivot = arcHandle.center
+                                , axis = arcHandle.axis
+                                , radians = amount
+                                }
+                            )
+                            drag.original
+                in
+                syncDocumentLive { model | document = moved, drag = Just { drag | amount = amount, lastPoint = point } }
+
+
+moveLinearDrag : Drag -> Gizmo.Handle -> ( Float, Float ) -> Model -> ( Model, Cmd Msg )
+moveLinearDrag drag handle point model =
     let
         amount =
-            Gizmo.dragAmount (toFloat model.gridStep) drag.handle drag.start point
+            Gizmo.dragAmount (toFloat model.gridStep) handle drag.start point
 
         delta =
-            Vec3.scale amount (Edit.axisVector drag.handle.axis)
+            Vec3.scale amount (Edit.axisVector handle.axis)
 
         effectiveDelta =
             if model.context.coordinateFrame == WorldFrame && not (List.isEmpty model.context.path) then
@@ -2077,7 +2191,7 @@ moveDrag drag point model =
                 ( model, Cmd.none )
 
 
-{-| Finish a drag: the document already shows the move, so record its undo,
+{-| Finish a drag: the document already shows the move or rotation, so record its undo,
 schedule hints and save the draft once.
 -}
 endDrag : Model -> ( Model, Cmd Msg )
@@ -2355,6 +2469,7 @@ canvasArea model =
                             , snapGuide = Maybe.map .guide model.activeSnap
                             }
                             (currentHandles model)
+                            (currentArcHandles model)
                 , coarsenWhileMoving = True
                 }
                 model.viewport

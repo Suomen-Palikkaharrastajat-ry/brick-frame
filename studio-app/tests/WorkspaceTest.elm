@@ -489,6 +489,65 @@ editingSuite =
                         |> .selection
                         |> Set.isEmpty
                         |> Expect.equal True
+            , test "the rotate tool selects RotateTool" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded |> click (screenOf 0 loaded) |> step (UseTool RotateTool)
+                    in
+                    Expect.equal True (ready.tool == RotateTool)
+            , test "dragging a rotational arc handle rotates the selection and undoes in one step" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded |> click (screenOf 0 loaded) |> step (UseTool RotateTool)
+
+                        firstArc =
+                            Edit.selectionCenter [ 0 ] ready.document
+                                |> Maybe.map (Gizmo.arcHandles ready.viewport.camera 800 600)
+                                |> Maybe.andThen List.head
+
+                        dragged =
+                            case firstArc of
+                                Just arc ->
+                                    case arc.screenPoints of
+                                        ( sx, sy ) :: _ ->
+                                            let
+                                                ( cx, cy ) =
+                                                    arc.screenCenter
+
+                                                -- Rotate 90 degrees counter-clockwise around screenCenter
+                                                ( ex, ey ) =
+                                                    ( cx + (sy - cy), cy - (sx - cx) )
+                                            in
+                                            Just
+                                                (ready
+                                                    |> step (ViewportMsg (Viewport.MouseDown sx sy False))
+                                                    |> step (ViewportMsg (Viewport.MouseMove ex ey))
+                                                    |> step (ViewportMsg (Viewport.MouseUp ex ey))
+                                                )
+
+                                        [] ->
+                                            Nothing
+
+                                Nothing ->
+                                    Nothing
+
+                        euler m =
+                            Document.getPlacement 0 m.document
+                                |> Maybe.map (.matrix >> Transform.eulerDegrees)
+                    in
+                    case dragged of
+                        Just m ->
+                            Expect.all
+                                [ \d -> Expect.notEqual (Just { x = 0, y = 0, z = 0 }) (euler d)
+                                , \d -> Expect.equal (Just { x = 0, y = 0, z = 0 }) (euler (step Undo d))
+                                , \d -> Expect.equal (euler d) (euler (step Redo (step Undo d)))
+                                ]
+                                m
+
+                        Nothing ->
+                            Expect.fail "expected rotation arc handle"
             ]
         , describe "colour and grid"
             [ test "recolouring is one undoable step" <|
@@ -1222,14 +1281,15 @@ snappingSuite =
                         { start
                             | drag =
                                 Just
-                                    { handle =
-                                        { axis = AxisX
-                                        , origin = dummyPoint
-                                        , tip = dummyPoint
-                                        , length = 50
-                                        , screenStart = ( 100, 100 )
-                                        , screenEnd = ( 150, 100 )
-                                        }
+                                    { kind =
+                                        Gizmo.LinearDrag
+                                            { axis = AxisX
+                                            , origin = dummyPoint
+                                            , tip = dummyPoint
+                                            , length = 50
+                                            , screenStart = ( 100, 100 )
+                                            , screenEnd = ( 150, 100 )
+                                            }
                                     , ids = []
                                     , start = ( 100, 100 )
                                     , lastPoint = ( 100, 100 )
@@ -1271,14 +1331,15 @@ snappingSuite =
                             , collidingPlacements = Set.fromList [ 1, 2 ]
                             , drag =
                                 Just
-                                    { handle =
-                                        { axis = AxisX
-                                        , origin = vec3 0 0 0
-                                        , tip = vec3 0 0 0
-                                        , length = 50
-                                        , screenStart = ( 100, 100 )
-                                        , screenEnd = ( 150, 100 )
-                                        }
+                                    { kind =
+                                        Gizmo.LinearDrag
+                                            { axis = AxisX
+                                            , origin = vec3 0 0 0
+                                            , tip = vec3 0 0 0
+                                            , length = 50
+                                            , screenStart = ( 100, 100 )
+                                            , screenEnd = ( 150, 100 )
+                                            }
                                     , ids = [ 1 ]
                                     , start = ( 100, 100 )
                                     , lastPoint = ( 150, 100 )
@@ -1324,14 +1385,15 @@ snappingSuite =
                             , collidingPlacements = Set.fromList [ 0, 1 ]
                             , drag =
                                 Just
-                                    { handle =
-                                        { axis = AxisX
-                                        , origin = vec3 0 0 0
-                                        , tip = vec3 0 0 0
-                                        , length = 50
-                                        , screenStart = ( 100, 100 )
-                                        , screenEnd = ( 150, 100 )
-                                        }
+                                    { kind =
+                                        Gizmo.LinearDrag
+                                            { axis = AxisX
+                                            , origin = vec3 0 0 0
+                                            , tip = vec3 0 0 0
+                                            , length = 50
+                                            , screenStart = ( 100, 100 )
+                                            , screenEnd = ( 150, 100 )
+                                            }
                                     , ids = [ 0 ]
                                     , start = ( 100, 100 )
                                     , lastPoint = ( 150, 100 )
@@ -1367,14 +1429,15 @@ snappingSuite =
                         { start
                             | drag =
                                 Just
-                                    { handle =
-                                        { axis = AxisX
-                                        , origin = vec3 0 0 0
-                                        , tip = vec3 0 0 0
-                                        , length = 50
-                                        , screenStart = ( 100, 100 )
-                                        , screenEnd = ( 150, 100 )
-                                        }
+                                    { kind =
+                                        Gizmo.LinearDrag
+                                            { axis = AxisX
+                                            , origin = vec3 0 0 0
+                                            , tip = vec3 0 0 0
+                                            , length = 50
+                                            , screenStart = ( 100, 100 )
+                                            , screenEnd = ( 150, 100 )
+                                            }
                                     , ids = []
                                     , start = ( 100, 100 )
                                     , lastPoint = ( 120, 100 )
