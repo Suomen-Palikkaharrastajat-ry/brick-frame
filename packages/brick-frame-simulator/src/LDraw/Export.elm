@@ -8,6 +8,7 @@ module LDraw.Export exposing
     , exportGlTF
     , exportUSDA
     , exportUSDZ
+    , sanitizeUsdIdentifier
     )
 
 {-| Universal 3D exporters for Palikkakehys LDraw models.
@@ -92,3 +93,10 @@ exportUSDA =
 exportUSDZ : Document -> PartCache -> ExportConfig -> UsdzPayload
 exportUSDZ =
     USDZ.exportUSDZ
+
+
+{-| Sanitize an arbitrary string into a valid USD prim identifier (`[A-Za-z_][A-Za-z0-9_]*`).
+-}
+sanitizeUsdIdentifier : String -> String
+sanitizeUsdIdentifier =
+    USDZ.sanitizeUsdIdentifier

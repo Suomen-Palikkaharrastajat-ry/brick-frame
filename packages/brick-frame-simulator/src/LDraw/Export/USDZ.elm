@@ -4,6 +4,7 @@ module LDraw.Export.USDZ exposing
     , defaultConfig
     , exportUSDA
     , exportUSDZ
+    , sanitizeUsdIdentifier
     )
 
 {-| USDA and USDZ serializer for Apple AR QuickLook on iOS.
@@ -18,10 +19,11 @@ Generates:
 
 import Bitwise
 import Bytes exposing (Bytes, Endianness(..))
+import Bytes.Decode as Decode exposing (Decoder)
 import Bytes.Encode as EncodeBytes exposing (Encoder)
 import Dict exposing (Dict)
 import LDraw.Colors as Colors
-import LDraw.Document as Document exposing (Document)
+import LDraw.Document as Document exposing (Document, Placement)
 import LDraw.Export.Base64 as Base64
 import LDraw.Geometry as Geometry
 import LDraw.Resolve exposing (PartCache)
@@ -57,6 +59,37 @@ type alias UsdzPayload =
     , usdzBase64 : String
     , filename : String
     }
+
+
+{-| Sanitize an arbitrary string (such as an LDraw part filename `3001.dat` or
+`s\3001s01.dat`) into a valid USD prim identifier (`[A-Za-z_][A-Za-z0-9_]*`).
+-}
+sanitizeUsdIdentifier : String -> String
+sanitizeUsdIdentifier raw =
+    let
+        cleaned =
+            raw
+                |> String.toList
+                |> List.map
+                    (\c ->
+                        if Char.isAlphaNum c || c == '_' then
+                            c
+
+                        else
+                            '_'
+                    )
+                |> String.fromList
+    in
+    case String.uncons cleaned of
+        Nothing ->
+            "Part_Empty"
+
+        Just ( first, _ ) ->
+            if Char.isAlpha first || first == '_' then
+                cleaned
+
+            else
+                "Part_" ++ cleaned
 
 
 {-| Export an LDraw document to USDA text format.
@@ -99,7 +132,11 @@ exportUSDA doc cache config =
             Dict.toList grouped
 
         placements =
-            Document.placements doc
+            if config.groupSubmodels then
+                Document.placements doc
+
+            else
+                Document.mainPlacements doc
 
         placementColors =
             List.map (\p -> Colors.toVec4 (Colors.resolveColor 16 p.color)) placements
@@ -119,9 +156,15 @@ exportUSDA doc cache config =
                 |> String.join "\n"
 
         meshDefinitions =
-            groupsList
-                |> List.indexedMap (\idx ( _, verts ) -> buildUsdMesh idx verts)
-                |> String.join "\n"
+            if List.isEmpty groupsList then
+                placements
+                    |> List.indexedMap buildUsdPlacementXform
+                    |> String.join "\n"
+
+            else
+                groupsList
+                    |> List.indexedMap (\idx ( _, verts ) -> buildUsdMesh idx verts)
+                    |> String.join "\n"
     in
     String.join "\n"
         [ "#usda 1.0"
@@ -187,8 +230,11 @@ buildUsdMaterial idx colorVec =
         a =
             Vec4.getW colorVec
 
+        isTransparent =
+            a < 0.95
+
         ( roughness, metallic ) =
-            if a < 0.95 then
+            if isTransparent then
                 ( "0.05", "0.0" )
 
             else if r > 0.7 && g > 0.7 && b > 0.7 then
@@ -196,28 +242,64 @@ buildUsdMaterial idx colorVec =
 
             else
                 ( "0.25", "0.0" )
+
+        iorLines =
+            if isTransparent then
+                [ "                float inputs:ior = 1.49"
+                , "                float inputs:opacityThreshold = 0.0"
+                ]
+
+            else
+                []
     in
     String.join "\n"
-        [ "        def Material \"" ++ matName ++ "\""
-        , "        {"
-        , "            def Shader \"PreviewShader\""
-        , "            {"
-        , "                uniform token info:id = \"UsdPreviewSurface\""
-        , "                color3f inputs:diffuseColor = ("
+        ([ "        def Material \"" ++ matName ++ "\""
+         , "        {"
+         , "            def Shader \"PreviewShader\""
+         , "            {"
+         , "                uniform token info:id = \"UsdPreviewSurface\""
+         , "                color3f inputs:diffuseColor = ("
             ++ String.fromFloat r
             ++ ", "
             ++ String.fromFloat g
             ++ ", "
             ++ String.fromFloat b
             ++ ")"
-        , "                float inputs:roughness = " ++ roughness
-        , "                float inputs:metallic = " ++ metallic
-        , "                float inputs:opacity = " ++ String.fromFloat a
-        , "                token outputs:surface"
-        , "            }"
-        , "            token outputs:surface.connect = </Palikkakehys_Model/Materials/"
-            ++ matName
-            ++ "/PreviewShader.outputs:surface>"
+         , "                float inputs:roughness = " ++ roughness
+         , "                float inputs:metallic = " ++ metallic
+         , "                float inputs:opacity = " ++ String.fromFloat a
+         ]
+            ++ iorLines
+            ++ [ "                token outputs:surface"
+               , "            }"
+               , "            token outputs:surface.connect = </Palikkakehys_Model/Materials/"
+                    ++ matName
+                    ++ "/PreviewShader.outputs:surface>"
+               , "        }"
+               ]
+        )
+
+
+buildUsdPlacementXform : Int -> Placement -> String
+buildUsdPlacementXform idx placement =
+    let
+        primName =
+            sanitizeUsdIdentifier (String.fromInt idx ++ "_" ++ placement.part)
+
+        rec =
+            Mat4.toRecord placement.matrix
+    in
+    String.join "\n"
+        [ "        def Xform \"" ++ primName ++ "\""
+        , "        {"
+        , "            double3 xformOp:translate = ("
+            ++ String.fromFloat rec.m41
+            ++ ", "
+            ++ String.fromFloat -rec.m42
+            ++ ", "
+            ++ String.fromFloat -rec.m43
+            ++ ")"
+        , "            uniform token[] xformOpOrder = [\"xformOp:translate\"]"
         , "        }"
         ]
 
@@ -272,6 +354,7 @@ buildUsdMesh idx verts =
     String.join "\n"
         [ "        def Mesh \"" ++ meshName ++ "\""
         , "        {"
+        , "            uniform bool doubleSided = 1"
         , "            rel material:binding = </Palikkakehys_Model/Materials/" ++ matName ++ ">"
         , "            point3f[] points = [" ++ String.join ", " pointStrings ++ "]"
         , "            normal3f[] normals = [" ++ String.join ", " normalStrings ++ "] ("
@@ -300,19 +383,43 @@ exportUSDZ doc cache config =
     }
 
 
+utf8StringToByteList : String -> List Int
+utf8StringToByteList str =
+    let
+        encoded =
+            EncodeBytes.encode (EncodeBytes.string str)
+
+        width =
+            Bytes.width encoded
+
+        decoder : Int -> Decoder (List Int)
+        decoder count =
+            Decode.loop ( count, [] )
+                (\( remaining, acc ) ->
+                    if remaining <= 0 then
+                        Decode.succeed (Decode.Done (List.reverse acc))
+
+                    else
+                        Decode.map (\b -> Decode.Loop ( remaining - 1, b :: acc )) Decode.unsignedInt8
+                )
+    in
+    Decode.decode (decoder width) encoded
+        |> Maybe.withDefault []
+
+
 {-| Build an uncompressed ZIP archive with 64-byte alignment conforming to Apple USDZ specs.
 -}
 buildUsdzZip : String -> String -> String
 buildUsdzZip filename contentStr =
     let
         contentBytesList =
-            List.map Char.toCode (String.toList contentStr)
+            utf8StringToByteList contentStr
 
         contentLen =
             List.length contentBytesList
 
         filenameByteList =
-            List.map Char.toCode (String.toList filename)
+            utf8StringToByteList filename
 
         filenameLen =
             List.length filenameByteList

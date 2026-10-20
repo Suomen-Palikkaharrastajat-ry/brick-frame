@@ -21,11 +21,12 @@ import Bytes exposing (Bytes, Endianness(..))
 import Bytes.Encode as EncodeBytes exposing (Encoder)
 import Dict exposing (Dict)
 import Json.Encode as Encode
-import LDraw.Document as Document exposing (Document)
+import LDraw.Colors as Colors
+import LDraw.Document as Document exposing (Document, Placement)
 import LDraw.Export.Base64 as Base64
 import LDraw.Geometry as Geometry
 import LDraw.Resolve exposing (PartCache)
-import Math.Matrix4 as Mat4
+import Math.Matrix4 as Mat4 exposing (Mat4)
 import Math.Vector3 as Vec3 exposing (Vec3)
 import Math.Vector4 as Vec4 exposing (Vec4)
 import Render.Mesh exposing (Vertex)
@@ -71,6 +72,17 @@ type alias MaterialSpec =
     }
 
 
+lduToMeters : Float
+lduToMeters =
+    0.0004
+
+
+metallicColorKeys : List String
+metallicColorKeys =
+    [ 80, 81, 82, 83, 135, 148, 179, 334, 383 ]
+        |> List.map (\code -> colorKey (Colors.toVec4 (Colors.resolveColor 16 code)))
+
+
 classifyMaterial : Vec4 -> MaterialSpec
 classifyMaterial colorVec =
     let
@@ -86,10 +98,8 @@ classifyMaterial colorVec =
         a =
             Vec4.getW colorVec
 
-        -- Detect chrome / metallic
         isMetallic =
-            (r > 0.7 && g > 0.7 && b > 0.7 && abs (r - g) < 0.05 && abs (g - b) < 0.05 && a >= 0.99)
-                && (abs (r - 0.8) < 0.05 || abs (r - 0.9) < 0.05)
+            List.member (colorKey colorVec) metallicColorKeys
 
         isTransparent =
             a < 0.95
@@ -139,6 +149,44 @@ colorKey v =
         ++ String.fromInt (round (Vec4.getW v * 255))
 
 
+firstColor : List Vertex -> Vec4
+firstColor verts =
+    case verts of
+        first :: _ ->
+            first.color
+
+        [] ->
+            Vec4.vec4 0.7 0.7 0.7 1.0
+
+
+{-| Convert an LDraw placement matrix (-Y up, LDU) to a glTF 2.0 column-major
+16-element matrix (+Y up, meters: 1 LDU = 0.0004m).
+-}
+ldrawMatrixToGltfColumnMajor : Mat4 -> List Float
+ldrawMatrixToGltfColumnMajor mat =
+    let
+        rec =
+            Mat4.toRecord mat
+    in
+    [ rec.m11
+    , -rec.m12
+    , -rec.m13
+    , 0
+    , -rec.m21
+    , rec.m22
+    , rec.m23
+    , 0
+    , -rec.m31
+    , rec.m32
+    , rec.m33
+    , 0
+    , rec.m41 * lduToMeters
+    , -rec.m42 * lduToMeters
+    , -rec.m43 * lduToMeters
+    , 1
+    ]
+
+
 {-| Export an LDraw document to glTF 2.0 / GLB.
 -}
 exportGlTF : Document -> PartCache -> ExportConfig -> GlTFPayload
@@ -178,11 +226,35 @@ exportGlTF doc cache config =
         groupsList =
             Dict.toList grouped
 
+        placements =
+            if config.groupSubmodels then
+                Document.placements doc
+
+            else
+                Document.mainPlacements doc
+
+        placementColors =
+            placements
+                |> List.map (\p -> Colors.toVec4 (Colors.resolveColor 16 p.color))
+                |> List.foldl (\c dict -> Dict.insert (colorKey c) c dict) Dict.empty
+                |> Dict.values
+
+        materialColors =
+            if List.isEmpty groupsList then
+                if List.isEmpty placementColors then
+                    [ Vec4.vec4 0.7 0.7 0.7 1.0 ]
+
+                else
+                    placementColors
+
+            else
+                List.map (\( _, verts ) -> firstColor verts) groupsList
+
         -- Build vertex buffers for each group
         built =
-            buildPrimitives groupsList 0 0 0 initialBounds
+            buildPrimitives groupsList 0 0 0
     in
-    assemblePayload built.primitives built.accessors built.bufferViews built.encoders built.totalBytes built.bounds
+    assemblePayload built.primitives built.accessors built.bufferViews built.encoders built.totalBytes materialColors placements
 
 
 type alias Bounds =
@@ -206,18 +278,8 @@ initialBounds =
     }
 
 
-updateBounds : Vec3 -> Bounds -> Bounds
-updateBounds pos b =
-    let
-        x =
-            Vec3.getX pos
-
-        y =
-            Vec3.getY pos
-
-        z =
-            Vec3.getZ pos
-    in
+updateBounds : Float -> Float -> Float -> Bounds -> Bounds
+updateBounds x y z b =
     { minX = min b.minX x
     , minY = min b.minY y
     , minZ = min b.minZ z
@@ -233,7 +295,6 @@ type alias PrimitivesBuildResult =
     , bufferViews : List Encode.Value
     , encoders : List Encoder
     , totalBytes : Int
-    , bounds : Bounds
     }
 
 
@@ -242,9 +303,8 @@ buildPrimitives :
     -> Int
     -> Int
     -> Int
-    -> Bounds
     -> PrimitivesBuildResult
-buildPrimitives groups primIndex accIndex byteOffset boundsAcc =
+buildPrimitives groups primIndex accIndex byteOffset =
     case groups of
         [] ->
             { primitives = []
@@ -252,7 +312,6 @@ buildPrimitives groups primIndex accIndex byteOffset boundsAcc =
             , bufferViews = []
             , encoders = []
             , totalBytes = byteOffset
-            , bounds = boundsAcc
             }
 
         ( _, vertices ) :: rest ->
@@ -263,17 +322,27 @@ buildPrimitives groups primIndex accIndex byteOffset boundsAcc =
                 ( vertexEncoders, groupBounds ) =
                     List.foldl
                         (\v ( encs, b ) ->
-                            ( EncodeBytes.float32 LE (Vec3.getX v.position)
-                                :: EncodeBytes.float32 LE (Vec3.getY v.position)
-                                :: EncodeBytes.float32 LE (Vec3.getZ v.position)
+                            let
+                                px =
+                                    Vec3.getX v.position * lduToMeters
+
+                                py =
+                                    Vec3.getY v.position * lduToMeters
+
+                                pz =
+                                    Vec3.getZ v.position * lduToMeters
+                            in
+                            ( EncodeBytes.float32 LE px
+                                :: EncodeBytes.float32 LE py
+                                :: EncodeBytes.float32 LE pz
                                 :: EncodeBytes.float32 LE (Vec3.getX v.normal)
                                 :: EncodeBytes.float32 LE (Vec3.getY v.normal)
                                 :: EncodeBytes.float32 LE (Vec3.getZ v.normal)
                                 :: encs
-                            , updateBounds v.position b
+                            , updateBounds px py pz b
                             )
                         )
-                        ( [], boundsAcc )
+                        ( [], initialBounds )
                         vertices
 
                 -- 3 floats pos + 3 floats normal = 24 bytes per vertex
@@ -284,11 +353,22 @@ buildPrimitives groups primIndex accIndex byteOffset boundsAcc =
                 indices =
                     List.range 0 (vertexCount - 1)
 
+                useUint32 =
+                    vertexCount > 65535
+
                 indexEncoders =
-                    List.map (\i -> EncodeBytes.unsignedInt16 LE i) indices
+                    if useUint32 then
+                        List.map (\i -> EncodeBytes.unsignedInt32 LE i) indices
+
+                    else
+                        List.map (\i -> EncodeBytes.unsignedInt16 LE i) indices
 
                 idxBufLen =
-                    vertexCount * 2
+                    if useUint32 then
+                        vertexCount * 4
+
+                    else
+                        vertexCount * 2
 
                 -- Pad index buffer to 4 bytes if needed
                 idxPad =
@@ -355,12 +435,20 @@ buildPrimitives groups primIndex accIndex byteOffset boundsAcc =
                         , ( "type", Encode.string "VEC3" )
                         ]
 
-                -- Accessor for Indices
+                -- Accessor for Indices (5125 = UNSIGNED_INT, 5123 = UNSIGNED_SHORT)
                 idxAcc =
                     Encode.object
                         [ ( "bufferView", Encode.int (accIndex * 2 + 1) )
                         , ( "byteOffset", Encode.int 0 )
-                        , ( "componentType", Encode.int 5123 ) -- UNSIGNED_SHORT
+                        , ( "componentType"
+                          , Encode.int
+                                (if useUint32 then
+                                    5125
+
+                                 else
+                                    5123
+                                )
+                          )
                         , ( "count", Encode.int vertexCount )
                         , ( "type", Encode.string "SCALAR" )
                         ]
@@ -380,14 +468,13 @@ buildPrimitives groups primIndex accIndex byteOffset boundsAcc =
                         ]
 
                 next =
-                    buildPrimitives rest (primIndex + 1) (accIndex + 1) (byteOffset + totalGroupLen) groupBounds
+                    buildPrimitives rest (primIndex + 1) (accIndex + 1) (byteOffset + totalGroupLen)
             in
             { primitives = prim :: next.primitives
             , accessors = posAcc :: normAcc :: idxAcc :: next.accessors
             , bufferViews = vView :: idxView :: next.bufferViews
             , encoders = combinedEncoders ++ next.encoders
             , totalBytes = next.totalBytes
-            , bounds = next.bounds
             }
 
 
@@ -397,9 +484,10 @@ assemblePayload :
     -> List Encode.Value
     -> List Encoder
     -> Int
-    -> Bounds
+    -> List Vec4
+    -> List Placement
     -> GlTFPayload
-assemblePayload prims accessors views encoders totalBytes bounds =
+assemblePayload prims accessors views encoders totalBytes materialColors placements =
     let
         bufferBytes =
             EncodeBytes.encode (EncodeBytes.sequence encoders)
@@ -409,10 +497,10 @@ assemblePayload prims accessors views encoders totalBytes bounds =
 
         materialsJson =
             List.indexedMap
-                (\idx _ ->
+                (\idx colorVec ->
                     let
                         spec =
-                            classifyMaterial (Vec4.vec4 0.7 0.7 0.7 1.0)
+                            classifyMaterial colorVec
                     in
                     Encode.object
                         [ ( "name", Encode.string (spec.name ++ "_" ++ String.fromInt idx) )
@@ -429,7 +517,38 @@ assemblePayload prims accessors views encoders totalBytes bounds =
                         , ( "doubleSided", Encode.bool True )
                         ]
                 )
-                prims
+                materialColors
+
+        childIndices =
+            List.range 1 (List.length placements)
+
+        placementNodes =
+            List.indexedMap
+                (\idx p ->
+                    Encode.object
+                        [ ( "name", Encode.string ("Part_" ++ String.fromInt idx ++ "_" ++ p.part) )
+                        , ( "matrix", Encode.list Encode.float (ldrawMatrixToGltfColumnMajor p.matrix) )
+                        ]
+                )
+                placements
+
+        rootNodeFields =
+            [ ( "name", Encode.string "LDraw_Model" ) ]
+                ++ (if List.isEmpty prims then
+                        []
+
+                    else
+                        [ ( "mesh", Encode.int 0 ) ]
+                   )
+                ++ (if List.isEmpty childIndices then
+                        []
+
+                    else
+                        [ ( "children", Encode.list Encode.int childIndices ) ]
+                   )
+
+        rootNode =
+            Encode.object rootNodeFields
 
         gltfJsonObj =
             Encode.object
@@ -449,12 +568,7 @@ assemblePayload prims accessors views encoders totalBytes bounds =
                         ]
                   )
                 , ( "nodes"
-                  , Encode.list identity
-                        [ Encode.object
-                            [ ( "name", Encode.string "LDraw_Model" )
-                            , ( "mesh", Encode.int 0 )
-                            ]
-                        ]
+                  , Encode.list identity (rootNode :: placementNodes)
                   )
                 , ( "meshes"
                   , Encode.list identity
@@ -495,11 +609,8 @@ assemblePayload prims accessors views encoders totalBytes bounds =
 buildGlbBase64 : String -> Bytes -> String
 buildGlbBase64 jsonStr binBytes =
     let
-        jsonByteList =
-            List.map Char.toCode (String.toList jsonStr)
-
         jsonLen =
-            List.length jsonByteList
+            EncodeBytes.getStringWidth jsonStr
 
         jsonPad =
             modBy 4 jsonLen
@@ -545,8 +656,8 @@ buildGlbBase64 jsonStr binBytes =
             ]
 
         jsonBodyEncoder =
-            List.map (\code -> EncodeBytes.unsignedInt8 code) jsonByteList
-                ++ List.repeat jsonPadLen (EncodeBytes.unsignedInt8 0x20)
+            EncodeBytes.string jsonStr
+                :: List.repeat jsonPadLen (EncodeBytes.unsignedInt8 0x20)
 
         -- pad with spaces
         binChunkHeader =

@@ -88,8 +88,12 @@ if (ports.captureRender) {
     const ctx = offscreen.getContext('2d')
 
     if (!transparent) {
-      // Solid neutral dark theme background
-      ctx.fillStyle = '#0f172a'
+      // Solid neutral dark theme background from @theme CSS variable
+      const bg =
+        getComputedStyle(document.documentElement)
+          .getPropertyValue('--color-surface-canvas')
+          .trim() || 'rgb(15, 23, 42)'
+      ctx.fillStyle = bg
       ctx.fillRect(0, 0, targetWidth, targetHeight)
     }
 

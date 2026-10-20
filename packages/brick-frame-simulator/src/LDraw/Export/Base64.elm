@@ -7,6 +7,7 @@ import Array exposing (Array)
 import Bitwise
 import Bytes exposing (Bytes)
 import Bytes.Decode as Decode exposing (Decoder)
+import Bytes.Encode as EncodeBytes
 
 
 charTable : Array Char
@@ -186,7 +187,5 @@ encodeBytes bytes =
 -}
 encodeString : String -> String
 encodeString str =
-    str
-        |> String.toList
-        |> List.map Char.toCode
-        |> encodeIntList
+    EncodeBytes.encode (EncodeBytes.string str)
+        |> encodeBytes

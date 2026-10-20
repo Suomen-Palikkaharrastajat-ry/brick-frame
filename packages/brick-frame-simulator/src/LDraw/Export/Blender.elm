@@ -54,7 +54,11 @@ exportBlenderScript : Document -> ExportConfig -> String
 exportBlenderScript doc config =
     let
         allPlacements =
-            Document.placements doc
+            if config.groupSubmodels then
+                Document.placements doc
+
+            else
+                Document.mainPlacements doc
 
         colorsUsed =
             List.foldl
@@ -65,6 +69,25 @@ exportBlenderScript doc config =
 
         materialDefs =
             String.join "\n" (List.map buildMaterialFunction colorsUsed)
+
+        submodelCollections =
+            if config.groupSubmodels then
+                List.map
+                    (\sub ->
+                        let
+                            safeSub =
+                                escapePythonString sub.name
+                        in
+                        String.join "\n"
+                            [ "    sub_col = bpy.data.collections.new('Submodel_" ++ safeSub ++ "')"
+                            , "    model_col.children.link(sub_col)"
+                            ]
+                    )
+                    doc.submodels
+                    |> String.join "\n"
+
+            else
+                ""
 
         placementCommands =
             String.join "\n" (List.indexedMap buildPlacementCommand allPlacements)
@@ -171,12 +194,30 @@ exportBlenderScript doc config =
         , "    setup_studio()"
         , "    model_col = bpy.data.collections.new('LDraw_Model')"
         , "    bpy.context.scene.collection.children.link(model_col)"
-        , ""
+        , submodelCollections
         , placementCommands
         , ""
         , "if __name__ == '__main__':"
         , "    main()"
         ]
+
+
+escapePythonString : String -> String
+escapePythonString str =
+    str
+        |> String.replace "\\" "\\\\"
+        |> String.replace "'" "\\'"
+        |> String.replace "\n" "\\n"
+        |> String.replace "\u{000D}" "\\r"
+
+
+sanitizeColorSuffix : Int -> String
+sanitizeColorSuffix code =
+    if code < 0 then
+        "neg_" ++ String.fromInt (abs code)
+
+    else
+        String.fromInt code
 
 
 buildMaterialFunction : Int -> String
@@ -185,8 +226,11 @@ buildMaterialFunction code =
         rgba =
             Colors.resolveColor 16 code
 
+        suffix =
+            sanitizeColorSuffix code
+
         matName =
-            "ldraw_mat_" ++ String.fromInt code
+            "ldraw_mat_" ++ suffix
 
         ( roughness, metallic, transmission ) =
             if rgba.alpha < 0.95 then
@@ -210,7 +254,7 @@ buildMaterialFunction code =
                 ++ ")"
     in
     String.join "\n"
-        [ "def get_material_" ++ String.fromInt code ++ "():"
+        [ "def get_material_" ++ suffix ++ "():"
         , "    name = '" ++ matName ++ "'"
         , "    if name in bpy.data.materials:"
         , "        return bpy.data.materials[name]"
@@ -237,36 +281,39 @@ buildPlacementCommand index placement =
             "[["
                 ++ String.fromFloat record.m11
                 ++ ", "
-                ++ String.fromFloat record.m21
+                ++ String.fromFloat -record.m21
                 ++ ", "
-                ++ String.fromFloat record.m31
+                ++ String.fromFloat -record.m31
                 ++ ", "
                 ++ String.fromFloat (record.m41 * 0.0004)
                 -- Scale LDU to meters (1 LDU = 0.4mm = 0.0004m)
                 ++ "], ["
                 ++ String.fromFloat -record.m12
                 ++ ", "
-                ++ String.fromFloat -record.m22
+                ++ String.fromFloat record.m22
                 ++ ", "
-                ++ String.fromFloat -record.m32
+                ++ String.fromFloat record.m32
                 ++ ", "
                 ++ String.fromFloat (-record.m42 * 0.0004)
                 ++ "], ["
                 ++ String.fromFloat -record.m13
                 ++ ", "
-                ++ String.fromFloat -record.m23
+                ++ String.fromFloat record.m23
                 ++ ", "
-                ++ String.fromFloat -record.m33
+                ++ String.fromFloat record.m33
                 ++ ", "
                 ++ String.fromFloat (-record.m43 * 0.0004)
                 ++ "], [0, 0, 0, 1]]"
 
+        safePart =
+            escapePythonString placement.part
+
         objName =
-            "Part_" ++ String.fromInt index ++ "_" ++ placement.part
+            "Part_" ++ String.fromInt index ++ "_" ++ safePart
     in
     String.join "\n"
-        [ "    # Part " ++ String.fromInt index ++ ": " ++ placement.part
-        , "    part_mat = get_material_" ++ String.fromInt placement.color ++ "()"
+        [ "    # Part " ++ String.fromInt index ++ ": " ++ safePart
+        , "    part_mat = get_material_" ++ sanitizeColorSuffix placement.color ++ "()"
         , "    bpy.ops.mesh.primitive_cube_add(size=0.01)"
         , "    obj = bpy.context.active_object"
         , "    obj.name = '" ++ objName ++ "'"
@@ -343,4 +390,7 @@ exportBlenderScriptWithGeometry doc cache config =
         , "    mesh.update()"
         , "    obj = bpy.data.objects.new('Palikkakehys_LDraw_Model', mesh)"
         , "    bpy.context.scene.collection.objects.link(obj)"
+        , ""
+        , "if __name__ == '__main__':"
+        , "    create_mesh_geometry()"
         ]

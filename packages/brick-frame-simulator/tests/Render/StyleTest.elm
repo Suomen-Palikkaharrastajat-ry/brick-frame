@@ -73,4 +73,21 @@ suite =
                     , \_ -> Expect.atMost 8 style.edgeWidth
                     ]
                     ()
+        , test "fromQuality distinguishes Draft from Realistic bevel and stud logo shading" <|
+            \_ ->
+                let
+                    draft =
+                        Style.fromQuality Style.Draft
+
+                    realistic =
+                        Style.fromQuality Style.Realistic
+                in
+                Expect.all
+                    [ \_ -> Expect.within (Expect.Absolute 0.0001) 0 draft.bevelStrength
+                    , \_ -> Expect.within (Expect.Absolute 0.0001) 0 draft.studEmbossStrength
+                    , \_ -> Expect.greaterThan 0.1 realistic.bevelStrength
+                    , \_ -> Expect.greaterThan 0.1 realistic.studEmbossStrength
+                    , \_ -> Expect.greaterThan draft.specularStrength realistic.specularStrength
+                    ]
+                    ()
         ]
