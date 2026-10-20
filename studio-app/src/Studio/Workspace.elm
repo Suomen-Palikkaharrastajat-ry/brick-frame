@@ -190,6 +190,7 @@ type Msg
     | SelectPlacement Int Bool
     | OpenPanel (Maybe Panel)
     | SimulateRequested
+    | InstructionsRequested
     | HintsDue Int
     | NoOp
 
@@ -764,6 +765,10 @@ update msg model =
                 ( model, Cmd.none )
 
         SimulateRequested ->
+            -- The page above this one changes pages; the workspace stays as it is.
+            ( model, Cmd.none )
+
+        InstructionsRequested ->
             -- The page above this one changes pages; the workspace stays as it is.
             ( model, Cmd.none )
 
@@ -2116,6 +2121,7 @@ viewTopBar model =
             ]
         , span [ Attr.style "flex" "1", Attr.style "min-width" "0", Attr.style "overflow" "hidden", Attr.style "text-overflow" "ellipsis" ] [ text (documentSummary model) ]
         , Button.secondary SimulateRequested "▶ Simulate"
+        , Button.secondary InstructionsRequested "📖 Instructions"
         , Button.secondary NewDocument "New"
         , Button.secondary RequestFileUpload
             (if narrow then
