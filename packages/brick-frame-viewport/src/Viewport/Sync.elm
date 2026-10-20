@@ -2,6 +2,7 @@ module Viewport.Sync exposing
     ( Plan
     , Sourced
     , State
+    , activeSourcesFor
     , buildAll
     , changedSubmodels
     , initialState
@@ -19,10 +20,10 @@ library parts still have to be fetched first. The viewport applies the plan with
 `Render.Instanced.replaceSource`, so an edit costs a few part meshes and a few
 proxy cells instead of a rebuild.
 
-Only the main submodel is tracked placement by placement. A reference to another
-submodel expands to all of that submodel's parts under one source id; changing
-the contents of such a submodel changes the `subfilesSignature`, and the viewport
-reloads the whole document instead.
+When `activePath` steps into a submodel instance, placements along that chain
+are opened up so the active submodel's own placements become individually
+addressable sources in world space, while everything outside the chain stays
+under its enclosing placement id and renders ghosted.
 
 -}
 
@@ -30,12 +31,15 @@ import Dict exposing (Dict)
 import LDraw.Document as Document exposing (Document)
 import LDraw.Resolve exposing (PartCache, PartStatus(..))
 import LDraw.Types exposing (LDrawLine(..))
+import Math.Matrix4 as Mat4 exposing (Mat4)
 import Render.Instanced as Instanced
 import Set exposing (Set)
 
 
 {-| What the scene currently reflects.
 
+  - `activePath` is the chain of submodel instance placement ids leading to the
+    active submodel (`[]` at the top level).
   - `built` maps a source id to the fingerprint it was built from.
   - `pending` holds sources that changed but could not be built yet because
     a part was still being fetched.
@@ -45,6 +49,7 @@ import Set exposing (Set)
 -}
 type alias State =
     { document : Document
+    , activePath : List Int
     , built : Dict Int String
     , pending : Set Int
     , subfilesSignature : String
@@ -72,6 +77,13 @@ type alias Plan =
     }
 
 
+type alias ContextualPlacement =
+    { placement : Document.Placement
+    , parentTransform : Mat4
+    , parentColor : Int
+    }
+
+
 {-| The state after a full build of `document`: placements whose parts are all
 ready are marked built; any with unresolved parts remain in `pending` so the
 next `plan` / `reconcile` picks them up and fetches what is missing.
@@ -87,6 +99,7 @@ initialState document ready sourced =
             List.partition isResolved sourced
     in
     { document = document
+    , activePath = []
     , built = Dict.fromList (List.map (\s -> ( s.source, s.fingerprint )) builtSourced)
     , pending = Set.fromList (List.map .source unbuiltSourced)
     , subfilesSignature = Document.subfilesSignature document
@@ -99,16 +112,26 @@ simply produce placements that `Instanced` skips.
 -}
 buildAll : PartCache -> Set String -> Document -> List Sourced
 buildAll cache submodelNames document =
-    Document.mainPlacements document
-        |> List.map (expand cache submodelNames)
+    effectivePlacements [] document
+        |> Tuple.first
+        |> List.map (expandContextual cache submodelNames)
+
+
+{-| The set of active placement source ids for a submodel navigation path, or
+`Nothing` when at the top level.
+-}
+activeSourcesFor : List Int -> Document -> Maybe (Set Int)
+activeSourcesFor activePath document =
+    effectivePlacements activePath document
+        |> Tuple.second
 
 
 {-| Work out the edit that brings the scene up to date with `document`.
 
-Only the placements the document says it touched (plus any still waiting for a
-part, and any placements referencing changed submodels) are examined, so the
-cost of an edit does not grow with the size of the model beyond a single pass over
-the placement list.
+Only the placements that changed (plus any still waiting for a part, and any
+placements referencing changed submodels) are rebuilt, so the cost of an edit
+does not grow with the size of the model beyond a single pass over the placement
+list.
 
 When a submodel changes, all document placements referencing it are included in
 `replaced` and re-expanded from the updated cache, so editing a submodel propagates
@@ -127,42 +150,33 @@ plan cache submodelNames document state =
         referencesChangedSub name =
             referencesAnySubmodel cache changedSubs name
 
-        submodelCandidates =
-            if Set.isEmpty changedSubs then
-                Set.empty
-
-            else
-                Document.mainPlacements document
-                    |> List.filter (\p -> referencesChangedSub p.part)
-                    |> List.map .id
-                    |> Set.fromList
-
-        candidates =
-            Set.union (Set.union document.touched state.pending) submodelCandidates
-
-        present =
-            Document.mainPlacements document
-                |> List.filter (\p -> Set.member p.id candidates)
+        ( effective, _ ) =
+            effectivePlacements state.activePath document
 
         presentIds =
-            Set.fromList (List.map .id present)
+            Set.fromList (List.map (.placement >> .id) effective)
 
         removed =
-            Set.toList candidates
-                |> List.filter (\id -> not (Set.member id presentIds) && Dict.member id state.built)
+            Dict.keys state.built
+                |> List.filter (\id -> not (Set.member id presentIds))
+
+        needsRebuild cp =
+            let
+                id =
+                    cp.placement.id
+            in
+            (Dict.get id state.built /= Just (contextualFingerprint cp))
+                || Set.member id state.pending
+                || Set.member id document.touched
+                || (not (Set.isEmpty changedSubs) && referencesChangedSub cp.placement.part)
 
         changed =
-            present
-                |> List.filter
-                    (\p ->
-                        (Dict.get p.id state.built /= Just (Document.fingerprint p))
-                            || Set.member p.id submodelCandidates
-                    )
+            List.filter needsRebuild effective
 
-        step p acc =
+        step cp acc =
             let
                 sourced =
-                    expand cache submodelNames p
+                    expandContextual cache submodelNames cp
 
                 parts =
                     sourced.raws |> List.map .part |> dedupe
@@ -176,7 +190,7 @@ plan cache submodelNames document state =
             else
                 { acc
                     | missing = status.missing ++ acc.missing
-                    , pending = Set.insert p.id acc.pending
+                    , pending = Set.insert cp.placement.id acc.pending
                     , ready = status.ready
                 }
 
@@ -271,15 +285,115 @@ sourceKey =
     .id
 
 
-expand : PartCache -> Set String -> Document.Placement -> Sourced
-expand cache submodelNames p =
-    { source = p.id
-    , fingerprint = Document.fingerprint p
+effectivePlacements : List Int -> Document -> ( List ContextualPlacement, Maybe (Set Int) )
+effectivePlacements activePath document =
+    let
+        resolveColor baseColor color =
+            if color == 16 || color == -1 then
+                baseColor
+
+            else
+                color
+
+        walkActivePath path submodelName parentTransform parentColor depth visited =
+            let
+                currentPlacements =
+                    Document.placementsOf submodelName document
+
+                wrap p =
+                    { placement = p
+                    , parentTransform = parentTransform
+                    , parentColor = parentColor
+                    }
+            in
+            case path of
+                [] ->
+                    ( List.map wrap currentPlacements
+                    , if depth > 0 then
+                        Just (Set.fromList (List.map .id currentPlacements))
+
+                      else
+                        Nothing
+                    )
+
+                stepId :: restIds ->
+                    case List.filter (\p -> p.id == stepId) currentPlacements of
+                        targetP :: _ ->
+                            case Document.submodelByName targetP.part document of
+                                Just childSub ->
+                                    let
+                                        childNorm =
+                                            Document.normalise childSub.name
+                                    in
+                                    if Set.member childNorm visited then
+                                        ( List.map wrap currentPlacements, Nothing )
+
+                                    else
+                                        let
+                                            siblings =
+                                                currentPlacements
+                                                    |> List.filter (\p -> p.id /= stepId)
+                                                    |> List.map wrap
+
+                                            nextTransform =
+                                                Mat4.mul parentTransform targetP.matrix
+
+                                            nextColor =
+                                                resolveColor parentColor targetP.color
+
+                                            ( inner, activeSet ) =
+                                                walkActivePath restIds childSub.name nextTransform nextColor (depth + 1) (Set.insert childNorm visited)
+                                        in
+                                        ( siblings ++ inner, activeSet )
+
+                                Nothing ->
+                                    ( List.map wrap currentPlacements, Nothing )
+
+                        [] ->
+                            ( List.map wrap currentPlacements, Nothing )
+
+        mainName =
+            (Document.mainSubmodel document).name
+    in
+    walkActivePath activePath mainName Mat4.identity 15 0 (Set.singleton (Document.normalise mainName))
+
+
+contextualFingerprint : ContextualPlacement -> String
+contextualFingerprint { placement, parentTransform, parentColor } =
+    let
+        worldMatrix =
+            Mat4.mul parentTransform placement.matrix
+
+        resolvedColor =
+            if placement.color == 16 || placement.color == -1 then
+                parentColor
+
+            else
+                placement.color
+    in
+    Document.fingerprint { placement | matrix = worldMatrix, color = resolvedColor }
+
+
+expandContextual : PartCache -> Set String -> ContextualPlacement -> Sourced
+expandContextual cache submodelNames cp =
+    let
+        worldMatrix =
+            Mat4.mul cp.parentTransform cp.placement.matrix
+
+        resolvedColor =
+            if cp.placement.color == 16 || cp.placement.color == -1 then
+                cp.parentColor
+
+            else
+                cp.placement.color
+    in
+    { source = cp.placement.id
+    , fingerprint = contextualFingerprint cp
     , raws =
         Instanced.extractPlacements submodelNames
-            [ SubFileRef { color = p.color, transform = p.matrix, file = p.part } ]
+            [ SubFileRef { color = resolvedColor, transform = worldMatrix, file = cp.placement.part } ]
             cache
-            15
+            cp.parentColor
     }
 
 

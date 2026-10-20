@@ -527,14 +527,23 @@ editingSuite =
                 \_ ->
                     shortcut { key = "w", ctrl = True, shift = False, target = "BODY" }
                         |> Expect.equal Nothing
-            , test "Escape only clears a selection when nothing else claims it" <|
+            , test "Escape clears selection before exiting a submodel, and Enter enters a submodel" <|
                 \_ ->
                     [ shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False } "Escape"
                     , shortcutIn { hasSelection = True, helpVisible = True, walking = False, inSubmodel = False } "Escape"
                     , shortcutIn { hasSelection = False, helpVisible = False, walking = False, inSubmodel = False } "Escape"
+                    , shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = True } "Escape"
                     , shortcutIn { hasSelection = False, helpVisible = False, walking = False, inSubmodel = True } "Escape"
+                    , shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False } "Enter"
                     ]
-                        |> Expect.equal [ Just Shortcuts.ClearSelection, Nothing, Nothing, Just Shortcuts.ExitSubmodel ]
+                        |> Expect.equal
+                            [ Just Shortcuts.ClearSelection
+                            , Nothing
+                            , Nothing
+                            , Just Shortcuts.ClearSelection
+                            , Just Shortcuts.ExitSubmodel
+                            , Just Shortcuts.EnterSubmodel
+                            ]
             , test "Ctrl+G groups and Ctrl+Shift+G explodes" <|
                 \_ ->
                     ( shortcut { key = "g", ctrl = True, shift = False, target = "BODY" }
@@ -547,6 +556,133 @@ editingSuite =
                         |> List.map (shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False })
                         |> List.all ((==) Nothing)
                         |> Expect.equal True
+            ]
+        , describe "submodels"
+            [ test "grouping selected parts creates a submodel and undo restores the scene" <|
+                \_ ->
+                    let
+                        grouped =
+                            loaded
+                                |> click (screenOf 0 loaded)
+                                |> step GroupSelection
+
+                        undone =
+                            step Undo grouped
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ 2 ] (selected grouped)
+                        , \_ -> Expect.equal [ "submodel_1.ldr", "3001.dat" ] (List.map .part (Document.mainPlacements grouped.document))
+                        , \_ -> Expect.equal (Just [ 1, 2 ]) (Maybe.map (.placements >> List.map .source >> List.sort) grouped.viewport.instancedScene)
+                        , \_ -> Expect.equal [ "3001.dat", "3001.dat" ] (List.map .part (Document.mainPlacements undone.document))
+                        , \_ -> Expect.equal (Just [ 0, 1 ]) (Maybe.map (.placements >> List.map .source >> List.sort) undone.viewport.instancedScene)
+                        ]
+                        ()
+            , test "entering a submodel opens its child bricks for 3D picking and ghosts parent bricks" <|
+                \_ ->
+                    let
+                        ( subX, subY ) =
+                            screenOf 0 loaded
+
+                        entered =
+                            loaded
+                                |> click ( subX, subY )
+                                |> step GroupSelection
+                                |> step EnterSubmodel
+
+                        clickedChild =
+                            click ( subX, subY ) entered
+
+                        clickedGhostedParent =
+                            click (screenOf 1 loaded) entered
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal "submodel_1.ldr" entered.context.activeSubmodel
+                        , \_ -> Expect.equal [ 0 ] (selected clickedChild)
+                        , \_ -> Expect.equal [] (selected clickedGhostedParent)
+                        ]
+                        ()
+            , test "double-clicking a submodel reference enters it and ExitSubmodel returns to root" <|
+                \_ ->
+                    let
+                        ( subX, subY ) =
+                            screenOf 0 loaded
+
+                        withSubmodel =
+                            loaded
+                                |> click ( subX, subY )
+                                |> step GroupSelection
+                                |> step ClearSelection
+
+                        entered =
+                            step (ViewportMsg (Viewport.DoubleClick subX subY)) withSubmodel
+
+                        exited =
+                            step ExitSubmodel entered
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal "submodel_1.ldr" entered.context.activeSubmodel
+                        , \_ -> Expect.equal 1 (List.length entered.context.path)
+                        , \_ -> Expect.equal "main.ldr" exited.context.activeSubmodel
+                        , \_ -> Expect.equal [] exited.context.path
+                        , \_ -> Expect.equal Nothing exited.viewport.activeSources
+                        ]
+                        ()
+            , test "selecting sibling submodels in the tree switches context without nesting paths" <|
+                \_ ->
+                    let
+                        withTwoSubmodels =
+                            loaded
+                                |> step (SelectPlacement 0 False)
+                                |> step GroupSelection
+                                |> step (SelectPlacement 1 False)
+                                |> step GroupSelection
+
+                        inFirst =
+                            step (SelectSubmodel "submodel_1.ldr") withTwoSubmodels
+
+                        inSecond =
+                            step (SelectSubmodel "submodel_2.ldr") inFirst
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ "submodel_1.ldr" ] (List.map .submodelName inFirst.context.path)
+                        , \_ -> Expect.equal [ "submodel_2.ldr" ] (List.map .submodelName inSecond.context.path)
+                        ]
+                        ()
+            , test "undoing submodel creation while inside the submodel returns to the root context" <|
+                \_ ->
+                    let
+                        undoneFromInside =
+                            loaded
+                                |> step (SelectPlacement 0 False)
+                                |> step GroupSelection
+                                |> step EnterSubmodel
+                                |> step Undo
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [] undoneFromInside.context.path
+                        , \_ -> Expect.equal "" undoneFromInside.context.activeSubmodel
+                        , \_ -> Expect.equal Nothing undoneFromInside.viewport.activeSources
+                        ]
+                        ()
+            , test "exploding a submodel inlines its parts and is undoable" <|
+                \_ ->
+                    let
+                        grouped =
+                            loaded
+                                |> step (SelectPlacement 0 False)
+                                |> step GroupSelection
+
+                        exploded =
+                            step ExplodeSelection grouped
+
+                        undone =
+                            step Undo exploded
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ "3001.dat", "3001.dat" ] (List.map .part (Document.mainPlacements exploded.document))
+                        , \_ -> Expect.equal [ "submodel_1.ldr", "3001.dat" ] (List.map .part (Document.mainPlacements undone.document))
+                        ]
+                        ()
             ]
         , describe "files"
             [ test "an opened file starts with a clean history and selection" <|

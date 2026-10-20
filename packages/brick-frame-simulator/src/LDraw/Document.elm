@@ -349,7 +349,11 @@ insertPlacementIn submodelName index placement doc =
             List.take index entries ++ PlacementEntry placement :: List.drop index entries
 
         targetNorm =
-            normalise submodelName
+            if String.trim submodelName == "" then
+                normalise (mainSubmodel doc).name
+
+            else
+                normalise submodelName
 
         update submodel =
             if normalise submodel.name == targetNorm then
@@ -409,24 +413,28 @@ locatePlacement id doc =
         |> List.head
 
 
-{-| Find a submodel by name (normalised comparison).
+{-| Find a submodel by name (normalised comparison). Empty string resolves to the main submodel.
 -}
 submodelByName : String -> Document -> Maybe Submodel
 submodelByName name doc =
-    let
-        norm =
-            normalise name
-    in
-    doc.submodels
-        |> List.filter (\s -> normalise s.name == norm)
-        |> List.head
+    if String.trim name == "" then
+        List.head doc.submodels
+
+    else
+        let
+            norm =
+                normalise name
+        in
+        doc.submodels
+            |> List.filter (\s -> normalise s.name == norm)
+            |> List.head
 
 
 {-| Check if a placement refers to a submodel in the document.
 -}
 isSubmodelReference : Placement -> Document -> Bool
 isSubmodelReference placement doc =
-    submodelByName placement.part doc /= Nothing
+    String.trim placement.part /= "" && submodelByName placement.part doc /= Nothing
 
 
 {-| Get the placements of a specific submodel by name.
@@ -453,11 +461,11 @@ toLines doc =
 -}
 toLinesOf : String -> Document -> List LDrawLine
 toLinesOf name doc =
-    case List.filter (\s -> normalise s.name == normalise name) doc.submodels of
-        found :: _ ->
+    case submodelByName name doc of
+        Just found ->
             entriesToLines found.entries
 
-        [] ->
+        Nothing ->
             []
 
 
@@ -483,15 +491,19 @@ addPlacement submodelName spec doc =
             , extra = []
             }
 
-        targetName =
-            if List.any (\s -> s.name == submodelName) doc.submodels then
-                submodelName
+        targetNorm =
+            let
+                norm =
+                    normalise submodelName
+            in
+            if String.trim submodelName /= "" && List.any (\s -> normalise s.name == norm) doc.submodels then
+                norm
 
             else
-                (mainSubmodel doc).name
+                normalise (mainSubmodel doc).name
 
         add submodel =
-            if submodel.name == targetName then
+            if normalise submodel.name == targetNorm then
                 { submodel | entries = submodel.entries ++ [ PlacementEntry placement ] }
 
             else
@@ -550,7 +562,7 @@ to the document containing the placements translated into the submodel's local f
 groupIntoSubmodel : String -> List Int -> Document -> Document
 groupIntoSubmodel name inputIds doc =
     let
-        submodelName =
+        baseName =
             let
                 trimmed =
                     String.trim name
@@ -563,6 +575,41 @@ groupIntoSubmodel name inputIds doc =
 
             else
                 trimmed ++ ".ldr"
+
+        existingNorms =
+            doc.submodels
+                |> List.map (.name >> normalise)
+                |> Set.fromList
+                |> Set.insert "main.ldr"
+
+        submodelName =
+            if not (Set.member (normalise baseName) existingNorms) then
+                baseName
+
+            else
+                let
+                    stem =
+                        if String.endsWith ".ldr" (String.toLower baseName) then
+                            String.dropRight 4 baseName
+
+                        else if String.endsWith ".dat" (String.toLower baseName) then
+                            String.dropRight 4 baseName
+
+                        else
+                            baseName
+
+                    findUnique n =
+                        let
+                            candidate =
+                                stem ++ "_" ++ String.fromInt n ++ ".ldr"
+                        in
+                        if Set.member (normalise candidate) existingNorms then
+                            findUnique (n + 1)
+
+                        else
+                            candidate
+                in
+                findUnique 2
 
         matchingSubmodel =
             doc.submodels
@@ -678,11 +725,14 @@ groupIntoSubmodel name inputIds doc =
                     isFirstUnnamed s =
                         s.name == "" && List.head doc.submodels == Just s
 
+                    parentNorm =
+                        normalise parentSubmodel.name
+
                     updatedSubmodels =
                         doc.submodels
                             |> List.map
                                 (\s ->
-                                    if s.name == parentSubmodel.name then
+                                    if normalise s.name == parentNorm then
                                         { s
                                             | name =
                                                 if isFirstUnnamed s then
@@ -772,10 +822,13 @@ explodeSubmodel placementId doc =
                                 ++ inlinedEntries
                                 ++ List.drop (placementIndex + 1) entries
 
+                        parentNorm =
+                            normalise parentName
+
                         updatedSubmodels =
                             List.map
                                 (\s ->
-                                    if s.name == parentName then
+                                    if normalise s.name == parentNorm then
                                         { s | entries = replaceInEntries s.entries }
 
                                     else
@@ -800,11 +853,14 @@ explodeSubmodel placementId doc =
                                                 False
                                     )
 
+                        explodedNorm =
+                            normalise submodel.name
+
                         -- Keep main submodel always; remove non-main if no longer referenced
                         prunedSubmodels =
                             case updatedSubmodels of
                                 main :: rest ->
-                                    main :: List.filter (\s -> s.name /= submodel.name || isReferenced s.name updatedSubmodels) rest
+                                    main :: List.filter (\s -> normalise s.name /= explodedNorm || isReferenced s.name updatedSubmodels) rest
 
                                 [] ->
                                     []

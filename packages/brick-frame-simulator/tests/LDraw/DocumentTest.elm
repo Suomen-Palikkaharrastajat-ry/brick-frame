@@ -257,6 +257,50 @@ suite =
 
                         Nothing ->
                             Expect.fail "placement 2 not found"
+            , test "groupIntoSubmodel deduplicates colliding submodel names and promotes unnamed main submodel" <|
+                \_ ->
+                    let
+                        doc =
+                            Document.parse "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n1 14 40 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n"
+
+                        grouped1 =
+                            Document.groupIntoSubmodel "sub.ldr" [ 0 ] doc
+
+                        grouped2 =
+                            Document.groupIntoSubmodel "sub.ldr" [ 1 ] grouped1
+
+                        ( withAdded, _ ) =
+                            Document.addPlacement "" { part = "3002.dat", color = 1, matrix = Mat4.identity } grouped2
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ "main.ldr", "sub.ldr", "sub_2.ldr" ] (List.map .name withAdded.submodels)
+                        , \_ -> Expect.equal [ "sub.ldr", "sub_2.ldr", "3002.dat" ] (List.map .part (Document.mainPlacements withAdded))
+                        ]
+                        ()
+            , test "groupIntoSubmodel works inside a child submodel" <|
+                \_ ->
+                    let
+                        mpd =
+                            String.join "\n"
+                                [ "0 FILE main.ldr"
+                                , "1 16 0 0 0 1 0 0 0 1 0 0 0 1 sub.ldr"
+                                , "0 FILE sub.ldr"
+                                , "1 4 10 0 0 1 0 0 0 1 0 0 0 1 3001.dat"
+                                , "1 14 30 0 0 1 0 0 0 1 0 0 0 1 3001.dat"
+                                , ""
+                                ]
+
+                        doc =
+                            Document.parse mpd
+
+                        grouped =
+                            Document.groupIntoSubmodel "inner.ldr" [ 1, 2 ] doc
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ "inner.ldr" ] (List.map .part (Document.placementsOf "sub.ldr" grouped))
+                        , \_ -> Expect.equal 2 (List.length (Document.placementsOf "inner.ldr" grouped))
+                        ]
+                        ()
             ]
         ]
 
