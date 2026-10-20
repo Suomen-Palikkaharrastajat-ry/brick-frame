@@ -31,6 +31,8 @@ type alias Uniforms =
     , rimStrength : Float
     , rimPower : Float
     , vibrance : Float
+    , u_ghostMode : Float
+    , u_ghostAlpha : Float
     }
 
 
@@ -102,6 +104,8 @@ fragmentShader =
         uniform float rimStrength;
         uniform float rimPower;
         uniform float vibrance;
+        uniform float u_ghostMode;
+        uniform float u_ghostAlpha;
 
         varying vec4 vColor;
         varying vec3 vNormalWorld;
@@ -131,6 +135,12 @@ fragmentShader =
                 litColor = mix(vec3(luma), litColor, 1.0 + clamp(vibrance, -0.5, 0.5));
             }
 
-            gl_FragColor = vec4(clamp(litColor, 0.0, 1.0), vColor.a);
+            if (u_ghostMode > 0.5) {
+                float gray = dot(litColor, vec3(0.299, 0.587, 0.114));
+                litColor = mix(litColor, vec3(gray), 0.75);
+                gl_FragColor = vec4(clamp(litColor, 0.0, 1.0), u_ghostAlpha);
+            } else {
+                gl_FragColor = vec4(clamp(litColor, 0.0, 1.0), vColor.a);
+            }
         }
     |]

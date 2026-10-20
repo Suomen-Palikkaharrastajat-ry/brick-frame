@@ -230,6 +230,9 @@ handleEvent event ( model, cmds ) =
         Viewport.Clicked x y _ ->
             ( pick x y model, cmds )
 
+        Viewport.DoubleClicked _ _ ->
+            ( model, cmds )
+
         Viewport.Tapped x y ->
             ( pick x y model, cmds )
 

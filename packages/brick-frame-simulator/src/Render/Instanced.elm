@@ -3,7 +3,7 @@ module Render.Instanced exposing
     , Detail(..)
     , build, extractPlacements, chunkKeyFor
     , buildFrom, replaceSource, removeSource
-    , render, visiblePlacements, detailFor
+    , render, renderWithGhost, visiblePlacements, detailFor
     , Frustum, frustumFromMatrix, sphereInFrustum, projectedRadiusPx
     , triangleBudgetExceeded
     )
@@ -930,6 +930,32 @@ render :
     -> InstancedScene
     -> List WebGL.Entity
 render config scene =
+    renderWithGhost
+        { camera = config.camera
+        , style = config.style
+        , width = config.width
+        , height = config.height
+        , coarsen = config.coarsen
+        , activeSources = Nothing
+        }
+        scene
+
+
+{-| Draw an instanced scene, with optional ghost shading for background context geometry.
+Placements matching `activeSources` render normally; all other placements render with
+ghost shading (`u_ghostMode = 1.0`, `u_ghostAlpha = 0.25`, alpha blended).
+-}
+renderWithGhost :
+    { camera : Camera
+    , style : Style.Style
+    , width : Int
+    , height : Int
+    , coarsen : Bool
+    , activeSources : Maybe (Set Int)
+    }
+    -> InstancedScene
+    -> List WebGL.Entity
+renderWithGhost config scene =
     let
         style =
             Style.clampStyle config.style
@@ -963,7 +989,15 @@ render config scene =
                 }
                 scene
 
-        triangleUniforms modelMat instanceColor =
+        isGhost placement =
+            case config.activeSources of
+                Just sources ->
+                    not (Set.member placement.source sources)
+
+                Nothing ->
+                    False
+
+        triangleUniforms modelMat instanceColor ghost =
             { modelMatrix = modelMat
             , viewMatrix = viewMat
             , projectionMatrix = projMat
@@ -977,6 +1011,18 @@ render config scene =
             , rimStrength = style.rimStrength
             , rimPower = style.rimPower
             , vibrance = style.vibrance
+            , u_ghostMode =
+                if ghost then
+                    1.0
+
+                else
+                    0.0
+            , u_ghostAlpha =
+                if ghost then
+                    0.25
+
+                else
+                    1.0
             }
 
         edgeUniforms modelMat =
@@ -999,9 +1045,12 @@ render config scene =
             , lineWidth = style.edgeWidth
             , eyePosition = eye
             }
+
+        proxyGhost =
+            config.activeSources /= Nothing
     in
-    proxyEntities frustum triangleUniforms scene
-        ++ List.concatMap (placementEntities scene triangleUniforms edgeUniforms conditionalUniforms) visible
+    proxyEntities frustum (triangleUniforms Mat4.identity Shader.noInstanceColor proxyGhost) proxyGhost scene
+        ++ List.concatMap (placementEntities isGhost scene triangleUniforms edgeUniforms conditionalUniforms) visible
 
 
 {-| Draw the merged proxy chunks that stand in for `Far` placements.
@@ -1013,31 +1062,41 @@ sorts that out for free. Boxes are always wound outward by `boxTriangles`, so
 back-face culling is unconditional here.
 
 -}
-proxyEntities : Frustum -> (Mat4 -> Vec4 -> Shader.Uniforms) -> InstancedScene -> List WebGL.Entity
-proxyEntities frustum triangleUniforms scene =
+proxyEntities : Frustum -> Shader.Uniforms -> Bool -> InstancedScene -> List WebGL.Entity
+proxyEntities frustum uniforms isGhost scene =
+    let
+        settings =
+            if isGhost then
+                [ DepthTest.default
+                , WebGL.Settings.cullFace WebGL.Settings.back
+                , Blend.add Blend.srcAlpha Blend.oneMinusSrcAlpha
+                ]
+
+            else
+                [ DepthTest.default, WebGL.Settings.cullFace WebGL.Settings.back ]
+    in
     scene.proxyChunks
         |> List.filter (\chunk -> sphereInFrustum frustum chunk.center chunk.radius)
         |> List.map
             (\chunk ->
                 WebGL.entityWith
-                    [ DepthTest.default, WebGL.Settings.cullFace WebGL.Settings.back ]
+                    settings
                     Shader.vertexShader
                     Shader.fragmentShader
                     chunk.mesh
-                    -- Proxy boxes carry their placement's colour on the vertex,
-                    -- already resolved, so nothing is substituted.
-                    (triangleUniforms Mat4.identity Shader.noInstanceColor)
+                    uniforms
             )
 
 
 placementEntities :
-    InstancedScene
-    -> (Mat4 -> Vec4 -> Shader.Uniforms)
+    (Placement -> Bool)
+    -> InstancedScene
+    -> (Mat4 -> Vec4 -> Bool -> Shader.Uniforms)
     -> (Mat4 -> EdgeShader.Uniforms)
     -> (Mat4 -> EdgeShader.ConditionalUniforms)
     -> ( Placement, Detail )
     -> List WebGL.Entity
-placementEntities scene triangleUniforms edgeUniforms conditionalUniforms ( placement, detail ) =
+placementEntities isGhost scene triangleUniforms edgeUniforms conditionalUniforms ( placement, detail ) =
     case ( detail, Dict.get placement.part scene.parts ) of
         ( Far, _ ) ->
             []
@@ -1047,13 +1106,16 @@ placementEntities scene triangleUniforms edgeUniforms conditionalUniforms ( plac
 
         ( _, Just mesh ) ->
             let
+                ghost =
+                    isGhost placement
+
                 triangleEntity =
                     WebGL.entityWith
-                        (triangleSettings mesh.bfcCertified placement.flipped)
+                        (triangleSettings mesh.bfcCertified placement.flipped ghost)
                         Shader.vertexShader
                         Shader.fragmentShader
                         mesh.triangles
-                        (triangleUniforms placement.matrix placement.color)
+                        (triangleUniforms placement.matrix placement.color ghost)
 
                 lineEntity =
                     WebGL.entityWith
@@ -1082,16 +1144,27 @@ placementEntities scene triangleUniforms edgeUniforms conditionalUniforms ( plac
 {-| Cull the back faces of a BFC-certified part, switching to front faces when
 the placement's own transform mirrors it and therefore reverses winding.
 -}
-triangleSettings : Bool -> Bool -> List WebGL.Settings.Setting
-triangleSettings bfcCertified flipped =
-    if not bfcCertified then
-        [ DepthTest.default ]
+triangleSettings : Bool -> Bool -> Bool -> List WebGL.Settings.Setting
+triangleSettings bfcCertified flipped isGhost =
+    let
+        cullSettings =
+            if not bfcCertified then
+                []
 
-    else if flipped then
-        [ DepthTest.default, WebGL.Settings.cullFace WebGL.Settings.front ]
+            else if flipped then
+                [ WebGL.Settings.cullFace WebGL.Settings.front ]
 
-    else
-        [ DepthTest.default, WebGL.Settings.cullFace WebGL.Settings.back ]
+            else
+                [ WebGL.Settings.cullFace WebGL.Settings.back ]
+
+        blendSettings =
+            if isGhost then
+                [ Blend.add Blend.srcAlpha Blend.oneMinusSrcAlpha ]
+
+            else
+                []
+    in
+    DepthTest.default :: (cullSettings ++ blendSettings)
 
 
 {-| Matches `Render.Scene`: edges pass at equal depth without writing, and

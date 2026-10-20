@@ -29,6 +29,7 @@ import Dict exposing (Dict)
 import EmbeddedParts
 import Html exposing (Html, button, div, span, text)
 import Html.Attributes as Attr
+import Html.Events
 import Http
 import Json.Decode as Decode
 import LDraw.Connectivity as Connectivity
@@ -44,7 +45,7 @@ import LDraw.Document as Document exposing (Document)
 import LDraw.Resolve as Resolve
 import LDraw.Types exposing (LDrawLine)
 import LDraw.Writer as Writer
-import Math.Matrix4 as Mat4
+import Math.Matrix4 as Mat4 exposing (Mat4)
 import Math.Vector3 as Vec3 exposing (vec3)
 import Ports
 import Process
@@ -101,6 +102,32 @@ type alias Flags =
     }
 
 
+{-| Which coordinate frame gizmo translations use inside submodels.
+-}
+type CoordinateFrame
+    = LocalFrame
+    | WorldFrame
+
+
+{-| A level in the submodel navigation hierarchy.
+-}
+type alias SubmodelStep =
+    { submodelName : String
+    , instancePlacementId : Int
+    , localTransform : Mat4
+    , accumulatedTransform : Mat4
+    }
+
+
+{-| Current editing context within submodels and coordinate frames.
+-}
+type alias WorkspaceContext =
+    { activeSubmodel : String
+    , path : List SubmodelStep
+    , coordinateFrame : CoordinateFrame
+    }
+
+
 {-| The document, how it is being edited, and the viewport showing it.
 -}
 type alias Model =
@@ -122,6 +149,7 @@ type alias Model =
     , panel : Maybe Panel
     , hints : Hints.Hints
     , hintGeneration : Int
+    , context : WorkspaceContext
     , snapDistance : Float
     , collisionMode : CollisionMode
     , snapRotationStep : Int
@@ -161,6 +189,13 @@ type Msg
     | ClearSelection
     | RotateSelection Axis Int
     | SetColorSelection Int
+    | GroupSelection
+    | ExplodeSelection
+    | EnterSubmodel
+    | ExitSubmodel
+    | NavigateToSubmodel Int
+    | SelectSubmodel String
+    | ToggleCoordinateFrame
     | NextGridStep
     | NextRotateStep
     | NextSnapDistance
@@ -246,6 +281,11 @@ init flags =
             , panel = Nothing
             , hints = Hints.empty
             , hintGeneration = 0
+            , context =
+                { activeSubmodel = ""
+                , path = []
+                , coordinateFrame = LocalFrame
+                }
             , snapDistance = Connectivity.defaultSnapDistance
             , collisionMode = Connectivity.CollisionStrict
             , snapRotationStep = 0
@@ -402,7 +442,7 @@ update msg model =
                 ( model, Cmd.none )
 
             else
-                ( { model | selection = Set.fromList (List.map .id (Document.mainPlacements model.document)) }
+                ( { model | selection = Set.fromList (List.map .id (Document.placementsOf model.context.activeSubmodel model.document)) }
                 , Cmd.none
                 )
 
@@ -412,6 +452,192 @@ update msg model =
 
             else
                 ( { model | selection = Set.empty }, Cmd.none )
+
+        GroupSelection ->
+            whenSelected
+                (\ids m ->
+                    let
+                        existingNames =
+                            "main.ldr" :: List.map (.name >> Document.normalise) m.document.submodels
+
+                        candidateName n =
+                            "submodel_" ++ String.fromInt n ++ ".ldr"
+
+                        findName n =
+                            let
+                                name =
+                                    candidateName n
+                            in
+                            if List.member (Document.normalise name) existingNames then
+                                findName (n + 1)
+
+                            else
+                                name
+
+                        submodelName =
+                            findName 1
+
+                        newId =
+                            m.document.nextId
+                    in
+                    commit (GroupIntoSubmodel submodelName ids) { m | selection = Set.singleton newId }
+                )
+                model
+
+        ExplodeSelection ->
+            whenSelected
+                (\ids m ->
+                    case ids of
+                        [ id ] ->
+                            case Document.getPlacement id m.document of
+                                Just p ->
+                                    if Document.isSubmodelReference p m.document then
+                                        commit (ExplodeSubmodel id) { m | selection = Set.empty }
+
+                                    else
+                                        ( m, Cmd.none )
+
+                                Nothing ->
+                                    ( m, Cmd.none )
+
+                        _ ->
+                            ( m, Cmd.none )
+                )
+                model
+
+        EnterSubmodel ->
+            whenSelected
+                (\ids m ->
+                    case ids of
+                        [ id ] ->
+                            case Document.getPlacement id m.document of
+                                Just p ->
+                                    if Document.isSubmodelReference p m.document then
+                                        ( enterSubmodelPlacement p m, Cmd.none )
+
+                                    else
+                                        ( m, Cmd.none )
+
+                                Nothing ->
+                                    ( m, Cmd.none )
+
+                        _ ->
+                            ( m, Cmd.none )
+                )
+                model
+
+        ExitSubmodel ->
+            if List.isEmpty model.context.path then
+                ( model, Cmd.none )
+
+            else
+                update (NavigateToSubmodel (List.length model.context.path - 1)) model
+
+        NavigateToSubmodel targetIdx ->
+            if targetIdx <= 0 then
+                let
+                    newContext =
+                        { activeSubmodel = (Document.mainSubmodel model.document).name
+                        , path = []
+                        , coordinateFrame = model.context.coordinateFrame
+                        }
+
+                    updatedViewport =
+                        Viewport.setActivePath [] model.viewport
+                in
+                ( { model | context = newContext, viewport = updatedViewport, selection = Set.empty }
+                , Cmd.none
+                )
+
+            else
+                let
+                    newPath =
+                        List.take targetIdx model.context.path
+
+                    newActive =
+                        case List.reverse newPath of
+                            head :: _ ->
+                                head.submodelName
+
+                            [] ->
+                                (Document.mainSubmodel model.document).name
+
+                    newContext =
+                        { activeSubmodel = newActive
+                        , path = newPath
+                        , coordinateFrame = model.context.coordinateFrame
+                        }
+
+                    updatedViewport =
+                        Viewport.setActivePath (List.map .instancePlacementId newPath) model.viewport
+                in
+                ( { model | context = newContext, viewport = updatedViewport, selection = Set.empty }
+                , Cmd.none
+                )
+
+        SelectSubmodel name ->
+            let
+                normName =
+                    Document.normalise name
+
+                mainName =
+                    (Document.mainSubmodel model.document).name
+            in
+            if name == "" || name == "Model" || normName == Document.normalise mainName then
+                update (NavigateToSubmodel 0) model
+
+            else
+                case
+                    model.context.path
+                        |> List.indexedMap Tuple.pair
+                        |> List.filter (\( _, s ) -> Document.normalise s.submodelName == normName)
+                        |> List.head
+                of
+                    Just ( ancestorIdx, _ ) ->
+                        update (NavigateToSubmodel (ancestorIdx + 1)) model
+
+                    Nothing ->
+                        case
+                            Document.placementsOf model.context.activeSubmodel model.document
+                                |> List.filter (\p -> Document.normalise p.part == normName)
+                                |> List.head
+                        of
+                            Just childPlacement ->
+                                ( enterSubmodelPlacement childPlacement model, Cmd.none )
+
+                            Nothing ->
+                                let
+                                    newPath =
+                                        findSubmodelPath name model.document
+                                            |> Maybe.withDefault []
+
+                                    newContext =
+                                        { activeSubmodel = name
+                                        , path = newPath
+                                        , coordinateFrame = model.context.coordinateFrame
+                                        }
+
+                                    updatedViewport =
+                                        Viewport.setActivePath (List.map .instancePlacementId newPath) model.viewport
+                                in
+                                ( { model | context = newContext, viewport = updatedViewport, selection = Set.empty }
+                                , Cmd.none
+                                )
+
+        ToggleCoordinateFrame ->
+            let
+                context =
+                    model.context
+
+                nextFrame =
+                    case context.coordinateFrame of
+                        LocalFrame ->
+                            WorldFrame
+
+                        WorldFrame ->
+                            LocalFrame
+            in
+            ( { model | context = { context | coordinateFrame = nextFrame } }, Cmd.none )
 
         RotateSelection axis sign ->
             whenSelected
@@ -843,14 +1069,30 @@ addPart file model =
             snap v =
                 Edit.snap (toFloat model.gridStep) v
 
+            targetPos =
+                Vec3.vec3 (snap (Vec3.getX target)) (snap (Vec3.getY target)) (snap (Vec3.getZ target))
+
+            localPos =
+                case List.reverse model.context.path of
+                    head :: _ ->
+                        case Mat4.inverse head.accumulatedTransform of
+                            Just inv ->
+                                Mat4.transform inv targetPos
+
+                            Nothing ->
+                                targetPos
+
+                    [] ->
+                        targetPos
+
             placement =
-                Mat4.makeTranslate3 (snap (Vec3.getX target)) (snap (Vec3.getY target)) (snap (Vec3.getZ target))
+                Mat4.makeTranslate localPos
 
             newId =
                 model.document.nextId
 
             ( document, history ) =
-                Edit.record (Add [ { part = file, color = model.activeColour, matrix = placement } ]) model.document model.history
+                Edit.record (AddIn model.context.activeSubmodel [ { part = file, color = model.activeColour, matrix = placement } ]) model.document model.history
 
             newRecents =
                 file
@@ -1056,7 +1298,7 @@ duplicate ids model =
                     )
 
         ( document, history ) =
-            Edit.record (Add parts) model.document model.history
+            Edit.record (AddIn model.context.activeSubmodel parts) model.document model.history
 
         -- Added placements take consecutive ids from the document's counter.
         newIds =
@@ -1079,22 +1321,207 @@ stepHistory step model =
         syncDocument { model | document = document, history = history }
 
 
+{-| Enter a submodel reference placement from the currently active submodel.
+-}
+enterSubmodelPlacement : Document.Placement -> Model -> Model
+enterSubmodelPlacement placement model =
+    let
+        parentAccum =
+            case List.reverse model.context.path of
+                head :: _ ->
+                    head.accumulatedTransform
+
+                [] ->
+                    Mat4.identity
+
+        accum =
+            Mat4.mul parentAccum placement.matrix
+
+        step =
+            { submodelName = placement.part
+            , instancePlacementId = placement.id
+            , localTransform = placement.matrix
+            , accumulatedTransform = accum
+            }
+
+        newPath =
+            model.context.path ++ [ step ]
+
+        newContext =
+            { activeSubmodel = placement.part
+            , path = newPath
+            , coordinateFrame = model.context.coordinateFrame
+            }
+    in
+    { model
+        | context = newContext
+        , viewport = Viewport.setActivePath (List.map .instancePlacementId newPath) model.viewport
+        , selection = Set.empty
+    }
+
+
+{-| Find the first reference path from the main submodel to `targetName`.
+-}
+findSubmodelPath : String -> Document -> Maybe (List SubmodelStep)
+findSubmodelPath targetName doc =
+    let
+        normTarget =
+            Document.normalise targetName
+
+        mainName =
+            (Document.mainSubmodel doc).name
+
+        search : Set String -> String -> Mat4 -> List Document.Placement -> Maybe (List SubmodelStep)
+        search visited currentSubmodel parentAccum placements =
+            case placements of
+                [] ->
+                    Nothing
+
+                p :: rest ->
+                    let
+                        normPart =
+                            Document.normalise p.part
+
+                        accum =
+                            Mat4.mul parentAccum p.matrix
+
+                        step =
+                            { submodelName = p.part
+                            , instancePlacementId = p.id
+                            , localTransform = p.matrix
+                            , accumulatedTransform = accum
+                            }
+                    in
+                    if normPart == normTarget && Document.isSubmodelReference p doc then
+                        Just [ step ]
+
+                    else if Document.isSubmodelReference p doc && not (Set.member normPart visited) then
+                        case
+                            search
+                                (Set.insert normPart visited)
+                                p.part
+                                accum
+                                (Document.placementsOf p.part doc)
+                        of
+                            Just subPath ->
+                                Just (step :: subPath)
+
+                            Nothing ->
+                                search visited currentSubmodel parentAccum rest
+
+                    else
+                        search visited currentSubmodel parentAccum rest
+    in
+    search
+        (Set.singleton (Document.normalise mainName))
+        mainName
+        Mat4.identity
+        (Document.placementsOf mainName doc)
+
+
+{-| Keep the editing context valid after an edit or undo/redo. If a parent
+submodel instance along `context.path` was removed, truncate the path back to
+the deepest surviving ancestor; if the main submodel was renamed (e.g. `""` to
+`"main.ldr"` when grouping), keep `activeSubmodel` in sync.
+-}
+reconcileContext : Document -> WorkspaceContext -> WorkspaceContext
+reconcileContext doc context =
+    let
+        mainName =
+            (Document.mainSubmodel doc).name
+
+        walkPath : String -> Mat4 -> List SubmodelStep -> List SubmodelStep
+        walkPath parentSubmodel parentAccum steps =
+            case steps of
+                [] ->
+                    []
+
+                step :: rest ->
+                    case
+                        Document.placementsOf parentSubmodel doc
+                            |> List.filter (\p -> p.id == step.instancePlacementId && Document.isSubmodelReference p doc)
+                            |> List.head
+                    of
+                        Just p ->
+                            let
+                                accum =
+                                    Mat4.mul parentAccum p.matrix
+
+                                updatedStep =
+                                    { submodelName = p.part
+                                    , instancePlacementId = p.id
+                                    , localTransform = p.matrix
+                                    , accumulatedTransform = accum
+                                    }
+                            in
+                            updatedStep :: walkPath p.part accum rest
+
+                        Nothing ->
+                            []
+
+        validPath =
+            walkPath mainName Mat4.identity context.path
+
+        newActive =
+            case List.reverse validPath of
+                head :: _ ->
+                    head.submodelName
+
+                [] ->
+                    if not (List.isEmpty context.path) then
+                        mainName
+
+                    else if context.activeSubmodel == "" then
+                        mainName
+
+                    else if
+                        List.any
+                            (\s -> Document.normalise s.name == Document.normalise context.activeSubmodel)
+                            doc.submodels
+                    then
+                        context.activeSubmodel
+
+                    else
+                        mainName
+    in
+    { context
+        | activeSubmodel = newActive
+        , path = validPath
+    }
+
+
 {-| Push the document to the viewport, forget which placements changed, drop
 selected ids that no longer exist and queue the draft.
 -}
 syncDocument : Model -> ( Model, Cmd Msg )
 syncDocument model =
     let
+        reconciledContext =
+            reconcileContext model.document model.context
+
+        activePathIds =
+            List.map .instancePlacementId reconciledContext.path
+
+        viewportWithPath =
+            if activePathIds /= model.viewport.activePath then
+                Viewport.setActivePath activePathIds model.viewport
+
+            else
+                model.viewport
+
         ( viewport, viewportCmd, events ) =
-            Viewport.applyDocument model.document model.viewport
+            Viewport.applyDocument model.document viewportWithPath
 
         present =
-            Document.mainPlacements model.document |> List.map .id |> Set.fromList
+            Document.placementsOf reconciledContext.activeSubmodel model.document
+                |> List.map .id
+                |> Set.fromList
 
         synced =
             { model
                 | viewport = viewport
                 , document = Document.clearTouched model.document
+                , context = reconciledContext
                 , selection = Set.filter (\id -> Set.member id present) model.selection
                 , collidingPlacements = Set.filter (\id -> Set.member id present) model.collidingPlacements
             }
@@ -1116,16 +1543,22 @@ without scheduling gear hints or saving the draft until the drag completes.
 syncDocumentLive : Model -> ( Model, Cmd Msg )
 syncDocumentLive model =
     let
+        reconciledContext =
+            reconcileContext model.document model.context
+
         ( viewport, viewportCmd, events ) =
             Viewport.applyDocument model.document model.viewport
 
         present =
-            Document.mainPlacements model.document |> List.map .id |> Set.fromList
+            Document.placementsOf reconciledContext.activeSubmodel model.document
+                |> List.map .id
+                |> Set.fromList
 
         synced =
             { model
                 | viewport = viewport
                 , document = Document.clearTouched model.document
+                , context = reconciledContext
                 , selection = Set.filter (\id -> Set.member id present) model.selection
             }
 
@@ -1164,11 +1597,16 @@ openDocument document model =
         ( next, eventCmds ) =
             handleEvents events
                 ( { model
-                    | viewport = viewport
+                    | viewport = Viewport.setActivePath [] viewport
                     , document = Document.clearTouched document
                     , history = Edit.emptyHistory
                     , selection = Set.empty
                     , drag = Nothing
+                    , context =
+                        { activeSubmodel = (Document.mainSubmodel document).name
+                        , path = []
+                        , coordinateFrame = LocalFrame
+                        }
                   }
                 , []
                 )
@@ -1197,6 +1635,23 @@ handleEvent event ( model, cmds ) =
 
         Viewport.Clicked x y shift ->
             ( select x y shift model, cmds )
+
+        Viewport.DoubleClicked x y ->
+            case Viewport.pickSource x y model.viewport of
+                Just sourceId ->
+                    case Document.getPlacement sourceId model.document of
+                        Just placement ->
+                            if Document.isSubmodelReference placement model.document then
+                                ( enterSubmodelPlacement placement model, cmds )
+
+                            else
+                                ( model, cmds )
+
+                        Nothing ->
+                            ( model, cmds )
+
+                Nothing ->
+                    ( model, cmds )
 
         Viewport.Tapped x y ->
             ( select x y False model, cmds )
@@ -1234,14 +1689,7 @@ handleEvent event ( model, cmds ) =
                     { model | altHeld = keyEvent.alt || keyEvent.key == "Alt" }
 
                 handleShortcut m =
-                    let
-                        studioContext =
-                            { hasSelection = not (Set.isEmpty m.selection)
-                            , helpVisible = m.helpOpen
-                            , walking = m.viewport.camera.navigation == Camera.Walk
-                            }
-                    in
-                    case StudioShortcuts.actionFor studioContext keyEvent of
+                    case StudioShortcuts.actionFor (shortcutContext m) keyEvent of
                         Just action ->
                             let
                                 ( next, cmd ) =
@@ -1250,7 +1698,7 @@ handleEvent event ( model, cmds ) =
                             ( next, cmds ++ [ cmd ] )
 
                         Nothing ->
-                            case Shortcuts.actionFor (shortcutContext m) keyEvent of
+                            case Shortcuts.actionFor (viewportShortcutContext m) keyEvent of
                                 Just action ->
                                     let
                                         ( next, cmd ) =
@@ -1371,8 +1819,28 @@ currentHandles : Model -> List Handle
 currentHandles model =
     if model.tool == MoveTool then
         case Edit.selectionCenter (Set.toList model.selection) model.document of
-            Just center ->
-                Gizmo.handles model.viewport.camera model.viewport.width model.viewport.height center
+            Just localCenter ->
+                let
+                    accum =
+                        case List.reverse model.context.path of
+                            head :: _ ->
+                                head.accumulatedTransform
+
+                            [] ->
+                                Mat4.identity
+
+                    worldCenter =
+                        Mat4.transform accum localCenter
+
+                    frameMatrix =
+                        case model.context.coordinateFrame of
+                            LocalFrame ->
+                                accum
+
+                            WorldFrame ->
+                                Mat4.identity
+                in
+                Gizmo.handlesWithFrame frameMatrix model.viewport.camera model.viewport.width model.viewport.height worldCenter
 
             Nothing ->
                 []
@@ -1419,8 +1887,25 @@ moveDrag drag point model =
         delta =
             Vec3.scale amount (Edit.axisVector drag.handle.axis)
 
+        effectiveDelta =
+            if model.context.coordinateFrame == WorldFrame && not (List.isEmpty model.context.path) then
+                case List.reverse model.context.path of
+                    head :: _ ->
+                        case Mat4.inverse head.accumulatedTransform of
+                            Just inv ->
+                                Vec3.sub (Mat4.transform inv delta) (Mat4.transform inv (Vec3.vec3 0 0 0))
+
+                            Nothing ->
+                                delta
+
+                    [] ->
+                        delta
+
+            else
+                delta
+
         ( gizmoMovedDoc, _ ) =
-            Edit.apply (Translate drag.ids delta) drag.original
+            Edit.apply (Translate drag.ids effectiveDelta) drag.original
 
         resolveLines name =
             case Dict.get name model.viewport.partCache of
@@ -1442,7 +1927,7 @@ moveDrag drag point model =
             Connectivity.effectiveEnvelope rawBox conn.connections
 
         otherPlacements =
-            Document.mainPlacements gizmoMovedDoc
+            Document.placementsOf model.context.activeSubmodel gizmoMovedDoc
                 |> List.filter (\p -> not (List.member p.id drag.ids))
 
         sceneBoxes =
@@ -1672,8 +2157,17 @@ endDrag model =
             ( model, Cmd.none )
 
 
-shortcutContext : Model -> { helpVisible : Bool, walking : Bool }
+shortcutContext : Model -> StudioShortcuts.Context
 shortcutContext model =
+    { hasSelection = not (Set.isEmpty model.selection)
+    , helpVisible = model.helpOpen
+    , walking = model.viewport.camera.navigation == Camera.Walk
+    , inSubmodel = not (List.isEmpty model.context.path)
+    }
+
+
+viewportShortcutContext : Model -> { helpVisible : Bool, walking : Bool }
+viewportShortcutContext model =
     { helpVisible = model.helpOpen
     , walking = model.viewport.camera.navigation == Camera.Walk
     }
@@ -1706,6 +2200,18 @@ msgForStudioAction action =
 
         StudioShortcuts.ClearSelection ->
             ClearSelection
+
+        StudioShortcuts.GroupSubmodel ->
+            GroupSelection
+
+        StudioShortcuts.ExplodeSubmodel ->
+            ExplodeSelection
+
+        StudioShortcuts.EnterSubmodel ->
+            EnterSubmodel
+
+        StudioShortcuts.ExitSubmodel ->
+            ExitSubmodel
 
         StudioShortcuts.UseTool tool ->
             UseTool tool
@@ -1981,7 +2487,13 @@ viewInspector model =
 
 viewTree : Model -> Html Msg
 viewTree model =
-    Tree.view { selection = model.selection, onSelect = SelectPlacement } model.document
+    Tree.view
+        { selection = model.selection
+        , onSelect = SelectPlacement
+        , activeSubmodel = model.context.activeSubmodel
+        , onSelectSubmodel = SelectSubmodel
+        }
+        model.document
 
 
 {-| The narrow layout's tab bar: one button per panel, tapping the open one closes it.
@@ -2068,6 +2580,7 @@ overlay model =
         ]
         ([ viewStatus model
          , viewTopBar model
+         , viewBreadcrumbs model
          , viewToolbar model
          ]
             ++ (if model.panel == Nothing then
@@ -2087,6 +2600,82 @@ overlay model =
                     []
                )
         )
+
+
+viewBreadcrumbs : Model -> Html Msg
+viewBreadcrumbs model =
+    if List.isEmpty model.context.path then
+        text ""
+
+    else
+        let
+            rootSegment =
+                span
+                    [ Attr.style "cursor" "pointer"
+                    , Attr.style "text-decoration" "underline"
+                    , Html.Events.onClick (NavigateToSubmodel 0)
+                    ]
+                    [ text "Model" ]
+
+            pathSegments =
+                model.context.path
+                    |> List.indexedMap
+                        (\idx step ->
+                            [ span [ Attr.style "margin" "0 4px" ] [ text ">" ]
+                            , span
+                                [ Attr.style "cursor" "pointer"
+                                , Attr.style "font-weight"
+                                    (if idx == List.length model.context.path - 1 then
+                                        "bold"
+
+                                     else
+                                        "normal"
+                                    )
+                                , Attr.style "color"
+                                    (if idx == List.length model.context.path - 1 then
+                                        Theme.brand
+
+                                     else
+                                        Theme.textPrimary
+                                    )
+                                , Html.Events.onClick (NavigateToSubmodel (idx + 1))
+                                ]
+                                [ text step.submodelName ]
+                            ]
+                        )
+                    |> List.concat
+
+            frameLabel =
+                case model.context.coordinateFrame of
+                    LocalFrame ->
+                        "Frame: Local"
+
+                    WorldFrame ->
+                        "Frame: World"
+        in
+        div
+            [ Attr.style "position" "absolute"
+            , Attr.style "top" "44px"
+            , Attr.style "left" "12px"
+            , Attr.style "display" "flex"
+            , Attr.style "align-items" "center"
+            , Attr.style "gap" "8px"
+            , Attr.style "padding" "4px 8px"
+            , Attr.style "border-radius" "4px"
+            , Attr.style "background" "color-mix(in srgb, var(--color-surface) 90%, transparent)"
+            , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+            , Attr.style "pointer-events" "auto"
+            , Attr.style "font-family" "monospace"
+            , Attr.style "font-size" "11px"
+            , Attr.style "color" Theme.textPrimary
+            ]
+            ([ rootSegment ]
+                ++ pathSegments
+                ++ [ span [ Attr.style "margin-left" "8px" ] []
+                   , Button.secondary ToggleCoordinateFrame frameLabel
+                   , Button.secondary ExitSubmodel "Exit (Esc)"
+                   ]
+            )
 
 
 viewTopBar : Model -> Html Msg
@@ -2142,6 +2731,16 @@ viewToolbar model =
         hasSelection =
             not (Set.isEmpty model.selection)
 
+        hasSelectedSubmodel =
+            case Set.toList model.selection of
+                [ id ] ->
+                    Document.getPlacement id model.document
+                        |> Maybe.map (\p -> Document.isSubmodelReference p model.document)
+                        |> Maybe.withDefault False
+
+                _ ->
+                    False
+
         narrow =
             model.layout.mode == Layout.Narrow
 
@@ -2158,11 +2757,11 @@ viewToolbar model =
     div
         ([ Attr.style "position" "absolute"
          , Attr.style "top"
-            (if narrow then
+            (if List.isEmpty model.context.path then
                 "56px"
 
              else
-                "56px"
+                "84px"
             )
          , Attr.style "left"
             (if narrow then
@@ -2200,6 +2799,9 @@ viewToolbar model =
              , Button.toggle { active = False, enabled = Edit.canRedo model.history } Redo "Redo"
              , Button.toggle { active = False, enabled = hasSelection } DuplicateSelection "Duplicate"
              , Button.toggle { active = False, enabled = hasSelection } DeleteSelection "Delete"
+             , Button.toggle { active = False, enabled = hasSelection } GroupSelection "Group"
+             , Button.toggle { active = False, enabled = hasSelectedSubmodel } ExplodeSelection "Explode"
+             , Button.toggle { active = False, enabled = hasSelectedSubmodel } EnterSubmodel "Enter"
              ]
                 ++ rotateButtons model hasSelection
             )
@@ -2237,13 +2839,24 @@ rotateButtons model hasSelection =
 documentSummary : Model -> String
 documentSummary model =
     let
+        activePlacements =
+            Document.placementsOf model.context.activeSubmodel model.document
+
         count =
-            List.length (Document.mainPlacements model.document)
+            List.length activePlacements
 
         selected =
             Set.size model.selection
+
+        prefix =
+            if model.context.activeSubmodel /= "" && model.context.activeSubmodel /= (Document.mainSubmodel model.document).name then
+                "[" ++ model.context.activeSubmodel ++ "] "
+
+            else
+                ""
     in
-    String.fromInt count
+    prefix
+        ++ String.fromInt count
         ++ (if count == 1 then
                 " part"
 

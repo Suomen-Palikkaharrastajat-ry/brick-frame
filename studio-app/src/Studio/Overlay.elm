@@ -357,7 +357,7 @@ boxEdges box =
     ]
 
 
-{-| A handle as a box from the centre to the tip, thick enough to see and to hit.
+{-| A handle as an oriented box from the centre to the tip, thick enough to see and to hit.
 -}
 handleTriangles : Camera -> Handle -> List ( Vertex, Vertex, Vertex )
 handleTriangles _ handle =
@@ -371,14 +371,51 @@ handleTriangles _ handle =
         w =
             handle.length * 0.035
 
-        lo =
-            vec3 (min (Vec3.getX a) (Vec3.getX b) - w) (min (Vec3.getY a) (Vec3.getY b) - w) (min (Vec3.getZ a) (Vec3.getZ b) - w)
+        ab =
+            Vec3.sub b a
 
-        hi =
-            vec3 (max (Vec3.getX a) (Vec3.getX b) + w) (max (Vec3.getY a) (Vec3.getY b) + w) (max (Vec3.getZ a) (Vec3.getZ b) + w)
+        len =
+            Vec3.length ab
+
+        dir =
+            if len < 1.0e-6 then
+                vec3 1 0 0
+
+            else
+                Vec3.scale (1 / len) ab
+
+        ref =
+            if abs (Vec3.getY dir) < 0.9 then
+                vec3 0 1 0
+
+            else
+                vec3 1 0 0
+
+        u =
+            Vec3.scale w (Vec3.normalize (Vec3.cross dir ref))
+
+        v =
+            Vec3.scale w (Vec3.normalize (Vec3.cross dir u))
+
+        start =
+            Vec3.sub a (Vec3.scale w dir)
+
+        end =
+            Vec3.add b (Vec3.scale w dir)
+
+        corner base sU sV =
+            Vec3.add base (Vec3.add (Vec3.scale sU u) (Vec3.scale sV v))
 
         box =
-            corners lo hi
+            [ corner start -1 -1
+            , corner start 1 -1
+            , corner start -1 1
+            , corner start 1 1
+            , corner end -1 -1
+            , corner end 1 -1
+            , corner end -1 1
+            , corner end 1 1
+            ]
 
         at i =
             List.drop i box |> List.head |> Maybe.withDefault (vec3 0 0 0)

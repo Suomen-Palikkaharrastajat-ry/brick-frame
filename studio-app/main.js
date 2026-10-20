@@ -156,7 +156,7 @@ window.addEventListener('keydown', (event) => {
     if (key === 's') {
       event.preventDefault()
       ports.saveRequested.send(null)
-    } else if (key === 'd' || key === 'a' || key === 'z' || key === 'y') {
+    } else if (key === 'd' || key === 'a' || key === 'z' || key === 'y' || key === 'g') {
       event.preventDefault()
     }
   }
