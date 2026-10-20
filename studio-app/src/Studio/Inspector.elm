@@ -1,4 +1,4 @@
-module Studio.Inspector exposing (Config, Fields, fields, view)
+module Studio.Inspector exposing (Config, Fields, fields, fieldsWithCollisions, view, viewWithCollisions)
 
 {-| The inspector: the selection's position, rotation and colour as editable
 fields.
@@ -44,6 +44,7 @@ type alias Fields =
     , rotation : Maybe Euler
     , colours : List Int
     , files : List String
+    , colliding : Bool
     }
 
 
@@ -52,10 +53,20 @@ selected ids is in the document.
 -}
 fields : Set Int -> Document -> Maybe Fields
 fields selection document =
+    fieldsWithCollisions Set.empty selection document
+
+
+{-| The fields for the selected placements including collision status.
+-}
+fieldsWithCollisions : Set Int -> Set Int -> Document -> Maybe Fields
+fieldsWithCollisions collidingIds selection document =
     let
         selected =
             Set.toList selection
                 |> List.filterMap (\id -> Document.getPlacement id document)
+
+        hasCollision =
+            List.any (\p -> Set.member p.id collidingIds) selected
     in
     case ( selected, Edit.selectionCenter (List.map .id selected) document ) of
         ( first :: rest, Just center ) ->
@@ -70,6 +81,7 @@ fields selection document =
                         Nothing
                 , colours = selected |> List.map .color |> unique
                 , files = selected |> List.map .fileText |> unique
+                , colliding = hasCollision
                 }
 
         _ ->
@@ -83,7 +95,12 @@ unique items =
 
 view : Config msg -> Document -> Set Int -> Html msg
 view config document selection =
-    case fields selection document of
+    viewWithCollisions Set.empty config document selection
+
+
+viewWithCollisions : Set Int -> Config msg -> Document -> Set Int -> Html msg
+viewWithCollisions collidingIds config document selection =
+    case fieldsWithCollisions collidingIds selection document of
         Nothing ->
             div [ Attr.style "color" Theme.textMuted, Attr.style "font-size" "12px" ]
                 [ text "Nothing selected. Click a part, or pick one in the tree." ]
@@ -96,7 +113,20 @@ view config document selection =
                 , Attr.style "font-family" "monospace"
                 , Attr.style "font-size" "12px"
                 ]
-                [ div [ Attr.style "color" Theme.textPrimary, Attr.style "font-weight" "600" ] [ text (summary f) ]
+                [ if f.colliding then
+                    div
+                        [ Attr.style "color" Theme.brandRed
+                        , Attr.style "font-weight" "600"
+                        , Attr.style "font-size" "12px"
+                        , Attr.style "display" "flex"
+                        , Attr.style "align-items" "center"
+                        , Attr.style "gap" "4px"
+                        ]
+                        [ text "⚠ Solid collision detected" ]
+
+                  else
+                    text ""
+                , div [ Attr.style "color" Theme.textPrimary, Attr.style "font-weight" "600" ] [ text (summary f) ]
                 , colourLine f
                 , group "Position (LDU)"
                     [ numberField "X" f.position.x (config.onPosition AxisX)

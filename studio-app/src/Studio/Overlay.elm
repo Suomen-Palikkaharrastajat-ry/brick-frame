@@ -10,6 +10,7 @@ positions go through `Studio.Gizmo.toRender` first.
 -}
 
 import Dict
+import LDraw.Connectivity as Connectivity exposing (SnapGuide(..))
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (Vec3, vec3)
 import Math.Vector4 as Vec4 exposing (Vec4, vec4)
@@ -24,16 +25,19 @@ import WebGL.Settings.DepthTest as DepthTest
 
 
 {-| Which placements to outline, and in which colour: the selection in yellow,
-gears that mesh in green, gears that cannot turn in orange.
+gears that mesh in green, gears that cannot turn in orange, collisions in red,
+and active magnetic snap guides.
 -}
 type alias Highlights =
     { selection : Set Int
     , meshed : Set Int
     , isolated : Set Int
+    , colliding : Set Int
+    , snapGuide : Maybe SnapGuide
     }
 
 
-{-| The outlines for `highlights`, and the gizmo handles if there are any.
+{-| The outlines for `highlights`, snap guides, and the gizmo handles if there are any.
 -}
 entities : Camera -> Float -> Maybe InstancedScene -> Highlights -> List Handle -> List WebGL.Entity
 entities camera aspect scene highlights handles =
@@ -67,8 +71,188 @@ entities camera aspect scene highlights handles =
     in
     outline highlights.meshed meshedColor
         ++ outline highlights.isolated isolatedColor
+        ++ outline highlights.colliding collidingColor
         ++ outline highlights.selection outlineColor
+        ++ snapGuideEntities draw highlights.snapGuide
         ++ List.map (\h -> draw (WebGL.triangles (handleTriangles camera h)) (axisColor h.axis)) handles
+
+
+snapGuideEntities : (WebGL.Mesh Vertex -> Vec4 -> WebGL.Entity) -> Maybe SnapGuide -> List WebGL.Entity
+snapGuideEntities draw maybeGuide =
+    case maybeGuide of
+        Just (StudRingGuide pos normal isColliding) ->
+            let
+                color =
+                    if isColliding then
+                        collidingColor
+
+                    else
+                        snapValidColor
+
+                rPos =
+                    Gizmo.toRender pos
+
+                rNorm =
+                    let
+                        rn =
+                            Gizmo.toRender normal
+
+                        len =
+                            Vec3.length rn
+                    in
+                    if len < 1.0e-6 then
+                        vec3 0 1 0
+
+                    else
+                        Vec3.scale (1 / len) rn
+
+                rTangent =
+                    let
+                        hint =
+                            if abs (Vec3.getX rNorm) < 0.9 then
+                                vec3 1 0 0
+
+                            else
+                                vec3 0 0 1
+
+                        proj =
+                            Vec3.sub hint (Vec3.scale (Vec3.dot hint rNorm) rNorm)
+
+                        pLen =
+                            Vec3.length proj
+                    in
+                    if pLen < 1.0e-6 then
+                        vec3 1 0 0
+
+                    else
+                        Vec3.scale (1 / pLen) proj
+
+                rBitangent =
+                    Vec3.cross rNorm rTangent
+
+                radius =
+                    7.5
+
+                segments =
+                    16
+
+                step =
+                    2 * pi / toFloat segments
+
+                circlePoint i =
+                    let
+                        angle =
+                            toFloat i * step
+                    in
+                    Vec3.add
+                        rPos
+                        (Vec3.add
+                            (Vec3.scale (radius * cos angle) rTangent)
+                            (Vec3.scale (radius * sin angle) rBitangent)
+                        )
+
+                edges =
+                    List.range 0 (segments - 1)
+                        |> List.map
+                            (\i ->
+                                ( { position = circlePoint i }
+                                , { position = circlePoint (modBy segments (i + 1)) }
+                                )
+                            )
+            in
+            [ draw (WebGL.lines edges) color ]
+
+        Just (AxleAxisGuide pos axis isColliding) ->
+            let
+                color =
+                    if isColliding then
+                        collidingColor
+
+                    else
+                        axleColor
+
+                rPos =
+                    Gizmo.toRender pos
+
+                rAxis =
+                    let
+                        ra =
+                            Gizmo.toRender axis
+
+                        len =
+                            Vec3.length ra
+                    in
+                    if len < 1.0e-6 then
+                        vec3 0 0 1
+
+                    else
+                        Vec3.scale (1 / len) ra
+
+                halfLen =
+                    25.0
+
+                p1 =
+                    Vec3.add rPos (Vec3.scale -halfLen rAxis)
+
+                p2 =
+                    Vec3.add rPos (Vec3.scale halfLen rAxis)
+            in
+            [ draw (WebGL.lines [ ( { position = p1 }, { position = p2 } ) ]) color ]
+
+        Just (ClipLockGuide pos _ isColliding) ->
+            let
+                color =
+                    if isColliding then
+                        collidingColor
+
+                    else
+                        clipColor
+
+                rPos =
+                    Gizmo.toRender pos
+
+                s =
+                    6.0
+
+                edges =
+                    [ ( { position = Vec3.add rPos (vec3 -s 0 0) }
+                      , { position = Vec3.add rPos (vec3 0 s 0) }
+                      )
+                    , ( { position = Vec3.add rPos (vec3 0 s 0) }
+                      , { position = Vec3.add rPos (vec3 s 0 0) }
+                      )
+                    , ( { position = Vec3.add rPos (vec3 s 0 0) }
+                      , { position = Vec3.add rPos (vec3 0 -s 0) }
+                      )
+                    , ( { position = Vec3.add rPos (vec3 0 -s 0) }
+                      , { position = Vec3.add rPos (vec3 -s 0 0) }
+                      )
+                    ]
+            in
+            [ draw (WebGL.lines edges) color ]
+
+        Nothing ->
+            []
+
+
+snapValidColor : Vec4
+snapValidColor =
+    vec4 0.15 0.85 0.3 1
+
+
+collidingColor : Vec4
+collidingColor =
+    vec4 0.95 0.15 0.15 1
+
+
+axleColor : Vec4
+axleColor =
+    vec4 0.1 0.8 0.95 1
+
+
+clipColor : Vec4
+clipColor =
+    vec4 0.95 0.65 0.1 1
 
 
 outlineColor : Vec4
