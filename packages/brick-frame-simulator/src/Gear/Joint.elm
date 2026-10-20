@@ -55,7 +55,10 @@ normalisePart : String -> String
 normalisePart name =
     let
         lower =
-            String.toLower name
+            name
+                |> String.trim
+                |> String.toLower
+                |> String.replace "\\" "/"
 
         withoutDir =
             case String.indices "/" lower of
@@ -70,7 +73,11 @@ normalisePart name =
                         [] ->
                             lower
     in
-    withoutDir
+    if withoutDir /= "" && not (String.endsWith ".dat" withoutDir) then
+        withoutDir ++ ".dat"
+
+    else
+        withoutDir
 
 
 {-| Whether a part name represents a turntable component.
@@ -557,7 +564,7 @@ alignLinkageCoupler pivot axis movingPoint targetPoint couplerLength =
         deltaH =
             abs (hM - hT)
     in
-    if couplerLength < deltaH then
+    if couplerLength + 0.000001 < deltaH then
         Nothing
 
     else
@@ -588,7 +595,7 @@ alignLinkageCoupler pivot axis movingPoint targetPoint couplerLength =
                 cosGamma =
                     (lm * lm + lt * lt - rp * rp) / (2 * lm * lt)
             in
-            if cosGamma < -1.0 || cosGamma > 1.0 then
+            if cosGamma < -1.000001 || cosGamma > 1.000001 then
                 Nothing
 
             else

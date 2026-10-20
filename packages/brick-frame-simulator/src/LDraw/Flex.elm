@@ -259,7 +259,7 @@ evaluateSpline config =
                     Vec3.length vel
             in
             if len < 0.0001 then
-                vec3 0 0 1
+                unitT0
 
             else
                 Vec3.scale (1 / len) vel
@@ -328,6 +328,22 @@ pickInitialNormal tangent =
         Vec3.scale (1 / len) cross
 
 
+orthogonalUnitNormal : Vec3 -> Vec3 -> Vec3
+orthogonalUnitNormal tangent candidate =
+    let
+        projected =
+            Vec3.sub candidate (Vec3.scale (Vec3.dot candidate tangent) tangent)
+
+        projLen =
+            Vec3.length projected
+    in
+    if projLen < 0.0001 then
+        pickInitialNormal tangent
+
+    else
+        Vec3.scale (1 / projLen) projected
+
+
 {-| Compute rotation-minimizing parallel transport frames along a sample list.
 -}
 parallelTransportFrames : List CurveSample -> Vec3 -> List CurveFrame
@@ -338,40 +354,57 @@ parallelTransportFrames samples initialNormal =
 
         sample0 :: rest ->
             let
-                norm0Len =
-                    Vec3.length initialNormal
+                t0Len =
+                    Vec3.length sample0.tangent
 
-                n0 =
-                    if norm0Len < 0.0001 then
-                        vec3 1 0 0
+                t0 =
+                    if t0Len < 0.0001 then
+                        vec3 0 0 1
 
                     else
-                        Vec3.scale (1 / norm0Len) initialNormal
+                        Vec3.scale (1 / t0Len) sample0.tangent
+
+                n0 =
+                    orthogonalUnitNormal t0 initialNormal
 
                 b0 =
-                    Vec3.cross sample0.tangent n0
+                    Vec3.cross t0 n0
 
                 frame0 =
                     { point = sample0.point
-                    , tangent = sample0.tangent
+                    , tangent = t0
                     , normal = n0
                     , binormal = b0
-                    , matrix = frameMatrix sample0.point n0 b0 sample0.tangent
+                    , matrix = frameMatrix sample0.point n0 b0 t0
                     , t = sample0.t
                     , distance = sample0.distance
                     }
 
                 step sample ( prevFrame, acc ) =
                     let
+                        tLen =
+                            Vec3.length sample.tangent
+
+                        tCurr =
+                            if tLen < 0.0001 then
+                                prevFrame.tangent
+
+                            else
+                                Vec3.scale (1 / tLen) sample.tangent
+
                         axis =
-                            Vec3.cross prevFrame.tangent sample.tangent
+                            Vec3.cross prevFrame.tangent tCurr
 
                         axisLen =
                             Vec3.length axis
 
-                        nextNormal =
+                        rawNormal =
                             if axisLen < 0.00001 then
-                                prevFrame.normal
+                                if Vec3.dot prevFrame.tangent tCurr < 0 then
+                                    Vec3.negate prevFrame.normal
+
+                                else
+                                    prevFrame.normal
 
                             else
                                 let
@@ -379,7 +412,7 @@ parallelTransportFrames samples initialNormal =
                                         Vec3.scale (1 / axisLen) axis
 
                                     cosPhi =
-                                        clamp -1.0 1.0 (Vec3.dot prevFrame.tangent sample.tangent)
+                                        clamp -1.0 1.0 (Vec3.dot prevFrame.tangent tCurr)
 
                                     sinPhi =
                                         clamp -1.0 1.0 axisLen
@@ -389,28 +422,21 @@ parallelTransportFrames samples initialNormal =
 
                                     dotTerm =
                                         Vec3.scale ((1 - cosPhi) * Vec3.dot unitAxis prevFrame.normal) unitAxis
-
-                                    rotated =
-                                        Vec3.add (Vec3.scale cosPhi prevFrame.normal) (Vec3.add crossTerm dotTerm)
-
-                                    rotLen =
-                                        Vec3.length rotated
                                 in
-                                if rotLen < 0.0001 then
-                                    prevFrame.normal
+                                Vec3.add (Vec3.scale cosPhi prevFrame.normal) (Vec3.add crossTerm dotTerm)
 
-                                else
-                                    Vec3.scale (1 / rotLen) rotated
+                        nextNormal =
+                            orthogonalUnitNormal tCurr rawNormal
 
                         nextBinormal =
-                            Vec3.cross sample.tangent nextNormal
+                            Vec3.cross tCurr nextNormal
 
                         currFrame =
                             { point = sample.point
-                            , tangent = sample.tangent
+                            , tangent = tCurr
                             , normal = nextNormal
                             , binormal = nextBinormal
-                            , matrix = frameMatrix sample.point nextNormal nextBinormal sample.tangent
+                            , matrix = frameMatrix sample.point nextNormal nextBinormal tCurr
                             , t = sample.t
                             , distance = sample.distance
                             }
@@ -453,21 +479,6 @@ frameMatrix pos n b t =
 routeBeltOrChain : BeltPulley -> BeltPulley -> Float -> FlexRoute
 routeBeltOrChain p1 p2 pitch =
     let
-        centerDelta =
-            Vec3.sub p2.center p1.center
-
-        dist =
-            Vec3.length centerDelta
-
-        safeDist =
-            max 1.0 dist
-
-        r1 =
-            p1.radius
-
-        r2 =
-            p2.radius
-
         axisLen =
             Vec3.length p1.axis
 
@@ -478,18 +489,37 @@ routeBeltOrChain p1 p2 pitch =
             else
                 Vec3.scale (1 / axisLen) p1.axis
 
+        rawDelta =
+            Vec3.sub p2.center p1.center
+
+        planarDelta =
+            Vec3.sub rawDelta (Vec3.scale (Vec3.dot rawDelta unitAxis) unitAxis)
+
+        dist =
+            Vec3.length planarDelta
+
+        r1 =
+            max 0.001 p1.radius
+
+        r2 =
+            max 0.001 p2.radius
+
         unitDir =
-            Vec3.scale (1 / safeDist) centerDelta
+            if dist < 0.0001 then
+                pickInitialNormal unitAxis
+
+            else
+                Vec3.scale (1 / dist) planarDelta
 
         perp =
-            Vec3.cross unitAxis unitDir
+            Vec3.cross unitDir unitAxis
 
         diffR =
             r1 - r2
 
         sinBeta =
-            if safeDist > abs diffR then
-                diffR / safeDist
+            if dist > abs diffR && dist > 0.0001 then
+                clamp -1.0 1.0 (diffR / dist)
 
             else
                 0.0
@@ -498,31 +528,45 @@ routeBeltOrChain p1 p2 pitch =
             sqrt (max 0.0 (1.0 - sinBeta * sinBeta))
 
         t1Top =
-            Vec3.add p1.center (Vec3.add (Vec3.scale (-r1 * sinBeta) unitDir) (Vec3.scale (r1 * cosBeta) perp))
+            Vec3.add p1.center (Vec3.add (Vec3.scale (r1 * sinBeta) unitDir) (Vec3.scale (r1 * cosBeta) perp))
 
         t2Top =
-            Vec3.add p2.center (Vec3.add (Vec3.scale (-r2 * sinBeta) unitDir) (Vec3.scale (r2 * cosBeta) perp))
+            Vec3.add p2.center (Vec3.add (Vec3.scale (r2 * sinBeta) unitDir) (Vec3.scale (r2 * cosBeta) perp))
 
         t2Bot =
-            Vec3.add p2.center (Vec3.add (Vec3.scale (-r2 * sinBeta) unitDir) (Vec3.scale (-r2 * cosBeta) perp))
+            Vec3.add p2.center (Vec3.add (Vec3.scale (r2 * sinBeta) unitDir) (Vec3.scale (-r2 * cosBeta) perp))
 
         t1Bot =
-            Vec3.add p1.center (Vec3.add (Vec3.scale (-r1 * sinBeta) unitDir) (Vec3.scale (-r1 * cosBeta) perp))
+            Vec3.add p1.center (Vec3.add (Vec3.scale (r1 * sinBeta) unitDir) (Vec3.scale (-r1 * cosBeta) perp))
 
         straightLen =
             Vec3.distance t1Top t2Top
 
         topTan =
-            Vec3.scale (1 / max 0.001 straightLen) (Vec3.sub t2Top t1Top)
+            if straightLen < 0.0001 then
+                unitDir
+
+            else
+                Vec3.scale (1 / straightLen) (Vec3.sub t2Top t1Top)
 
         botTan =
-            Vec3.scale (1 / max 0.001 straightLen) (Vec3.sub t1Bot t2Bot)
+            if straightLen < 0.0001 then
+                Vec3.negate unitDir
+
+            else
+                Vec3.scale (1 / straightLen) (Vec3.sub t1Bot t2Bot)
+
+        arc2Angle =
+            pi - 2 * asin sinBeta
+
+        arc1Angle =
+            pi + 2 * asin sinBeta
 
         arc2Len =
-            r2 * (pi - 2 * asin sinBeta)
+            r2 * arc2Angle
 
         arc1Len =
-            r1 * (pi + 2 * asin sinBeta)
+            r1 * arc1Angle
 
         totalLength =
             2 * straightLen + arc1Len + arc2Len
@@ -544,17 +588,17 @@ routeBeltOrChain p1 p2 pitch =
             if d < straightLen then
                 let
                     frac =
-                        d / straightLen
+                        d / max 0.0001 straightLen
                 in
                 ( Vec3.add t1Top (Vec3.scale (frac * straightLen) topTan), topTan )
 
             else if d < straightLen + arc2Len then
                 let
                     frac =
-                        (d - straightLen) / max 0.001 arc2Len
+                        (d - straightLen) / max 0.0001 arc2Len
 
                     angle =
-                        frac * (pi - 2 * asin sinBeta)
+                        frac * arc2Angle
 
                     rot =
                         Mat4.makeRotate angle unitAxis
@@ -573,17 +617,17 @@ routeBeltOrChain p1 p2 pitch =
             else if d < 2 * straightLen + arc2Len then
                 let
                     frac =
-                        (d - straightLen - arc2Len) / straightLen
+                        (d - straightLen - arc2Len) / max 0.0001 straightLen
                 in
                 ( Vec3.add t2Bot (Vec3.scale (frac * straightLen) botTan), botTan )
 
             else
                 let
                     frac =
-                        (d - 2 * straightLen - arc2Len) / max 0.001 arc1Len
+                        (d - 2 * straightLen - arc2Len) / max 0.0001 arc1Len
 
                     angle =
-                        frac * (pi + 2 * asin sinBeta)
+                        frac * arc1Angle
 
                     rot =
                         Mat4.makeRotate angle unitAxis

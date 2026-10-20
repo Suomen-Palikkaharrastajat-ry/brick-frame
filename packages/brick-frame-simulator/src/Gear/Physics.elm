@@ -161,7 +161,7 @@ fourBarAngles { ground, crank, coupler, rocker } theta =
         dist =
             sqrt distSquared
     in
-    if dist < 0.0001 || rocker < 0.0001 || coupler < 0.0001 then
+    if ground < 0.0001 || crank < 0.0001 || dist < 0.0001 || rocker < 0.0001 || coupler < 0.0001 then
         Nothing
 
     else
@@ -169,7 +169,7 @@ fourBarAngles { ground, crank, coupler, rocker } theta =
             cosDelta =
                 (rocker * rocker + distSquared - coupler * coupler) / (2 * rocker * dist)
         in
-        if cosDelta < -1.0 || cosDelta > 1.0 then
+        if cosDelta < -1.000001 || cosDelta > 1.000001 then
             Nothing
 
         else

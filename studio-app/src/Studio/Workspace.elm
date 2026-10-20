@@ -109,19 +109,12 @@ type alias Model =
     }
 
 
-{-| The kind of handle being dragged.
--}
-type DragKind
-    = LinearDrag Handle
-    | ArcDrag ArcHandle
-
-
 {-| A handle being dragged: which one, what it moves, where the press began, the
 document as it was then (every step is computed from it, so the drag can wander
 and come back without drift) and how far it has gone.
 -}
 type alias Drag =
-    { kind : DragKind
+    { kind : DragHandle
     , ids : List Int
     , start : ( Float, Float )
     , original : Document
@@ -1046,44 +1039,54 @@ currentHandles model =
 currentArcHandles : Model -> List ArcHandle
 currentArcHandles model =
     if model.tool == RotateTool then
-        let
-            mainPlacements =
-                Document.mainPlacements model.document
+        case model.drag of
+            Just { kind } ->
+                case kind of
+                    ArcDrag arcHandle ->
+                        [ arcHandle ]
 
-            joints =
-                Joint.detectJoints mainPlacements
+                    LinearDrag _ ->
+                        []
 
-            selectedJoints =
-                List.filter
-                    (\j ->
-                        Set.member j.parentPlacementId model.selection
-                            || Set.member j.childPlacementId model.selection
-                    )
-                    joints
-        in
-        case selectedJoints of
-            firstJoint :: _ ->
-                case firstJoint.jointType of
-                    Joint.RevoluteJoint rev ->
-                        case
-                            Gizmo.jointArcHandle
-                                model.viewport.camera
-                                model.viewport.width
-                                model.viewport.height
-                                firstJoint.pivotWorld
-                                rev.axis
-                        of
-                            Just handle ->
-                                [ handle ]
+            Nothing ->
+                let
+                    mainPlacements =
+                        Document.mainPlacements model.document
 
-                            Nothing ->
+                    joints =
+                        Joint.detectJoints mainPlacements
+
+                    selectedJoints =
+                        List.filter
+                            (\j ->
+                                Set.member j.parentPlacementId model.selection
+                                    || Set.member j.childPlacementId model.selection
+                            )
+                            joints
+                in
+                case selectedJoints of
+                    firstJoint :: _ ->
+                        case firstJoint.jointType of
+                            Joint.RevoluteJoint rev ->
+                                case
+                                    Gizmo.jointArcHandle
+                                        model.viewport.camera
+                                        model.viewport.width
+                                        model.viewport.height
+                                        firstJoint.pivotWorld
+                                        rev.axis
+                                of
+                                    Just handle ->
+                                        [ handle ]
+
+                                    Nothing ->
+                                        defaultArcHandles model
+
+                            _ ->
                                 defaultArcHandles model
 
-                    _ ->
+                    [] ->
                         defaultArcHandles model
-
-            [] ->
-                defaultArcHandles model
 
     else
         []

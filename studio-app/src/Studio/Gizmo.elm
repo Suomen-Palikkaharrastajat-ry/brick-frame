@@ -340,29 +340,40 @@ dragArcAngle step handle ( sx, sy ) ( x, y ) =
         ( cx, cy ) =
             handle.screenCenter
 
-        angleAt px py =
-            atan2 -(py - cy) (px - cx)
+        startDistSq =
+            (sx - cx) * (sx - cx) + (sy - cy) * (sy - cy)
 
-        startA =
-            angleAt sx sy
-
-        nowA =
-            angleAt x y
-
-        wrap a =
-            if a > pi then
-                wrap (a - 2 * pi)
-
-            else if a < -pi then
-                wrap (a + 2 * pi)
-
-            else
-                a
-
-        deltaA =
-            wrap (nowA - startA)
+        nowDistSq =
+            (x - cx) * (x - cx) + (y - cy) * (y - cy)
     in
-    Edit.snap step deltaA
+    if startDistSq < 1.0 || nowDistSq < 1.0 then
+        0
+
+    else
+        let
+            angleAt px py =
+                atan2 -(py - cy) (px - cx)
+
+            startA =
+                angleAt sx sy
+
+            nowA =
+                angleAt x y
+
+            wrap a =
+                if a > pi then
+                    wrap (a - 2 * pi)
+
+                else if a < -pi then
+                    wrap (a + 2 * pi)
+
+                else
+                    a
+
+            deltaA =
+                wrap (nowA - startA)
+        in
+        Edit.snap step deltaA
 
 
 distanceToSegment : ( Float, Float ) -> ( Float, Float ) -> ( Float, Float ) -> Float

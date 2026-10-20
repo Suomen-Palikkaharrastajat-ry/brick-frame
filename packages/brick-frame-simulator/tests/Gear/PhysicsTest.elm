@@ -316,5 +316,61 @@ suite =
 
                         Nothing ->
                             Expect.fail "expected linkage state"
+            , test "crank-slider clamps gracefully when crank radius exceeds rod length (r > l)" <|
+                \_ ->
+                    let
+                        pos =
+                            crankSliderPosition 25.0 10.0 (pi / 2)
+
+                        rodAngle =
+                            crankSliderRodAngle 25.0 10.0 (pi / 2)
+                    in
+                    Expect.all
+                        [ \_ -> Expect.within (Expect.Absolute 0.001) 0.0 pos
+                        , \_ -> Expect.within (Expect.Absolute 0.001) -(pi / 2) rodAngle
+                        ]
+                        ()
+            , test "fourBarAngles solves closed-loop coupler and rocker angles" <|
+                \_ ->
+                    let
+                        links =
+                            { ground = 40.0, crank = 15.0, coupler = 40.0, rocker = 15.0 }
+
+                        theta =
+                            pi / 3
+                    in
+                    case fourBarAngles links theta of
+                        Just ( couplerAngle, rockerAngle ) ->
+                            let
+                                bx =
+                                    links.crank * cos theta
+
+                                by =
+                                    links.crank * sin theta
+
+                                cxFromCoupler =
+                                    bx + links.coupler * cos couplerAngle
+
+                                cyFromCoupler =
+                                    by + links.coupler * sin couplerAngle
+
+                                cxFromRocker =
+                                    links.ground + links.rocker * cos rockerAngle
+
+                                cyFromRocker =
+                                    links.rocker * sin rockerAngle
+                            in
+                            Expect.all
+                                [ \_ -> Expect.within (Expect.Absolute 0.001) cxFromRocker cxFromCoupler
+                                , \_ -> Expect.within (Expect.Absolute 0.001) cyFromRocker cyFromCoupler
+                                ]
+                                ()
+
+                        Nothing ->
+                            Expect.fail "expected valid four-bar linkage solution"
+            , test "fourBarAngles returns Nothing when linkage cannot close (triangle inequality violated)" <|
+                \_ ->
+                    fourBarAngles { ground = 100.0, crank = 10.0, coupler = 20.0, rocker = 20.0 } 0.0
+                        |> Expect.equal Nothing
             ]
         ]

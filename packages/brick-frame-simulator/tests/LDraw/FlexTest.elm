@@ -180,9 +180,77 @@ suite =
 
                         _ ->
                             Expect.fail "expected frames"
+            , test "handles degenerate zero-length spline when start and end points coincide" <|
+                \_ ->
+                    let
+                        config : SplineConfig
+                        config =
+                            { startPoint = vec3 5 10 15
+                            , startTangent = vec3 1 0 0
+                            , endPoint = vec3 5 10 15
+                            , endTangent = vec3 -1 0 0
+                            , slack = 1.0
+                            , segmentPitch = 4.0
+                            }
+
+                        route =
+                            Flex.evaluateSpline config
+                    in
+                    Expect.all
+                        [ \_ -> Expect.within (Expect.Absolute 0.001) 0.0 route.totalLength
+                        , \_ -> Expect.equal 1 route.segmentCount
+                        , \_ ->
+                            Expect.all
+                                (List.map
+                                    (\f ->
+                                        \_ ->
+                                            Expect.all
+                                                [ \_ -> Expect.within (Expect.Absolute 0.01) 1.0 (Vec3.length f.tangent)
+                                                , \_ -> Expect.within (Expect.Absolute 0.01) 1.0 (Vec3.length f.normal)
+                                                , \_ -> Expect.within (Expect.Absolute 0.01) 1.0 (Vec3.length f.binormal)
+                                                , \_ -> Expect.within (Expect.Absolute 0.01) 0.0 (Vec3.dot f.tangent f.normal)
+                                                ]
+                                                ()
+                                    )
+                                    route.frames
+                                )
+                                ()
+                        ]
+                        ()
+            , test "maintains orthonormal frames on collinear anti-parallel tangents" <|
+                \_ ->
+                    let
+                        config : SplineConfig
+                        config =
+                            { startPoint = vec3 0 0 0
+                            , startTangent = vec3 -1 0 0
+                            , endPoint = vec3 30 0 0
+                            , endTangent = vec3 1 0 0
+                            , slack = 1.0
+                            , segmentPitch = 5.0
+                            }
+
+                        route =
+                            Flex.evaluateSpline config
+                    in
+                    Expect.all
+                        (List.map
+                            (\f ->
+                                \_ ->
+                                    Expect.all
+                                        [ \_ -> Expect.within (Expect.Absolute 0.01) 1.0 (Vec3.length f.tangent)
+                                        , \_ -> Expect.within (Expect.Absolute 0.01) 1.0 (Vec3.length f.normal)
+                                        , \_ -> Expect.within (Expect.Absolute 0.01) 1.0 (Vec3.length f.binormal)
+                                        , \_ -> Expect.within (Expect.Absolute 0.01) 0.0 (Vec3.dot f.tangent f.normal)
+                                        ]
+                                        ()
+                            )
+                            route.frames
+                        )
+                        ()
             ]
         , describe "Belt and chain wrap routing"
-            [ test "routes chain loop wrapped around two pulleys" <|
+            [ test "routes chain loop wrapped around two equal pulleys" <|
                 \_ ->
                     let
                         p1 : BeltPulley
@@ -195,12 +263,75 @@ suite =
 
                         chain =
                             Flex.routeBeltOrChain p1 p2 16.0
+
+                        maxX =
+                            chain.frames
+                                |> List.map (.point >> Vec3.getX)
+                                |> List.maximum
+                                |> Maybe.withDefault 0
+
+                        minX =
+                            chain.frames
+                                |> List.map (.point >> Vec3.getX)
+                                |> List.minimum
+                                |> Maybe.withDefault 0
                     in
                     Expect.all
                         [ -- Expected length: 2 * 64 + 2 * pi * 16 ≈ 128 + 100.53 ≈ 228.53 LDU
                           \_ -> Expect.within (Expect.Absolute 2.0) 228.5 chain.totalLength
                         , \_ -> Expect.greaterThan 10 chain.segmentCount
                         , \_ -> Expect.equal (chain.segmentCount + 1) (List.length chain.frames)
+                        , -- Outer arcs wrap outside the two centers (x < 0 on p1 and x > 64 on p2)
+                          \_ -> Expect.greaterThan 75.0 maxX
+                        , \_ -> Expect.lessThan -10.0 minX
+                        ]
+                        ()
+            , test "routes belt wrapped around unequal-radius pulleys with exact external tangents" <|
+                \_ ->
+                    let
+                        -- Distance D = 50, r1 = 20, r2 = 10 -> diffR = 10, straightLen = sqrt(50^2 - 10^2) = sqrt(2400) ≈ 48.99
+                        p1 : BeltPulley
+                        p1 =
+                            { center = vec3 0 0 0, radius = 20.0, axis = vec3 0 1 0 }
+
+                        p2 : BeltPulley
+                        p2 =
+                            { center = vec3 50 0 0, radius = 10.0, axis = vec3 0 1 0 }
+
+                        belt =
+                            Flex.routeBeltOrChain p1 p2 4.0
+
+                        beta =
+                            asin (10.0 / 50.0)
+
+                        expectedLen =
+                            2 * sqrt 2400 + 20.0 * (pi + 2 * beta) + 10.0 * (pi - 2 * beta)
+                    in
+                    Expect.all
+                        [ \_ -> Expect.within (Expect.Absolute 0.1) expectedLen belt.totalLength
+                        , \_ ->
+                            case List.head belt.frames of
+                                Just f0 ->
+                                    -- At t1Top, radial vector from p1.center is orthogonal to tangent
+                                    Expect.within (Expect.Absolute 0.01) 0.0 (Vec3.dot (Vec3.sub f0.point p1.center) f0.tangent)
+
+                                Nothing ->
+                                    Expect.fail "expected initial frame"
+                        ]
+                        ()
+            , test "handles overlapping pulley centers without NaN" <|
+                \_ ->
+                    let
+                        p1 : BeltPulley
+                        p1 =
+                            { center = vec3 10 0 10, radius = 12.0, axis = vec3 0 1 0 }
+
+                        route =
+                            Flex.routeBeltOrChain p1 p1 8.0
+                    in
+                    Expect.all
+                        [ \_ -> Expect.within (Expect.Absolute 0.1) (2 * pi * 12.0) route.totalLength
+                        , \_ -> Expect.greaterThan 2 (List.length route.frames)
                         ]
                         ()
             , test "LSynth emitter produces begin, end, and segment placements" <|
