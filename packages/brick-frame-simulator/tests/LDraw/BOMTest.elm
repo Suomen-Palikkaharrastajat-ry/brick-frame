@@ -226,6 +226,38 @@ suite =
                         , \_ -> Expect.equal (Just 1) (Maybe.map .count blue3001)
                         , \_ -> Expect.equal (Just 1) (Maybe.map .count yellow3001)
                         , \_ -> Expect.equal (Just 2) (Maybe.map .count black3023)
+                        , \_ -> Expect.equal (Just [ 0 ]) (Maybe.map .placementIds red3001)
+                        , \_ -> Expect.equal (Just [ 1 ]) (Maybe.map .placementIds blue3001)
+                        , \_ -> Expect.equal (Just [ 2 ]) (Maybe.map .placementIds yellow3001)
+                        , \_ -> Expect.equal (Just [ 0, 1 ]) (Maybe.map .placementIds black3023)
+                        ]
+                        bom
+            , test "guards against direct and mutual cyclic submodel references" <|
+                \_ ->
+                    let
+                        cyclicMpd =
+                            """0 FILE main.ldr
+1 4 0 0 0 1 0 0 0 1 0 0 0 1 sub_a.ldr
+
+0 FILE sub_a.ldr
+1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat
+1 16 0 0 0 1 0 0 0 1 0 0 0 1 sub_b.ldr
+1 16 0 0 0 1 0 0 0 1 0 0 0 1 main.ldr
+
+0 FILE sub_b.ldr
+1 16 0 0 0 1 0 0 0 1 0 0 0 1 3023.dat
+1 16 0 0 0 1 0 0 0 1 0 0 0 1 sub_a.ldr
+"""
+
+                        doc =
+                            Document.parse cyclicMpd
+
+                        bom =
+                            BOM.generateBOM doc testPartIndex testCatalog
+                    in
+                    Expect.all
+                        [ \b -> Expect.equal 2 b.totalParts
+                        , \b -> Expect.equal 2 b.uniqueLots
                         ]
                         bom
             ]
@@ -251,6 +283,34 @@ suite =
                         , \s -> Expect.equal True (String.contains "<MINQTY>2</MINQTY>" s)
                         ]
                         xml
+            , test "escapes XML special characters in BrickLink XML export" <|
+                \_ ->
+                    let
+                        customBom =
+                            { totalParts = 1
+                            , uniqueLots = 1
+                            , estimatedWeightGrams = 1.0
+                            , dimensionsLDU = ( 20.0, 24.0, 20.0 )
+                            , dimensionsStuds = ( 1.0, 1.2, 1.0 )
+                            , lots =
+                                [ { partId = "3001&\"'<>"
+                                  , name = "Brick <Special>"
+                                  , category = "Brick"
+                                  , colorId = 4
+                                  , colorName = "Red"
+                                  , elementId = Nothing
+                                  , count = 1
+                                  , unitWeightGrams = 1.0
+                                  , totalWeightGrams = 1.0
+                                  , placementIds = [ 0 ]
+                                  }
+                                ]
+                            }
+
+                        xml =
+                            BOM.toBrickLinkXml customBom
+                    in
+                    Expect.equal True (String.contains "<ITEMID>3001&amp;&quot;&apos;&lt;&gt;</ITEMID>" xml)
             , test "serializes Rebrickable CSV inventory correctly" <|
                 \_ ->
                     let
@@ -270,6 +330,34 @@ suite =
                         , \s -> Expect.equal True (String.contains "3023,1,1,False" s)
                         ]
                         csv
+            , test "quotes CSV fields containing commas or quotes in Rebrickable CSV export" <|
+                \_ ->
+                    let
+                        customBom =
+                            { totalParts = 1
+                            , uniqueLots = 1
+                            , estimatedWeightGrams = 1.0
+                            , dimensionsLDU = ( 20.0, 24.0, 20.0 )
+                            , dimensionsStuds = ( 1.0, 1.2, 1.0 )
+                            , lots =
+                                [ { partId = "3001,a\"b"
+                                  , name = "Brick"
+                                  , category = "Brick"
+                                  , colorId = 4
+                                  , colorName = "Red"
+                                  , elementId = Nothing
+                                  , count = 3
+                                  , unitWeightGrams = 1.0
+                                  , totalWeightGrams = 3.0
+                                  , placementIds = [ 0 ]
+                                  }
+                                ]
+                            }
+
+                        csv =
+                            BOM.toRebrickableCsv customBom
+                    in
+                    Expect.equal True (String.contains "\"3001,a\"\"b\",4,3,False" csv)
             , test "formats Markdown table parts list" <|
                 \_ ->
                     let

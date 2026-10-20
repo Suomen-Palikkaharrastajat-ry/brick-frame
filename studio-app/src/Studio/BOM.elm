@@ -558,7 +558,7 @@ viewDiffTable diff =
                 ]
 
         greenBadge =
-            "color-mix(in srgb, #22C55E 20%, transparent)"
+            "color-mix(in srgb, var(--color-brand-nougat) 30%, transparent)"
 
         redBadge =
             "color-mix(in srgb, var(--color-brand-red) 20%, transparent)"

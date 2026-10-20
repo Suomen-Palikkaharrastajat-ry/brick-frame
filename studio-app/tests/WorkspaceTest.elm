@@ -919,6 +919,18 @@ panelSuite =
                             step (BOMSelectLot "3001" 4) loaded
                     in
                     Expect.equal (Set.singleton 0) lotSelected.selection
+            , test "BOMSelectLot selects parent submodel placements for parts nested in MPD submodels" <|
+                \_ ->
+                    let
+                        mpdFile =
+                            "0 FILE main.ldr\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 wheel.ldr\n1 1 40 0 0 1 0 0 0 1 0 0 0 1 wheel.ldr\n0 FILE wheel.ldr\n1 0 0 0 0 1 0 0 0 1 0 0 0 1 3023.dat\n"
+
+                        mpdLoaded =
+                            start
+                                |> step (FileTextReceived mpdFile)
+                                |> step (BOMSelectLot "3023" 0)
+                    in
+                    Expect.equal (Set.fromList [ 0, 1 ]) mpdLoaded.selection
             , test "BOMSort toggles column and order" <|
                 \_ ->
                     let

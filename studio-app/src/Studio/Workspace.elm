@@ -1061,6 +1061,9 @@ openDocument document model =
                     , history = Edit.emptyHistory
                     , selection = Set.empty
                     , drag = Nothing
+                    , bomOpen = False
+                    , bomState = StudioBOM.init
+                    , baseBOM = Nothing
                   }
                 , []
                 )

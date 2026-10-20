@@ -133,7 +133,8 @@ generateSubmodelBOM submodelName doc index catalog =
                 case Dict.get cleanTarget submodelMap of
                     Just targetSubmodel ->
                         expandSubmodel submodelMap
-                            Set.empty
+                            Nothing
+                            (Set.singleton cleanTarget)
                             Mat4.identity
                             16
                             targetSubmodel
@@ -181,7 +182,8 @@ collectAllInstances doc =
 
         mainState =
             expandSubmodel submodelMap
-                Set.empty
+                Nothing
+                initialVisited
                 Mat4.identity
                 16
                 mainSub
@@ -198,12 +200,24 @@ collectAllInstances doc =
         finalState =
             List.foldl
                 (\s accState ->
+                    let
+                        subId =
+                            Catalog.cleanPartId s.name
+
+                        subPath =
+                            if subId /= "" then
+                                Set.singleton subId
+
+                            else
+                                Set.empty
+                    in
                     expandSubmodel submodelMap
-                        Set.empty
+                        Nothing
+                        subPath
                         Mat4.identity
                         16
                         s
-                        accState
+                        { accState | visited = Set.union subPath accState.visited }
                 )
                 mainState
                 unvisited
@@ -213,18 +227,19 @@ collectAllInstances doc =
 
 expandSubmodel :
     Dict String Submodel
+    -> Maybe Int
     -> Set String
     -> Mat4
     -> Int
     -> Submodel
     -> TraversalState
     -> TraversalState
-expandSubmodel submodelMap currentPath worldMat parentColor submodel state =
+expandSubmodel submodelMap rootSourceId currentPath worldMat parentColor submodel state =
     List.foldl
         (\entry accState ->
             case entry of
                 PlacementEntry p ->
-                    expandPlacement submodelMap currentPath worldMat parentColor p accState
+                    expandPlacement submodelMap rootSourceId currentPath worldMat parentColor p accState
 
                 Raw _ ->
                     accState
@@ -235,13 +250,14 @@ expandSubmodel submodelMap currentPath worldMat parentColor submodel state =
 
 expandPlacement :
     Dict String Submodel
+    -> Maybe Int
     -> Set String
     -> Mat4
     -> Int
     -> Placement
     -> TraversalState
     -> TraversalState
-expandPlacement submodelMap currentPath worldMat parentColor placement state =
+expandPlacement submodelMap rootSourceId currentPath worldMat parentColor placement state =
     let
         cleanName =
             Catalog.cleanPartId placement.part
@@ -255,6 +271,14 @@ expandPlacement submodelMap currentPath worldMat parentColor placement state =
 
             else
                 placement.color
+
+        effectiveSourceId =
+            case rootSourceId of
+                Just rootId ->
+                    rootId
+
+                Nothing ->
+                    placement.id
     in
     if Set.member cleanName currentPath then
         -- Avoid recursive cycle along current ancestor path
@@ -271,6 +295,7 @@ expandPlacement submodelMap currentPath worldMat parentColor placement state =
                         Set.insert cleanName state.visited
                 in
                 expandSubmodel submodelMap
+                    (Just effectiveSourceId)
                     nextPath
                     combinedMat
                     childColor
@@ -282,7 +307,7 @@ expandPlacement submodelMap currentPath worldMat parentColor placement state =
                     leaf =
                         { partId = cleanName
                         , color = childColor
-                        , id = placement.id
+                        , id = effectiveSourceId
                         , matrix = combinedMat
                         }
                 in
@@ -388,6 +413,19 @@ groupLots instances index catalog =
 
                 elemId =
                     Catalog.getElementId partId colorId catalog
+
+                uniqueIds =
+                    List.foldl
+                        (\id acc ->
+                            if List.member id acc then
+                                acc
+
+                            else
+                                id :: acc
+                        )
+                        []
+                        (List.reverse ids)
+                        |> List.reverse
             in
             { partId = partId
             , name = name
@@ -398,7 +436,7 @@ groupLots instances index catalog =
             , count = count
             , unitWeightGrams = round2 unitWeightGrams
             , totalWeightGrams = totalWeightGrams
-            , placementIds = List.reverse ids
+            , placementIds = uniqueIds
             }
     in
     Dict.toList groupedMap
@@ -504,7 +542,7 @@ toBrickLinkXml bom =
         itemXml lot =
             let
                 blPart =
-                    Catalog.bricklinkPartId lot.partId
+                    escapeXml (Catalog.bricklinkPartId lot.partId)
 
                 blColor =
                     Catalog.bricklinkColorId lot.colorId
@@ -538,7 +576,7 @@ toRebrickableCsv bom =
 
         row lot =
             String.join ","
-                [ Catalog.cleanPartId lot.partId
+                [ escapeCsvField (Catalog.cleanPartId lot.partId)
                 , String.fromInt lot.colorId
                 , String.fromInt lot.count
                 , "False"
@@ -599,11 +637,11 @@ toMarkdown bom =
             in
             "| "
                 ++ String.join " | "
-                    [ lot.partId
-                    , lot.name
-                    , lot.category
-                    , colorText
-                    , elemText
+                    [ escapeMarkdownCell lot.partId
+                    , escapeMarkdownCell lot.name
+                    , escapeMarkdownCell lot.category
+                    , escapeMarkdownCell colorText
+                    , escapeMarkdownCell elemText
                     , String.fromInt lot.count
                     , String.fromFloat lot.unitWeightGrams
                     , String.fromFloat lot.totalWeightGrams
@@ -772,6 +810,33 @@ diffBOM oldBom newBom =
 
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+escapeXml : String -> String
+escapeXml text =
+    text
+        |> String.replace "&" "&amp;"
+        |> String.replace "<" "&lt;"
+        |> String.replace ">" "&gt;"
+        |> String.replace "\"" "&quot;"
+        |> String.replace "'" "&apos;"
+
+
+escapeCsvField : String -> String
+escapeCsvField text =
+    if String.contains "," text || String.contains "\"" text || String.contains "\n" text || String.contains "\u{000D}" text then
+        "\"" ++ String.replace "\"" "\"\"" text ++ "\""
+
+    else
+        text
+
+
+escapeMarkdownCell : String -> String
+escapeMarkdownCell text =
+    text
+        |> String.replace "|" "\\|"
+        |> String.replace "\u{000D}\n" " "
+        |> String.replace "\n" " "
 
 
 round2 : Float -> Float
