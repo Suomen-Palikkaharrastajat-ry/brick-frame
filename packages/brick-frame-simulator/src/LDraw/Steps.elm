@@ -335,6 +335,7 @@ stepAtIndex index steps =
 
 {-| Produce a Document containing only the placements up to the given step index.
 Non-main submodels are preserved intact so submodel references continue to resolve.
+Leading and consecutive `0 STEP` markers without placements are ignored, matching `fromEntries`.
 -}
 documentAtStep : Document -> Int -> Document
 documentAtStep doc targetStepIndex =
@@ -342,35 +343,39 @@ documentAtStep doc targetStepIndex =
         main =
             Document.mainSubmodel doc
 
-        step entry ( currentStep, acc ) =
+        step entry ( currentStep, hasPlacementInStep, acc ) =
             case entry of
                 Raw s ->
                     if isStepMarker s then
-                        let
-                            nextStep =
-                                currentStep + 1
-                        in
-                        if currentStep < targetStepIndex then
-                            ( nextStep, entry :: acc )
+                        if not hasPlacementInStep then
+                            ( currentStep, False, acc )
 
                         else
-                            ( nextStep, acc )
+                            let
+                                nextStep =
+                                    currentStep + 1
+                            in
+                            if currentStep < targetStepIndex then
+                                ( nextStep, False, entry :: acc )
+
+                            else
+                                ( nextStep, False, acc )
 
                     else if currentStep <= targetStepIndex then
-                        ( currentStep, entry :: acc )
+                        ( currentStep, hasPlacementInStep, entry :: acc )
 
                     else
-                        ( currentStep, acc )
+                        ( currentStep, hasPlacementInStep, acc )
 
                 PlacementEntry _ ->
                     if currentStep <= targetStepIndex then
-                        ( currentStep, entry :: acc )
+                        ( currentStep, True, entry :: acc )
 
                     else
-                        ( currentStep, acc )
+                        ( currentStep, hasPlacementInStep, acc )
 
-        ( _, reversedEntries ) =
-            List.foldl step ( 1, [] ) main.entries
+        ( _, _, reversedEntries ) =
+            List.foldl step ( 1, False, [] ) main.entries
 
         newMain =
             { main | entries = List.reverse reversedEntries }
@@ -458,6 +463,18 @@ stepBounds placements =
 
 
 -- ── Export & Printable Format ─────────────────────────────────────────────────
+
+
+{-| Escape HTML special characters so user strings are safe in text and attributes.
+-}
+escapeHtml : String -> String
+escapeHtml str =
+    str
+        |> String.replace "&" "&amp;"
+        |> String.replace "<" "&lt;"
+        |> String.replace ">" "&gt;"
+        |> String.replace "\"" "&quot;"
+        |> String.replace "'" "&#39;"
 
 
 {-| Human-readable name for common LDraw colour codes.
@@ -568,6 +585,9 @@ step-by-step building instructions with parts callouts and print stylesheets.
 exportHtml : String -> List Step -> String
 exportHtml modelTitle steps =
     let
+        safeTitle =
+            escapeHtml modelTitle
+
         totalParts =
             steps
                 |> List.concatMap .placements
@@ -582,13 +602,13 @@ exportHtml modelTitle steps =
                     colorCssRgb item.color
 
                 name =
-                    colorName item.color
+                    escapeHtml (colorName item.color)
             in
             """
             <div class="part-chip">
               <span class="swatch" style="background-color: """ ++ swatchColor ++ """;"></span>
               <span class="count">""" ++ String.fromInt item.count ++ """&times;</span>
-              <span class="part-id">""" ++ item.part ++ """</span>
+              <span class="part-id">""" ++ escapeHtml item.part ++ """</span>
               <span class="color-name">(""" ++ name ++ """)</span>
             </div>
             """
@@ -630,7 +650,7 @@ exportHtml modelTitle steps =
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Building Instructions — """ ++ modelTitle ++ """</title>
+  <title>Building Instructions — """ ++ safeTitle ++ """</title>
   <style>
     :root {
       --bg-page: #f8fafc;
@@ -771,7 +791,7 @@ exportHtml modelTitle steps =
 <body>
   <div class="container">
     <header class="doc-header">
-      <h1>""" ++ modelTitle ++ """</h1>
+      <h1>""" ++ safeTitle ++ """</h1>
       <div class="doc-summary">Building Instructions &bull; """ ++ String.fromInt totalSteps ++ """ steps &bull; """ ++ String.fromInt totalParts ++ """ total parts</div>
     </header>
     <main>

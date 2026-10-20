@@ -188,6 +188,7 @@ cameraForBounds width height center radius currentCamera =
 
 {-| Frame the camera to focus on the parts introduced in a building instruction step.
 Falls back to accumulated placements if the step itself has no placements.
+Converts LDraw placement coordinates (Y-down) to render coordinates (Y-up).
 -}
 cameraForStep : Int -> Int -> Step -> Camera -> Camera
 cameraForStep width height step currentCamera =
@@ -201,7 +202,23 @@ cameraForStep width height step currentCamera =
     in
     case Steps.stepBounds targetPlacements of
         Just bounds ->
-            cameraForBounds width height bounds.center bounds.radius currentCamera
+            let
+                renderCenter =
+                    Vec3.vec3
+                        (Vec3.getX bounds.center)
+                        -(Vec3.getY bounds.center)
+                        -(Vec3.getZ bounds.center)
+
+                sceneRadius =
+                    case Steps.stepBounds step.accumulatedPlacements of
+                        Just accBounds ->
+                            max bounds.radius accBounds.radius
+
+                        Nothing ->
+                            bounds.radius
+            in
+            cameraForBounds width height renderCenter bounds.radius currentCamera
+                |> applyZoomRange width height sceneRadius
 
         Nothing ->
             currentCamera

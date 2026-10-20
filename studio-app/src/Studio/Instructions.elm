@@ -365,10 +365,18 @@ update msg model =
 
         AutoStepBy n ->
             let
+                steppedDoc =
+                    Steps.autoStepDocument n model.document
+
                 newSteps =
-                    Steps.autoPartition n (Document.placements model.document)
+                    Steps.fromDocument steppedDoc
             in
-            update (GoToStep 1) { model | steps = newSteps }
+            update (GoToStep 1)
+                { model
+                    | document = steppedDoc
+                    , steps = newSteps
+                    , currentStepIndex = 0
+                }
 
         ExportHtml ->
             let
@@ -413,47 +421,111 @@ handleEvent event ( model, cmds ) =
             ( model, cmds ++ [ Ports.requestGeometryFlatten payload ] )
 
         Viewport.KeyAccepted keyEvent ->
-            case keyEvent.key of
-                "ArrowRight" ->
+            let
+                walking =
+                    model.viewport.camera.navigation == Camera.Walk
+            in
+            case Shortcuts.actionFor { helpVisible = model.helpOpen, walking = walking } keyEvent of
+                Just action ->
                     let
                         ( next, cmd ) =
-                            update NextStep model
+                            update (msgForAction action) model
                     in
                     ( next, cmds ++ [ cmd ] )
 
-                "ArrowLeft" ->
-                    let
-                        ( next, cmd ) =
-                            update PrevStep model
-                    in
-                    ( next, cmds ++ [ cmd ] )
+                Nothing ->
+                    if Shortcuts.isTextEntryTarget keyEvent || keyEvent.ctrl || keyEvent.meta || keyEvent.alt then
+                        ( model, cmds )
 
-                " " ->
-                    let
-                        ( next, cmd ) =
-                            update TogglePlay model
-                    in
-                    ( next, cmds ++ [ cmd ] )
+                    else
+                        case keyEvent.key of
+                            "ArrowRight" ->
+                                if walking then
+                                    ( model, cmds )
 
-                "f" ->
-                    let
-                        ( next, cmd ) =
-                            update FocusActiveStep model
-                    in
-                    ( next, cmds ++ [ cmd ] )
+                                else
+                                    let
+                                        ( next, cmd ) =
+                                            update NextStep model
+                                    in
+                                    ( next, cmds ++ [ cmd ] )
 
-                "Escape" ->
-                    let
-                        ( next, cmd ) =
-                            update Leave model
-                    in
-                    ( next, cmds ++ [ cmd ] )
+                            "ArrowLeft" ->
+                                if walking then
+                                    ( model, cmds )
 
-                _ ->
-                    ( model, cmds )
+                                else
+                                    let
+                                        ( next, cmd ) =
+                                            update PrevStep model
+                                    in
+                                    ( next, cmds ++ [ cmd ] )
+
+                            "Escape" ->
+                                let
+                                    ( next, cmd ) =
+                                        update Leave model
+                                in
+                                ( next, cmds ++ [ cmd ] )
+
+                            _ ->
+                                ( model, cmds )
 
         _ ->
             ( model, cmds )
+
+
+{-| Wheel delta one `+`/`-` press is worth — two notches of a mouse wheel.
+-}
+keyboardZoomStep : Float
+keyboardZoomStep =
+    200.0
+
+
+msgForAction : Shortcuts.Action -> Msg
+msgForAction action =
+    case action of
+        Shortcuts.TogglePlayback ->
+            TogglePlay
+
+        Shortcuts.FitView ->
+            FocusActiveStep
+
+        Shortcuts.ToggleWalk ->
+            ViewportMsg Viewport.ToggleWalkMode
+
+        Shortcuts.LeaveWalk ->
+            ViewportMsg Viewport.ToggleWalkMode
+
+        Shortcuts.ToggleHelp ->
+            ToggleHelp
+
+        Shortcuts.CloseHelp ->
+            ToggleHelp
+
+        Shortcuts.ZoomIn ->
+            ViewportMsg (Viewport.Wheel -keyboardZoomStep)
+
+        Shortcuts.ZoomOut ->
+            ViewportMsg (Viewport.Wheel keyboardZoomStep)
+
+        Shortcuts.PresetFront ->
+            ViewportMsg (Viewport.SetViewPreset FrontView)
+
+        Shortcuts.PresetBack ->
+            ViewportMsg (Viewport.SetViewPreset BackView)
+
+        Shortcuts.PresetLeft ->
+            ViewportMsg (Viewport.SetViewPreset LeftView)
+
+        Shortcuts.PresetRight ->
+            ViewportMsg (Viewport.SetViewPreset RightView)
+
+        Shortcuts.PresetTop ->
+            ViewportMsg (Viewport.SetViewPreset TopView)
+
+        Shortcuts.PresetIsometric ->
+            ViewportMsg (Viewport.SetViewPreset IsometricView)
 
 
 
@@ -596,7 +668,7 @@ viewTopBar model =
                     ++ " parts"
                 )
             ]
-        , if not (Steps.hasStepMarkers model.document) then
+        , if not (List.isEmpty (Document.placements model.document)) then
             div [ Attr.style "display" "flex", Attr.style "gap" "4px" ]
                 [ Button.secondary (AutoStepBy 1) "1 pc/step"
                 , Button.secondary (AutoStepBy 2) "2 pcs/step"

@@ -239,6 +239,33 @@ suite =
                         , \_ -> Expect.equal [ "3001.dat", "3002.dat" ] (List.map .part (Document.placements docStep2))
                         ]
                         ()
+            , test "documentAtStep ignores leading and consecutive 0 STEP directives matching fromDocument" <|
+                \_ ->
+                    let
+                        ldr =
+                            String.join "\n"
+                                [ "0 STEP"
+                                , "0 STEP"
+                                , "1 1 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat"
+                                , "0 STEP"
+                                , "0 STEP"
+                                , "1 2 20 0 0 1 0 0 0 1 0 0 0 1 3002.dat"
+                                ]
+
+                        doc =
+                            Document.parse ldr
+
+                        docStep1 =
+                            Steps.documentAtStep doc 1
+
+                        docStep2 =
+                            Steps.documentAtStep doc 2
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ "3001.dat" ] (List.map .part (Document.placements docStep1))
+                        , \_ -> Expect.equal [ "3001.dat", "3002.dat" ] (List.map .part (Document.placements docStep2))
+                        ]
+                        ()
             ]
         , describe "autoPartition and autoStepDocument"
             [ test "autoPartition chunks placements into steps of N" <|
@@ -344,6 +371,20 @@ suite =
                         , \h -> Expect.equal True (String.contains "3002.dat" h)
                         , \h -> Expect.equal True (String.contains "Red" h)
                         , \h -> Expect.equal True (String.contains "Yellow" h)
+                        ]
+                        html
+            , test "escapes special HTML characters in modelTitle" <|
+                \_ ->
+                    let
+                        steps =
+                            Steps.fromDocument (Document.parse "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n")
+
+                        html =
+                            Steps.exportHtml "A & B <script>\"test\"</script>" steps
+                    in
+                    Expect.all
+                        [ \h -> Expect.equal True (String.contains "A &amp; B &lt;script&gt;&quot;test&quot;&lt;/script&gt;" h)
+                        , \h -> Expect.equal False (String.contains "<script>" h)
                         ]
                         html
             ]
