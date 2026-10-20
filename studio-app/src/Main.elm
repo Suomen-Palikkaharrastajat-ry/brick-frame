@@ -14,6 +14,7 @@ back exactly where they were.
 import Browser
 import Html exposing (Html)
 import LDraw.Resolve exposing (PartCache)
+import Studio.Instructions as Instructions
 import Studio.Preview as Preview
 import Studio.Workspace as Workspace
 
@@ -28,12 +29,14 @@ type alias Model =
     { flags : Flags
     , workspace : Workspace.Model
     , preview : Maybe Preview.Model
+    , instructions : Maybe Instructions.Model
     }
 
 
 type Msg
     = WorkspaceMsg Workspace.Msg
     | PreviewMsg Preview.Msg
+    | InstructionsMsg Instructions.Msg
 
 
 init : Flags -> ( Model, Cmd Msg )
@@ -42,25 +45,28 @@ init flags =
         ( workspace, cmd ) =
             Workspace.init flags
     in
-    ( { flags = flags, workspace = workspace, preview = Nothing }
+    ( { flags = flags, workspace = workspace, preview = Nothing, instructions = Nothing }
     , Cmd.map WorkspaceMsg cmd
     )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
-    case ( msg, model.preview ) of
-        ( WorkspaceMsg Workspace.SimulateRequested, Nothing ) ->
+    case ( msg, model.preview, model.instructions ) of
+        ( WorkspaceMsg Workspace.SimulateRequested, Nothing, Nothing ) ->
             openPreview model
 
-        ( WorkspaceMsg workspaceMsg, Nothing ) ->
+        ( WorkspaceMsg Workspace.InstructionsRequested, Nothing, Nothing ) ->
+            openInstructions model
+
+        ( WorkspaceMsg workspaceMsg, Nothing, Nothing ) ->
             let
                 ( workspace, cmd ) =
                     Workspace.update workspaceMsg model.workspace
             in
             ( { model | workspace = workspace }, Cmd.map WorkspaceMsg cmd )
 
-        ( WorkspaceMsg (Workspace.WindowSized width height), Just _ ) ->
+        ( WorkspaceMsg (Workspace.WindowSized width height), Just _, _ ) ->
             -- The preview has its own listener; the workspace only needs to know
             -- the size for when it comes back.
             let
@@ -69,10 +75,17 @@ update msg model =
             in
             ( { model | workspace = workspace }, Cmd.none )
 
-        ( WorkspaceMsg _, Just _ ) ->
+        ( WorkspaceMsg (Workspace.WindowSized width height), _, Just _ ) ->
+            let
+                ( workspace, _ ) =
+                    Workspace.update (Workspace.WindowSized width height) model.workspace
+            in
+            ( { model | workspace = workspace }, Cmd.none )
+
+        ( WorkspaceMsg _, _, _ ) ->
             ( model, Cmd.none )
 
-        ( PreviewMsg Preview.Leave, Just preview ) ->
+        ( PreviewMsg Preview.Leave, Just preview, _ ) ->
             ( { model
                 | workspace = Workspace.restore preview.viewport.camera model.workspace
                 , preview = Nothing
@@ -80,7 +93,7 @@ update msg model =
             , Cmd.none
             )
 
-        ( PreviewMsg (Preview.WindowSized width height), Just preview ) ->
+        ( PreviewMsg (Preview.WindowSized width height), Just preview, _ ) ->
             -- Keep the workspace's idea of the window current for when it returns.
             let
                 ( next, cmd ) =
@@ -91,14 +104,42 @@ update msg model =
             in
             ( { model | preview = Just next, workspace = workspace }, Cmd.map PreviewMsg cmd )
 
-        ( PreviewMsg previewMsg, Just preview ) ->
+        ( PreviewMsg previewMsg, Just preview, _ ) ->
             let
                 ( next, cmd ) =
                     Preview.update previewMsg preview
             in
             ( { model | preview = Just next }, Cmd.map PreviewMsg cmd )
 
-        ( PreviewMsg _, Nothing ) ->
+        ( PreviewMsg _, Nothing, _ ) ->
+            ( model, Cmd.none )
+
+        ( InstructionsMsg Instructions.Leave, _, Just instructions ) ->
+            ( { model
+                | workspace = Workspace.restore (Instructions.restoreCamera instructions) model.workspace
+                , instructions = Nothing
+              }
+            , Cmd.none
+            )
+
+        ( InstructionsMsg (Instructions.WindowSized width height), _, Just instructions ) ->
+            let
+                ( next, cmd ) =
+                    Instructions.update (Instructions.WindowSized width height) instructions
+
+                ( workspace, _ ) =
+                    Workspace.update (Workspace.WindowSized width height) model.workspace
+            in
+            ( { model | instructions = Just next, workspace = workspace }, Cmd.map InstructionsMsg cmd )
+
+        ( InstructionsMsg instructionsMsg, _, Just instructions ) ->
+            let
+                ( next, cmd ) =
+                    Instructions.update instructionsMsg instructions
+            in
+            ( { model | instructions = Just next }, Cmd.map InstructionsMsg cmd )
+
+        ( InstructionsMsg _, _, Nothing ) ->
             ( model, Cmd.none )
 
 
@@ -127,6 +168,29 @@ openPreview model =
     ( { model | preview = Just preview }, Cmd.map PreviewMsg cmd )
 
 
+{-| Snapshot the document and start the building instructions viewer on it.
+-}
+openInstructions : Model -> ( Model, Cmd Msg )
+openInstructions model =
+    let
+        workspace =
+            model.workspace
+
+        ( instructions, cmd ) =
+            Instructions.init
+                { ldrawBase = model.flags.ldrawBase
+                , ldrawFallbackBase = model.flags.ldrawFallbackBase
+                , supportsPointerEvents = model.flags.supportsPointerEvents
+                , renderStyle = workspace.viewport.renderStyle
+                , snapshot = workspace.document
+                , camera = workspace.viewport.camera
+                , loadedParts = loadedParts workspace
+                , window = workspace.window
+                }
+    in
+    ( { model | instructions = Just instructions }, Cmd.map InstructionsMsg cmd )
+
+
 loadedParts : Workspace.Model -> PartCache
 loadedParts workspace =
     workspace.viewport.partCache
@@ -134,23 +198,31 @@ loadedParts workspace =
 
 view : Model -> Html Msg
 view model =
-    case model.preview of
-        Just preview ->
+    case ( model.preview, model.instructions ) of
+        ( Just preview, _ ) ->
             Html.map PreviewMsg (Preview.view preview)
 
-        Nothing ->
+        ( Nothing, Just instructions ) ->
+            Html.map InstructionsMsg (Instructions.view instructions)
+
+        ( Nothing, Nothing ) ->
             Html.map WorkspaceMsg (Workspace.view model.workspace)
 
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    case model.preview of
-        Just preview ->
+    case ( model.preview, model.instructions ) of
+        ( Just preview, _ ) ->
             Sub.batch
                 [ Sub.map PreviewMsg (Preview.subscriptions preview)
                 ]
 
-        Nothing ->
+        ( Nothing, Just instructions ) ->
+            Sub.batch
+                [ Sub.map InstructionsMsg (Instructions.subscriptions instructions)
+                ]
+
+        ( Nothing, Nothing ) ->
             Sub.map WorkspaceMsg (Workspace.subscriptions model.workspace)
 
 
