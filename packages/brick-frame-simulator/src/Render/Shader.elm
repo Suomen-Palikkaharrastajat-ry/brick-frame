@@ -31,6 +31,8 @@ type alias Uniforms =
     , rimStrength : Float
     , rimPower : Float
     , vibrance : Float
+    , bevelStrength : Float
+    , studEmbossStrength : Float
     }
 
 
@@ -46,6 +48,7 @@ type alias Varyings =
     { vColor : Vec4
     , vNormalWorld : Vec3
     , vPositionWorld : Vec3
+    , vPositionLocal : Vec3
     }
 
 
@@ -69,6 +72,7 @@ vertexShader =
         varying vec4 vColor;
         varying vec3 vNormalWorld;
         varying vec3 vPositionWorld;
+        varying vec3 vPositionLocal;
 
         void main() {
             vec4 worldPosition = modelMatrix * vec4(position, 1.0);
@@ -80,13 +84,14 @@ vertexShader =
             // Transform normal to world space (assumes uniform scale)
             vNormalWorld = mat3(modelMatrix) * normal;
             vPositionWorld = worldPosition.xyz;
+            vPositionLocal = position;
         }
     |]
 
 
 {-| Plastic fragment shader.
 Computes diffuse + soft specular + subtle rim light, then applies a mild
-vibrance adjustment.
+vibrance adjustment, normal-modulated edge beveling and stud logo embossing.
 -}
 fragmentShader : Shader {} Uniforms Varyings
 fragmentShader =
@@ -102,27 +107,104 @@ fragmentShader =
         uniform float rimStrength;
         uniform float rimPower;
         uniform float vibrance;
+        uniform float bevelStrength;
+        uniform float studEmbossStrength;
 
         varying vec4 vColor;
         varying vec3 vNormalWorld;
         varying vec3 vPositionWorld;
+        varying vec3 vPositionLocal;
+
+        float segDist(vec2 p, vec2 a, vec2 b) {
+            vec2 pa = p - a;
+            vec2 ba = b - a;
+            float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+            return length(pa - ba * h);
+        }
+
+        vec3 computeStudEmboss(vec3 pos, vec3 norm) {
+            if (abs(norm.y) < 0.75) {
+                return vec3(0.0);
+            }
+            vec2 gridCoord = mod(pos.xz + vec2(10.0), 20.0) - vec2(10.0);
+            float distFromCenter = length(gridCoord);
+            if (distFromCenter > 5.5) {
+                return vec3(0.0);
+            }
+
+            vec2 uv = gridCoord / 4.8;
+            float c = 0.9063;
+            float s = -0.4226;
+            vec2 ruv = vec2(uv.x * c - uv.y * s, uv.x * s + uv.y * c);
+
+            float dL = min(segDist(ruv, vec2(-0.70, 0.28), vec2(-0.70, -0.28)),
+                           segDist(ruv, vec2(-0.70, -0.28), vec2(-0.50, -0.28)));
+            float dE = min(segDist(ruv, vec2(-0.36, 0.28), vec2(-0.36, -0.28)),
+                           segDist(ruv, vec2(-0.36, 0.28), vec2(-0.18, 0.28)));
+            dE = min(dE, min(segDist(ruv, vec2(-0.36, 0.0), vec2(-0.20, 0.0)),
+                             segDist(ruv, vec2(-0.36, -0.28), vec2(-0.18, -0.28))));
+            float dG = min(segDist(ruv, vec2(0.14, 0.28), vec2(-0.04, 0.28)),
+                           segDist(ruv, vec2(-0.04, 0.28), vec2(-0.04, -0.28)));
+            dG = min(dG, min(segDist(ruv, vec2(-0.04, -0.28), vec2(0.14, -0.28)),
+                             segDist(ruv, vec2(0.14, -0.28), vec2(0.14, -0.05))));
+            dG = min(dG, segDist(ruv, vec2(0.14, -0.05), vec2(0.05, -0.05)));
+            float dO = abs(length(vec2((ruv.x - 0.46) * 1.25, ruv.y)) - 0.24);
+
+            float dMin = min(min(dL, dE), min(dG, dO));
+            float strokeWidth = 0.06;
+            if (dMin < strokeWidth) {
+                float factor = (strokeWidth - dMin) / strokeWidth;
+                float grad = sin(factor * 3.14159);
+                return vec3(ruv.x * grad * 0.4, 0.0, ruv.y * grad * 0.4);
+            }
+            return vec3(0.0);
+        }
+
+        vec3 computeEdgeBevel(vec3 pos, vec3 norm) {
+            vec3 cellPos = mod(pos + vec3(10.0, 4.0, 10.0), vec3(20.0, 8.0, 20.0)) - vec3(10.0, 4.0, 10.0);
+            vec3 distToFaceEdge = vec3(10.0, 4.0, 10.0) - abs(cellPos);
+            float bevelRadius = 1.0;
+            vec3 bevelDelta = vec3(0.0);
+
+            if (distToFaceEdge.x < bevelRadius && abs(norm.x) < 0.5) {
+                float f = (bevelRadius - distToFaceEdge.x) / bevelRadius;
+                bevelDelta.x = sign(cellPos.x) * f * 0.35;
+            }
+            if (distToFaceEdge.y < bevelRadius && abs(norm.y) < 0.5) {
+                float f = (bevelRadius - distToFaceEdge.y) / bevelRadius;
+                bevelDelta.y = sign(cellPos.y) * f * 0.35;
+            }
+            if (distToFaceEdge.z < bevelRadius && abs(norm.z) < 0.5) {
+                float f = (bevelRadius - distToFaceEdge.z) / bevelRadius;
+                bevelDelta.z = sign(cellPos.z) * f * 0.35;
+            }
+            return bevelDelta;
+        }
 
         void main() {
-            vec3 norm = normalize(vNormalWorld);
+            vec3 baseNorm = normalize(vNormalWorld);
+            vec3 beveled = baseNorm;
+            if (bevelStrength > 0.001) {
+                beveled = normalize(beveled + bevelStrength * computeEdgeBevel(vPositionLocal, baseNorm));
+            }
+            if (studEmbossStrength > 0.001) {
+                beveled = normalize(beveled + studEmbossStrength * computeStudEmboss(vPositionLocal, baseNorm));
+            }
+
             vec3 lightDir = normalize(lightDirection);
             vec3 viewDir = normalize(viewPosition - vPositionWorld);
-            float diffuse = max(0.0, dot(norm, lightDir));
+            float diffuse = max(0.0, dot(beveled, lightDir));
             float light = ambientStrength + lightStrength * diffuse;
 
             float specular = 0.0;
             if (specularStrength > 0.0001) {
                 vec3 halfDir = normalize(lightDir + viewDir);
-                specular = pow(max(dot(norm, halfDir), 0.0), specularPower) * specularStrength;
+                specular = pow(max(dot(beveled, halfDir), 0.0), specularPower) * specularStrength;
             }
 
             float rim = 0.0;
             if (rimStrength > 0.0001) {
-                rim = pow(1.0 - max(dot(norm, viewDir), 0.0), rimPower) * rimStrength;
+                rim = pow(1.0 - max(dot(beveled, viewDir), 0.0), rimPower) * rimStrength;
             }
 
             vec3 litColor = vColor.rgb * light + vec3(specular + rim);

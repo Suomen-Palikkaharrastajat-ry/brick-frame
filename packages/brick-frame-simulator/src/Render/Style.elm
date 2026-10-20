@@ -1,9 +1,13 @@
 module Render.Style exposing
-    ( Style
+    ( Quality(..)
+    , Style
     , clampStyle
     , clampVibrance
     , defaultStyle
+    , draftStyle
     , fromLight
+    , fromQuality
+    , realisticStyle
     )
 
 {-| Rendering style controls for lightweight LEGO-like material tuning.
@@ -15,6 +19,13 @@ set of parameters for scene lighting, subtle plastic highlights, and edge tint.
 
 import Math.Vector3 as Vec3 exposing (Vec3, vec3)
 import Render.Lighting exposing (LightUniforms)
+
+
+{-| Quality preset toggle for draft (fast, flat edges) vs realistic (bevel highlights, stud logos).
+-}
+type Quality
+    = Draft
+    | Realistic
 
 
 {-| Configurable material + edge look parameters used by render shaders.
@@ -71,6 +82,11 @@ Fields:
     `1.5` (the default) gives a clean antialiased outline; `2.0`–`3.0` suits
     larger viewports or stylised renders.
 
+  - **`bevelStrength`** — Intensity of normal-modulated edge beveling (`0`–`1`).
+    Creates soft specular edge highlights across brick boundaries without extra geometry.
+
+  - **`studEmbossStrength`** — Procedural normal embossing for LEGO stud logos (`0`–`1`).
+
 -}
 type alias Style =
     { lightDirection : Vec3
@@ -83,6 +99,8 @@ type alias Style =
     , vibrance : Float
     , edgeColor : Vec3
     , edgeWidth : Float
+    , bevelStrength : Float
+    , studEmbossStrength : Float
     }
 
 
@@ -100,7 +118,47 @@ defaultStyle =
     , vibrance = 0.25
     , edgeColor = vec3 0 0 0
     , edgeWidth = 1.5
+    , bevelStrength = 0.0
+    , studEmbossStrength = 0.0
     }
+
+
+{-| Fast, clean draft style matching standard LDraw flat view.
+-}
+draftStyle : Style
+draftStyle =
+    defaultStyle
+
+
+{-| Realistic studio render quality style with edge bevel highlights and embossed stud logos.
+-}
+realisticStyle : Style
+realisticStyle =
+    { lightDirection = Vec3.normalize (vec3 0.3 1.0 0.4)
+    , lightStrength = 0.4
+    , ambientStrength = 0.65
+    , specularStrength = 0.32
+    , specularPower = 28.0
+    , rimStrength = 0.15
+    , rimPower = 2.5
+    , vibrance = 0.18
+    , edgeColor = vec3 0.1 0.1 0.1
+    , edgeWidth = 1.0
+    , bevelStrength = 0.5
+    , studEmbossStrength = 0.75
+    }
+
+
+{-| Map a quality preset to its default `Style`.
+-}
+fromQuality : Quality -> Style
+fromQuality quality =
+    case quality of
+        Draft ->
+            draftStyle
+
+        Realistic ->
+            realisticStyle
 
 
 {-| Build a full `Style` from legacy light uniforms.
@@ -132,6 +190,8 @@ clampStyle style =
         , vibrance = clampVibrance style.vibrance
         , edgeColor = clampVec3 style.edgeColor
         , edgeWidth = clamp 0.25 8.0 style.edgeWidth
+        , bevelStrength = clamp 0 1 style.bevelStrength
+        , studEmbossStrength = clamp 0 1 style.studEmbossStrength
     }
 
 

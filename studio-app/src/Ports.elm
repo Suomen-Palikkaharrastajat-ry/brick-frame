@@ -1,5 +1,6 @@
 port module Ports exposing
-    ( downloadFile
+    ( captureRender
+    , downloadFile
     , fileContentReceived
     , fileLoadError
     , geometryFlattenFailed
@@ -65,6 +66,11 @@ port setUrlHash : String -> Cmd msg
 {-| Hand the browser a file to save: a name, a media type and the text.
 -}
 port downloadFile : { filename : String, mime : String, text : String } -> Cmd msg
+
+
+{-| Request an offscreen high-resolution render capture as a PNG download.
+-}
+port captureRender : { width : Int, height : Int, transparent : Bool, filename : String } -> Cmd msg
 
 
 {-| Offer the current document to be remembered as a draft. The JavaScript side

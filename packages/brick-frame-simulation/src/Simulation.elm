@@ -798,6 +798,8 @@ gearEntities camera styleInput aspect model =
                                             , rimStrength = style.rimStrength
                                             , rimPower = style.rimPower
                                             , vibrance = style.vibrance
+                                            , bevelStrength = style.bevelStrength
+                                            , studEmbossStrength = style.studEmbossStrength
                                             }
                                     in
                                     Just
@@ -859,6 +861,8 @@ componentEntities camera styleInput aspect model =
                         , rimStrength = style.rimStrength
                         , rimPower = style.rimPower
                         , vibrance = style.vibrance
+                        , bevelStrength = style.bevelStrength
+                        , studEmbossStrength = style.studEmbossStrength
                         }
                 in
                 WebGL.entityWith

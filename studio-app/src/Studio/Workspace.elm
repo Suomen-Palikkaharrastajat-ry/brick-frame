@@ -29,6 +29,7 @@ import Html exposing (Html, button, div, span, text)
 import Html.Attributes as Attr
 import Http
 import LDraw.Document as Document exposing (Document)
+import LDraw.Export as Export
 import LDraw.Writer as Writer
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3

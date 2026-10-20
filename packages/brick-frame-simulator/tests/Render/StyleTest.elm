@@ -35,6 +35,8 @@ suite =
                             , vibrance = 99
                             , edgeColor = vec3 -1 0.4 2
                             , edgeWidth = 99
+                            , bevelStrength = -1
+                            , studEmbossStrength = 5
                             }
                 in
                 Expect.all
@@ -50,6 +52,8 @@ suite =
                     , \_ -> Expect.within (Expect.Absolute 0.0001) 1 (Vec3.getZ clamped.edgeColor)
                     , \_ -> Expect.notEqual 0 (Vec3.length clamped.lightDirection)
                     , \_ -> Expect.within (Expect.Absolute 0.0001) 8 clamped.edgeWidth
+                    , \_ -> Expect.within (Expect.Absolute 0.0001) 0 clamped.bevelStrength
+                    , \_ -> Expect.within (Expect.Absolute 0.0001) 1 clamped.studEmbossStrength
                     ]
                     ()
         , test "default style remains within expected range" <|

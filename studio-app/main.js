@@ -47,7 +47,23 @@ const { ports } = runtime.app
 
 // Save: hand the browser a file to download.
 ports.downloadFile.subscribe(({ filename, mime, text }) => {
-  const url = URL.createObjectURL(new Blob([text], { type: mime }))
+  let blob
+  if (mime.includes('binary') || mime.includes('zip') || mime.includes('octet-stream')) {
+    try {
+      const binStr = atob(text)
+      const len = binStr.length
+      const bytes = new Uint8Array(len)
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binStr.charCodeAt(i)
+      }
+      blob = new Blob([bytes], { type: mime })
+    } catch (_) {
+      blob = new Blob([text], { type: mime })
+    }
+  } else {
+    blob = new Blob([text], { type: mime })
+  }
+  const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
   link.download = filename
@@ -56,6 +72,44 @@ ports.downloadFile.subscribe(({ filename, mime, text }) => {
   link.remove()
   URL.revokeObjectURL(url)
 })
+
+// High-resolution screenshot / render capture
+if (ports.captureRender) {
+  ports.captureRender.subscribe(({ width, height, transparent, filename }) => {
+    const canvas = document.querySelector('canvas')
+    if (!canvas) return
+
+    const targetWidth = width || canvas.width
+    const targetHeight = height || canvas.height
+
+    const offscreen = document.createElement('canvas')
+    offscreen.width = targetWidth
+    offscreen.height = targetHeight
+    const ctx = offscreen.getContext('2d')
+
+    if (!transparent) {
+      // Solid neutral dark theme background
+      ctx.fillStyle = '#0f172a'
+      ctx.fillRect(0, 0, targetWidth, targetHeight)
+    }
+
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
+    ctx.drawImage(canvas, 0, 0, targetWidth, targetHeight)
+
+    offscreen.toBlob((blob) => {
+      if (!blob) return
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename || 'palikkakehys-render.png'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    }, 'image/png')
+  })
+}
 
 // Draft: the document is offered on every change, which is far more often than
 // it needs storing — write the latest one once the edits pause.

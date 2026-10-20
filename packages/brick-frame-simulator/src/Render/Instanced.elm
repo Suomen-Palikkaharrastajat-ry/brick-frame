@@ -977,6 +977,8 @@ render config scene =
             , rimStrength = style.rimStrength
             , rimPower = style.rimPower
             , vibrance = style.vibrance
+            , bevelStrength = style.bevelStrength
+            , studEmbossStrength = style.studEmbossStrength
             }
 
         edgeUniforms modelMat =

@@ -130,6 +130,8 @@ renderSceneWithStyle scene camera styleInput width height =
             , rimStrength = style.rimStrength
             , rimPower = style.rimPower
             , vibrance = style.vibrance
+            , bevelStrength = style.bevelStrength
+            , studEmbossStrength = style.studEmbossStrength
             }
 
         edgeUniforms =
