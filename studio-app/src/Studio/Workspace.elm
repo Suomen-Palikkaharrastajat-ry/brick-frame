@@ -25,7 +25,7 @@ and turns it into a move along one axis, snapped to the grid.
 import Browser.Dom
 import Browser.Events
 import Data
-import Dict
+import Dict exposing (Dict)
 import EmbeddedParts
 import Html exposing (Html, button, div, span, text)
 import Html.Attributes as Attr
@@ -96,6 +96,8 @@ type alias Flags =
     , supportsPointerEvents : Bool
     , studioUrl : String
     , draft : Maybe String
+    , favorites : Maybe (List String)
+    , recentParts : Maybe (List String)
     }
 
 
@@ -112,6 +114,7 @@ type alias Model =
     , drag : Maybe Drag
     , helpOpen : Bool
     , palette : Palette.State
+    , thumbnails : Dict String String
     , preview : Viewport.Model
     , activeColour : Int
     , layout : Layout
@@ -170,6 +173,12 @@ type Msg
     | PartIndexLoaded (Result Http.Error PartIndex.PartIndex)
     | PaletteQuery String
     | PaletteCategory (Maybe String)
+    | PaletteToggleFavorite String
+    | PaletteSelectShelf Palette.Shelf
+    | PaletteToggleColorFilter
+    | PaletteInspect (Maybe Part)
+    | PaletteRotateTurntable Float
+    | ThumbnailLoaded { file : String, color : Int, url : String }
     | ArmPart Part
     | AddArmedPart
     | ManualPart String
@@ -223,7 +232,12 @@ init flags =
             , rotateStep = 90
             , drag = Nothing
             , helpOpen = False
-            , palette = Palette.init
+            , palette =
+                Palette.initWith
+                    { favorites = Maybe.withDefault [] flags.favorites
+                    , recentParts = Maybe.withDefault [] flags.recentParts
+                    }
+            , thumbnails = Dict.empty
             , preview = sized previewSize preview
             , activeColour = 4
             , layout = layout
@@ -475,8 +489,11 @@ update msg model =
             let
                 palette =
                     model.palette
+
+                loaded =
+                    { model | palette = { palette | index = Palette.Loaded index } }
             in
-            ( { model | palette = { palette | index = Palette.Loaded index } }, Cmd.none )
+            ( loaded, requestVisibleThumbnails loaded )
 
         PartIndexLoaded (Err error) ->
             let
@@ -489,15 +506,119 @@ update msg model =
             let
                 palette =
                     model.palette
+
+                updated =
+                    { model | palette = { palette | query = query } }
             in
-            ( { model | palette = { palette | query = query } }, Cmd.none )
+            ( updated, requestVisibleThumbnails updated )
 
         PaletteCategory category ->
             let
                 palette =
                     model.palette
+
+                updated =
+                    { model | palette = { palette | category = category } }
             in
-            ( { model | palette = { palette | category = category } }, Cmd.none )
+            ( updated, requestVisibleThumbnails updated )
+
+        PaletteToggleFavorite file ->
+            let
+                palette =
+                    model.palette
+
+                newFavorites =
+                    if Set.member file palette.favorites then
+                        Set.remove file palette.favorites
+
+                    else
+                        Set.insert file palette.favorites
+
+                updated =
+                    { model | palette = { palette | favorites = newFavorites } }
+            in
+            ( updated
+            , Cmd.batch
+                [ Ports.saveFavorites (Set.toList newFavorites)
+                , requestVisibleThumbnails updated
+                ]
+            )
+
+        PaletteSelectShelf shelf ->
+            let
+                palette =
+                    model.palette
+
+                updated =
+                    { model | palette = { palette | shelf = shelf } }
+            in
+            ( updated, requestVisibleThumbnails updated )
+
+        PaletteToggleColorFilter ->
+            let
+                palette =
+                    model.palette
+
+                newMode =
+                    case palette.colorFilterMode of
+                        Palette.ShowAllColors ->
+                            Palette.OfficialOnly
+
+                        Palette.OfficialOnly ->
+                            Palette.ShowAllColors
+
+                updated =
+                    { model | palette = { palette | colorFilterMode = newMode } }
+            in
+            ( updated, requestVisibleThumbnails updated )
+
+        PaletteInspect maybePart ->
+            case maybePart of
+                Just part ->
+                    let
+                        ( armedModel, armCmd ) =
+                            armPart part.file model
+                                |> (\( m, cmd ) -> ( withArmed (Just part) m, cmd ))
+
+                        palette =
+                            armedModel.palette
+                    in
+                    ( { armedModel | palette = { palette | inspectingPart = Just part } }, armCmd )
+
+                Nothing ->
+                    let
+                        palette =
+                            model.palette
+                    in
+                    ( { model | palette = { palette | inspectingPart = Nothing } }, Cmd.none )
+
+        PaletteRotateTurntable angle ->
+            let
+                palette =
+                    model.palette
+
+                preview =
+                    model.preview
+
+                cam =
+                    preview.camera
+
+                rotatedCam =
+                    { cam | azimuth = degrees angle }
+            in
+            ( { model
+                | palette = { palette | turntableAngle = angle }
+                , preview = { preview | camera = rotatedCam }
+              }
+            , Cmd.none
+            )
+
+        ThumbnailLoaded { file, color, url } ->
+            if color == model.activeColour then
+                ( { model | thumbnails = Dict.insert file url model.thumbnails }, Cmd.none )
+
+            else
+                ( model, Cmd.none )
 
         ArmPart part ->
             armPart part.file model
@@ -533,7 +654,7 @@ update msg model =
             else
                 let
                     picked =
-                        { model | activeColour = code }
+                        { model | activeColour = code, thumbnails = Dict.empty }
 
                     ( recoloured, recolourCmd ) =
                         whenSelected (\ids -> commit (Recolor (List.map (\id -> ( id, code )) ids))) picked
@@ -546,7 +667,13 @@ update msg model =
                             Nothing ->
                                 ( recoloured, Cmd.none )
                 in
-                ( previewed, Cmd.batch [ recolourCmd, previewCmd ] )
+                ( previewed
+                , Cmd.batch
+                    [ recolourCmd
+                    , previewCmd
+                    , requestVisibleThumbnails previewed
+                    ]
+                )
 
         PreviewMsg previewMsg ->
             let
@@ -719,8 +846,47 @@ addPart file model =
 
             ( document, history ) =
                 Edit.record (Add [ { part = file, color = model.activeColour, matrix = placement } ]) model.document model.history
+
+            newRecents =
+                file
+                    :: List.filter (\f -> f /= file) model.palette.recentParts
+                    |> List.take 20
+
+            palette =
+                model.palette
+
+            ( synced, syncCmd ) =
+                syncDocument
+                    { model
+                        | document = document
+                        , history = history
+                        , selection = Set.singleton newId
+                        , palette = { palette | recentParts = newRecents }
+                    }
         in
-        syncDocument { model | document = document, history = history, selection = Set.singleton newId }
+        ( synced, Cmd.batch [ syncCmd, Ports.saveRecents newRecents ] )
+
+
+{-| Request on-demand thumbnails for currently visible parts in the palette.
+-}
+requestVisibleThumbnails : Model -> Cmd Msg
+requestVisibleThumbnails model =
+    case model.palette.index of
+        Palette.Loaded index ->
+            let
+                missing =
+                    Palette.filterParts Palette.resultLimit model.palette model.activeColour index
+                        |> List.filter (\p -> not (Dict.member p.file model.thumbnails))
+            in
+            if List.isEmpty missing then
+                Cmd.none
+
+            else
+                Ports.requestThumbnails
+                    (List.map (\p -> { file = p.file, color = model.activeColour }) missing)
+
+        _ ->
+            Cmd.none
 
 
 httpError : Http.Error -> String
@@ -1612,6 +1778,7 @@ subscriptions model =
         , Ports.geometryFlattened (ViewportMsg << Viewport.GeometryFlattened)
         , Ports.geometryFlattenFailed (ViewportMsg << Viewport.GeometryFlattenFailed)
         , Ports.saveRequested (\_ -> Save)
+        , Ports.thumbnailLoaded ThumbnailLoaded
         , Browser.Events.onKeyUp (Decode.field "key" Decode.string |> Decode.map KeyUp)
         ]
 
@@ -1728,6 +1895,13 @@ viewPalette model =
         , onAdd = AddArmedPart
         , onManual = ManualPart
         , onAddManual = AddManualPart
+        , onToggleFavorite = PaletteToggleFavorite
+        , onSelectShelf = PaletteSelectShelf
+        , onToggleColorFilter = PaletteToggleColorFilter
+        , onInspect = PaletteInspect
+        , onRotateTurntable = PaletteRotateTurntable
+        , activeColour = model.activeColour
+        , thumbnails = model.thumbnails
         , preview = viewPreview model
         }
         model.palette
@@ -1748,7 +1922,7 @@ viewPreview model =
         , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
         , Attr.style "border-radius" "6px"
         , Attr.style "overflow" "hidden"
-        , Attr.style "pointer-events" "none"
+        , Attr.style "touch-action" "none"
         , Attr.style "background" Theme.panelSubtleBackground
         ]
         (case model.palette.armed of
@@ -1764,7 +1938,27 @@ viewPreview model =
 
 viewColours : Model -> Html Msg
 viewColours model =
-    Colours.view { current = model.activeColour, onPick = PickColour }
+    let
+        activePart =
+            case model.palette.armed of
+                Just part ->
+                    Just part.file
+
+                Nothing ->
+                    case Set.toList model.selection |> List.filterMap (\id -> Document.getPlacement id model.document) of
+                        placement :: _ ->
+                            Just placement.fileText
+
+                        [] ->
+                            Nothing
+    in
+    Colours.view
+        { current = model.activeColour
+        , onPick = PickColour
+        , armedPart = activePart
+        , filterOfficialOnly = model.palette.colorFilterMode == Palette.OfficialOnly
+        , onToggleFilter = PaletteToggleColorFilter
+        }
 
 
 viewInspector : Model -> Html Msg
