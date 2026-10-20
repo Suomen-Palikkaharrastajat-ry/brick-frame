@@ -155,6 +155,44 @@ extractionTests =
 
                     Nothing ->
                         Expect.fail "Catalog part 3001.dat was not found"
+        , test "knownCatalogPart builds Brick 1x4 with 4 studs and 4 anti-studs" <|
+            \_ ->
+                case knownCatalogPart "3010.dat" of
+                    Just conn ->
+                        let
+                            studs =
+                                List.filter (\c -> c.connType == Stud) conn.connections
+
+                            antiStuds =
+                                List.filter (\c -> c.connType == AntiStud) conn.connections
+                        in
+                        Expect.all
+                            [ \_ -> Expect.equal 4 (List.length studs)
+                            , \_ -> Expect.equal 4 (List.length antiStuds)
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "Catalog part 3010.dat was not found"
+        , test "knownCatalogPart builds Plate 2x8 with 16 studs and 16 anti-studs" <|
+            \_ ->
+                case knownCatalogPart "3034.dat" of
+                    Just conn ->
+                        let
+                            studs =
+                                List.filter (\c -> c.connType == Stud) conn.connections
+
+                            antiStuds =
+                                List.filter (\c -> c.connType == AntiStud) conn.connections
+                        in
+                        Expect.all
+                            [ \_ -> Expect.equal 16 (List.length studs)
+                            , \_ -> Expect.equal 16 (List.length antiStuds)
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "Catalog part 3034.dat was not found"
         ]
 
 

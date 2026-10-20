@@ -1065,4 +1065,144 @@ snappingSuite =
                     , \_ -> Expect.equal 1 stepLeft.snapRotationStep
                     ]
                     ()
+        , test "CollisionStrict mode reverts document to pre-drag state on endDrag when colliding" <|
+            \_ ->
+                let
+                    origDoc =
+                        start.document
+
+                    vp =
+                        start.viewport
+
+                    modelWithCollidingDrag =
+                        { start
+                            | viewport = { vp | captured = True, mousePressed = True }
+                            , collisionMode = CollisionStrict
+                            , collidingPlacements = Set.fromList [ 1, 2 ]
+                            , drag =
+                                Just
+                                    { handle =
+                                        { axis = AxisX
+                                        , origin = vec3 0 0 0
+                                        , tip = vec3 0 0 0
+                                        , length = 50
+                                        , screenStart = ( 100, 100 )
+                                        , screenEnd = ( 150, 100 )
+                                        }
+                                    , ids = [ 1 ]
+                                    , start = ( 100, 100 )
+                                    , lastPoint = ( 150, 100 )
+                                    , original = origDoc
+                                    , amount = 50
+                                    }
+                        }
+
+                    afterEndDrag =
+                        step (ViewportMsg (Viewport.MouseUp 150 100)) modelWithCollidingDrag
+                in
+                Expect.all
+                    [ \m -> Expect.equal Nothing m.drag
+                    , \m -> Expect.equal origDoc m.document
+                    , \m -> Expect.equal Set.empty m.collidingPlacements
+                    ]
+                    afterEndDrag
+        , test "CollisionSoft mode allows drop and retains collidingPlacements on endDrag" <|
+            \_ ->
+                let
+                    ( docWithTwo, _ ) =
+                        Edit.apply
+                            (Edit.Add
+                                [ { part = "3001.dat", color = 4, matrix = Mat4.identity }
+                                , { part = "3001.dat", color = 14, matrix = Mat4.makeTranslate3 20 0 0 }
+                                ]
+                            )
+                            start.document
+
+                    ( movedDoc, _ ) =
+                        Edit.apply
+                            (Edit.Translate [ 0 ] (vec3 10 0 0))
+                            docWithTwo
+
+                    vp =
+                        start.viewport
+
+                    modelWithSoftCollision =
+                        { start
+                            | viewport = { vp | captured = True, mousePressed = True }
+                            , document = movedDoc
+                            , collisionMode = CollisionSoft
+                            , collidingPlacements = Set.fromList [ 0, 1 ]
+                            , drag =
+                                Just
+                                    { handle =
+                                        { axis = AxisX
+                                        , origin = vec3 0 0 0
+                                        , tip = vec3 0 0 0
+                                        , length = 50
+                                        , screenStart = ( 100, 100 )
+                                        , screenEnd = ( 150, 100 )
+                                        }
+                                    , ids = [ 0 ]
+                                    , start = ( 100, 100 )
+                                    , lastPoint = ( 150, 100 )
+                                    , original = docWithTwo
+                                    , amount = 10
+                                    }
+                        }
+
+                    afterEndDrag =
+                        step (ViewportMsg (Viewport.MouseUp 150 100)) modelWithSoftCollision
+                in
+                Expect.all
+                    [ \m -> Expect.equal Nothing m.drag
+                    , \m -> Expect.equal movedDoc m.document
+                    , \m -> Expect.equal (Set.fromList [ 0, 1 ]) m.collidingPlacements
+                    ]
+                    afterEndDrag
+        , test "Alt key press during drag immediately moves drag to non-snapped state" <|
+            \_ ->
+                let
+                    dummyKey key alt =
+                        { key = key
+                        , shift = False
+                        , ctrl = False
+                        , meta = False
+                        , alt = alt
+                        , repeat = False
+                        , targetTag = "BODY"
+                        , targetEditable = False
+                        }
+
+                    modelDuringDrag =
+                        { start
+                            | drag =
+                                Just
+                                    { handle =
+                                        { axis = AxisX
+                                        , origin = vec3 0 0 0
+                                        , tip = vec3 0 0 0
+                                        , length = 50
+                                        , screenStart = ( 100, 100 )
+                                        , screenEnd = ( 150, 100 )
+                                        }
+                                    , ids = []
+                                    , start = ( 100, 100 )
+                                    , lastPoint = ( 120, 100 )
+                                    , original = start.document
+                                    , amount = 20
+                                    }
+                            , altHeld = False
+                        }
+
+                    mAltPressed =
+                        step (ViewportMsg (Viewport.KeyPressed (dummyKey "Alt" True))) modelDuringDrag
+
+                    mAltReleased =
+                        step (KeyUp "Alt") mAltPressed
+                in
+                Expect.all
+                    [ \_ -> Expect.equal True mAltPressed.altHeld
+                    , \_ -> Expect.equal False mAltReleased.altHeld
+                    ]
+                    ()
         ]

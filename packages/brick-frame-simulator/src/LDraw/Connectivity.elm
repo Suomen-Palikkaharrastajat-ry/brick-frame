@@ -1044,13 +1044,46 @@ knownCatalogPart name =
             -- Brick 2 x 2
             Just (makeBrick 2 2 24 "3003.dat")
 
+        "3003b" ->
+            Just (makeBrick 2 2 24 "3003b.dat")
+
         "3004" ->
             -- Brick 1 x 2
             Just (makeBrick 2 1 24 "3004.dat")
 
+        "3004b" ->
+            Just (makeBrick 2 1 24 "3004b.dat")
+
         "3005" ->
             -- Brick 1 x 1
             Just (makeBrick 1 1 24 "3005.dat")
+
+        "3005b" ->
+            Just (makeBrick 1 1 24 "3005b.dat")
+
+        "3006" ->
+            -- Brick 2 x 5
+            Just (makeBrick 5 2 24 "3006.dat")
+
+        "3007" ->
+            -- Brick 2 x 8
+            Just (makeBrick 8 2 24 "3007.dat")
+
+        "3008" ->
+            -- Brick 1 x 8
+            Just (makeBrick 8 1 24 "3008.dat")
+
+        "3009" ->
+            -- Brick 1 x 6
+            Just (makeBrick 6 1 24 "3009.dat")
+
+        "3010" ->
+            -- Brick 1 x 4
+            Just (makeBrick 4 1 24 "3010.dat")
+
+        "3622" ->
+            -- Brick 1 x 3
+            Just (makeBrick 3 1 24 "3622.dat")
 
         "3020" ->
             -- Plate 2 x 4
@@ -1074,6 +1107,18 @@ knownCatalogPart name =
         "3024" ->
             -- Plate 1 x 1
             Just (makeBrick 1 1 8 "3024.dat")
+
+        "3034" ->
+            -- Plate 2 x 8
+            Just (makeBrick 8 2 8 "3034.dat")
+
+        "3460" ->
+            -- Plate 1 x 8
+            Just (makeBrick 8 1 8 "3460.dat")
+
+        "3666" ->
+            -- Plate 1 x 6
+            Just (makeBrick 6 1 8 "3666.dat")
 
         "3710" ->
             -- Plate 1 x 4

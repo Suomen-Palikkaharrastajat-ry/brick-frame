@@ -72,7 +72,7 @@ export function extractConnectionsFromText(text) {
     if (!trimmed.startsWith('1 ')) continue
     const parts = trimmed.split(/\s+/)
     if (parts.length < 15) continue
-    const subfile = parts[14].toLowerCase().replace(/\\/g, '/')
+    const subfile = parts.slice(14).join(' ').toLowerCase().replace(/\\/g, '/')
     const subBase = path.basename(subfile)
 
     const x = parseFloat(parts[2])

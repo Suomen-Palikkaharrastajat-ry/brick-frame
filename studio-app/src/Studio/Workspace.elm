@@ -440,7 +440,16 @@ update msg model =
 
         KeyUp key ->
             if key == "Alt" then
-                ( { model | altHeld = False }, Cmd.none )
+                let
+                    nextModel =
+                        { model | altHeld = False }
+                in
+                case nextModel.drag of
+                    Just d ->
+                        moveDrag d d.lastPoint nextModel
+
+                    Nothing ->
+                        ( nextModel, Cmd.none )
 
             else
                 ( model, Cmd.none )
@@ -916,6 +925,7 @@ syncDocument model =
                 | viewport = viewport
                 , document = Document.clearTouched model.document
                 , selection = Set.filter (\id -> Set.member id present) model.selection
+                , collidingPlacements = Set.filter (\id -> Set.member id present) model.collidingPlacements
             }
 
         ( final, eventCmds ) =
@@ -1112,8 +1122,32 @@ handleEvent event ( model, cmds ) =
                         Nothing ->
                             ( withAlt, cmds )
 
+                else if keyEvent.key == "Alt" then
+                    case withAlt.drag of
+                        Just d ->
+                            let
+                                ( next, cmd ) =
+                                    moveDrag d d.lastPoint withAlt
+                            in
+                            ( next, cmds ++ [ cmd ] )
+
+                        Nothing ->
+                            ( withAlt, cmds )
+
                 else
                     handleShortcut withAlt
+
+            else if model.drag /= Nothing && keyEvent.key == "Alt" then
+                case withAlt.drag of
+                    Just d ->
+                        let
+                            ( next, cmd ) =
+                                moveDrag d d.lastPoint withAlt
+                        in
+                        ( next, cmds ++ [ cmd ] )
+
+                    Nothing ->
+                        ( withAlt, cmds )
 
             else
                 handleShortcut withAlt
