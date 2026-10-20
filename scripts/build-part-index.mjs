@@ -60,6 +60,59 @@ export function parsePartHeader(file, text) {
   return entry
 }
 
+/**
+ * Extract connection points from LDraw text by detecting standard subfiles
+ * (stud, stud4/tube, axlehole, axle, pinhole, pin, clip, bar, joint8ball, joint8socket).
+ */
+export function extractConnectionsFromText(text) {
+  const connections = []
+  const lines = text.split(/\r?\n/)
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('1 ')) continue
+    const parts = trimmed.split(/\s+/)
+    if (parts.length < 15) continue
+    const subfile = parts[14].toLowerCase().replace(/\\/g, '/')
+    const subBase = path.basename(subfile)
+
+    const x = parseFloat(parts[2])
+    const y = parseFloat(parts[3])
+    const z = parseFloat(parts[4])
+    const a = parseFloat(parts[5]), b = parseFloat(parts[6]), c = parseFloat(parts[7])
+    const d = parseFloat(parts[8]), e = parseFloat(parts[9]), f = parseFloat(parts[10])
+    const g = parseFloat(parts[11]), h = parseFloat(parts[12]), i = parseFloat(parts[13])
+
+    function multRot(nx, ny, nz) {
+      const rx = a * nx + b * ny + c * nz
+      const ry = d * nx + e * ny + f * nz
+      const rz = g * nx + h * ny + i * nz
+      const len = Math.hypot(rx, ry, rz) || 1
+      return [rx / len, ry / len, rz / len]
+    }
+
+    if (subBase === 'stud.dat' || subBase === 'stud2.dat' || subBase.startsWith('stud-logo')) {
+      connections.push({ type: 'Stud', position: [x, y, z], normal: multRot(0, -1, 0) })
+    } else if (subBase === 'stud4.dat' || subBase === 'stud3.dat' || subBase === 'tube.dat') {
+      connections.push({ type: 'AntiStud', position: [x, y, z], normal: multRot(0, 1, 0) })
+    } else if (subBase.startsWith('axlehole') || subBase.startsWith('axlehol')) {
+      connections.push({ type: 'TechnicAxleFemale', position: [x, y, z], normal: multRot(0, 0, 1) })
+    } else if (subBase === 'axle.dat' || subBase.startsWith('axleend')) {
+      connections.push({ type: 'TechnicAxleMale', position: [x, y, z], normal: multRot(0, 0, 1) })
+    } else if (subBase.includes('pinhole') || subBase === 'peghole.dat') {
+      connections.push({ type: 'TechnicPinFemale', position: [x, y, z], normal: multRot(0, 0, 1) })
+    } else if (subBase.includes('confric') || subBase === 'connect.dat' || subBase === 'pin.dat') {
+      connections.push({ type: 'TechnicPinMale', position: [x, y, z], normal: multRot(0, 0, 1) })
+    } else if (subBase.includes('clip')) {
+      connections.push({ type: 'ClipMale', position: [x, y, z], normal: multRot(0, 0, 1) })
+    } else if (subBase.includes('joint8ball') || subBase.includes('towball')) {
+      connections.push({ type: 'BallMale', position: [x, y, z], normal: multRot(0, -1, 0) })
+    } else if (subBase.includes('joint8socket')) {
+      connections.push({ type: 'BallSocketFemale', position: [x, y, z], normal: multRot(0, 1, 0) })
+    }
+  }
+  return connections
+}
+
 /** Build the index object for the `parts` directory of an LDraw library. */
 export function buildIndex(ldrawDir) {
   const partsDir = path.join(ldrawDir, 'parts')
