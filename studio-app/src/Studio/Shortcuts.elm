@@ -31,6 +31,9 @@ type Action
     | DuplicateSelection
     | SelectAll
     | ClearSelection
+    | GroupSubmodel
+    | ExplodeSubmodel
+    | ExitSubmodel
     | UseTool Tool
     | RotateSelection Axis Int
     | NextGridStep
@@ -43,6 +46,7 @@ type alias Context =
     { hasSelection : Bool
     , helpVisible : Bool
     , walking : Bool
+    , inSubmodel : Bool
     }
 
 
@@ -73,6 +77,15 @@ actionFor context event =
             "a" ->
                 Just SelectAll
 
+            "g" ->
+                Just
+                    (if event.shift then
+                        ExplodeSubmodel
+
+                     else
+                        GroupSubmodel
+                    )
+
             _ ->
                 Nothing
 
@@ -88,7 +101,10 @@ actionFor context event =
                 Just DeleteSelection
 
             "Escape" ->
-                if context.hasSelection && not context.helpVisible && not context.walking then
+                if context.inSubmodel && not context.helpVisible && not context.walking then
+                    Just ExitSubmodel
+
+                else if context.hasSelection && not context.helpVisible && not context.walking then
                     Just ClearSelection
 
                 else
@@ -149,7 +165,9 @@ helpRows =
         , ( "Delete", "Remove the selection" )
         , ( "Ctrl D", "Duplicate" )
         , ( "Ctrl A", "Select all" )
-        , ( "Esc", "Clear the selection" )
+        , ( "Ctrl G", "Group selection into submodel" )
+        , ( "Ctrl Shift G", "Explode submodel" )
+        , ( "Esc", "Clear selection / exit submodel" )
         ]
       )
     , ( "History"

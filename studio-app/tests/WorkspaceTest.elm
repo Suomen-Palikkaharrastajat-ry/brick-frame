@@ -529,15 +529,22 @@ editingSuite =
                         |> Expect.equal Nothing
             , test "Escape only clears a selection when nothing else claims it" <|
                 \_ ->
-                    ( shortcutIn { hasSelection = True, helpVisible = False, walking = False } "Escape"
-                    , shortcutIn { hasSelection = True, helpVisible = True, walking = False } "Escape"
-                    , shortcutIn { hasSelection = False, helpVisible = False, walking = False } "Escape"
+                    [ shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False } "Escape"
+                    , shortcutIn { hasSelection = True, helpVisible = True, walking = False, inSubmodel = False } "Escape"
+                    , shortcutIn { hasSelection = False, helpVisible = False, walking = False, inSubmodel = False } "Escape"
+                    , shortcutIn { hasSelection = False, helpVisible = False, walking = False, inSubmodel = True } "Escape"
+                    ]
+                        |> Expect.equal [ Just Shortcuts.ClearSelection, Nothing, Nothing, Just Shortcuts.ExitSubmodel ]
+            , test "Ctrl+G groups and Ctrl+Shift+G explodes" <|
+                \_ ->
+                    ( shortcut { key = "g", ctrl = True, shift = False, target = "BODY" }
+                    , shortcut { key = "g", ctrl = True, shift = True, target = "BODY" }
                     )
-                        |> Expect.equal ( Just Shortcuts.ClearSelection, Nothing, Nothing )
+                        |> Expect.equal ( Just Shortcuts.GroupSubmodel, Just Shortcuts.ExplodeSubmodel )
             , test "the viewport keys are not taken" <|
                 \_ ->
                     [ "w", "a", "s", "d", "f", "g", "1", "+", "?" ]
-                        |> List.map (shortcutIn { hasSelection = True, helpVisible = False, walking = False })
+                        |> List.map (shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False })
                         |> List.all ((==) Nothing)
                         |> Expect.equal True
             ]
@@ -597,7 +604,7 @@ editingSuite =
 
 shortcut : { key : String, ctrl : Bool, shift : Bool, target : String } -> Maybe Shortcuts.Action
 shortcut { key, ctrl, shift, target } =
-    Shortcuts.actionFor { hasSelection = True, helpVisible = False, walking = False }
+    Shortcuts.actionFor { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False }
         { key = key
         , shift = shift
         , ctrl = ctrl

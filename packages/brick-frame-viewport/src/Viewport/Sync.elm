@@ -3,9 +3,11 @@ module Viewport.Sync exposing
     , Sourced
     , State
     , buildAll
+    , changedSubmodels
     , initialState
     , plan
     , sourceKey
+    , updateSubmodelCache
     )
 
 {-| Keeping an instanced scene in step with an editable `LDraw.Document`.
@@ -104,8 +106,13 @@ buildAll cache submodelNames document =
 {-| Work out the edit that brings the scene up to date with `document`.
 
 Only the placements the document says it touched (plus any still waiting for a
-part) are examined, so the cost of an edit does not grow with the size of the
-model beyond a single pass over the placement list.
+part, and any placements referencing changed submodels) are examined, so the
+cost of an edit does not grow with the size of the model beyond a single pass over
+the placement list.
+
+When a submodel changes, all document placements referencing it are included in
+`replaced` and re-expanded from the updated cache, so editing a submodel propagates
+across all instances without requiring a full document reload.
 
 A source whose parts are not all loaded is left out of `replaced` and kept in
 `pending`; the next `plan` retries it once the fetches in `missing` finish.
@@ -114,8 +121,24 @@ A source whose parts are not all loaded is left out of `replaced` and kept in
 plan : PartCache -> Set String -> Document -> State -> Plan
 plan cache submodelNames document state =
     let
+        changedSubs =
+            changedSubmodels state.document document
+
+        referencesChangedSub name =
+            referencesAnySubmodel cache changedSubs name
+
+        submodelCandidates =
+            if Set.isEmpty changedSubs then
+                Set.empty
+
+            else
+                Document.mainPlacements document
+                    |> List.filter (\p -> referencesChangedSub p.part)
+                    |> List.map .id
+                    |> Set.fromList
+
         candidates =
-            Set.union document.touched state.pending
+            Set.union (Set.union document.touched state.pending) submodelCandidates
 
         present =
             Document.mainPlacements document
@@ -130,7 +153,11 @@ plan cache submodelNames document state =
 
         changed =
             present
-                |> List.filter (\p -> Dict.get p.id state.built /= Just (Document.fingerprint p))
+                |> List.filter
+                    (\p ->
+                        (Dict.get p.id state.built /= Just (Document.fingerprint p))
+                            || Set.member p.id submodelCandidates
+                    )
 
         step p acc =
             let
@@ -162,6 +189,79 @@ plan cache submodelNames document state =
     , pending = result.pending
     , readyParts = result.ready
     }
+
+
+{-| Submodels whose lines or existence differ between two documents.
+-}
+changedSubmodels : Document -> Document -> Set String
+changedSubmodels oldDoc newDoc =
+    let
+        oldSubmodels =
+            Dict.fromList (List.map (\s -> ( Document.normalise s.name, Document.toLinesOf s.name oldDoc )) oldDoc.submodels)
+
+        newSubmodels =
+            Dict.fromList (List.map (\s -> ( Document.normalise s.name, Document.toLinesOf s.name newDoc )) newDoc.submodels)
+
+        isChanged ( name, newLines ) =
+            case Dict.get name oldSubmodels of
+                Just oldLines ->
+                    oldLines /= newLines
+
+                Nothing ->
+                    True
+
+        modifiedOrAdded =
+            newSubmodels
+                |> Dict.toList
+                |> List.filter isChanged
+                |> List.map Tuple.first
+
+        deleted =
+            oldSubmodels
+                |> Dict.keys
+                |> List.filter (\k -> not (Dict.member k newSubmodels))
+    in
+    Set.fromList (modifiedOrAdded ++ deleted)
+
+
+{-| Seed or update non-main submodels in PartCache with parsed lines from Document.
+-}
+updateSubmodelCache : Document -> PartCache -> PartCache
+updateSubmodelCache document cache =
+    let
+        subfiles =
+            Document.subfiles document
+    in
+    List.foldl (\( name, lines ) acc -> Dict.insert name (Loaded lines) acc) cache subfiles
+
+
+{-| Check whether a part or submodel reference transitively references any of the target submodels.
+-}
+referencesAnySubmodel : PartCache -> Set String -> String -> Bool
+referencesAnySubmodel cache targets partName =
+    let
+        norm =
+            Document.normalise partName
+    in
+    if Set.member norm targets then
+        True
+
+    else
+        case Dict.get norm cache of
+            Just (Loaded lines) ->
+                lines
+                    |> List.any
+                        (\line ->
+                            case line of
+                                SubFileRef ref ->
+                                    referencesAnySubmodel cache targets ref.file
+
+                                _ ->
+                                    False
+                        )
+
+            _ ->
+                False
 
 
 {-| The id a source is stored under, for a document placement.

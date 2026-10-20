@@ -11,6 +11,7 @@ import LDraw.Parser as Parser
 import LDraw.Types exposing (LDrawLine)
 import LDraw.Writer as Writer
 import Math.Matrix4 as Mat4
+import Math.Vector3 as Vec3 exposing (vec3)
 import Test exposing (Test, describe, test)
 
 
@@ -141,6 +142,121 @@ suite =
                         |> Document.getPlacement 1
                         |> Maybe.map .color
                         |> Expect.equal (Just 14)
+            ]
+        , describe "Submodel Grouping and Exploding"
+            [ test "groupIntoSubmodel groups selected placements at their shared center" <|
+                \_ ->
+                    let
+                        rawModel =
+                            String.join "\n"
+                                [ "1 4 10 0 0 1 0 0 0 1 0 0 0 1 3001.dat"
+                                , "1 4 30 0 0 1 0 0 0 1 0 0 0 1 3001.dat"
+                                , ""
+                                ]
+
+                        doc =
+                            Document.parse rawModel
+
+                        grouped =
+                            Document.groupIntoSubmodel "assembly.ldr" [ 0, 1 ] doc
+
+                        mainPlacements =
+                            Document.mainPlacements grouped
+
+                        submodelPlacements =
+                            Document.placementsOf "assembly.ldr" grouped
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal 1 (List.length mainPlacements)
+                        , \_ -> Expect.equal (Just "assembly.ldr") (List.head mainPlacements |> Maybe.map .fileText)
+                        , \_ -> Expect.equal 2 (List.length submodelPlacements)
+                        , \_ ->
+                            case List.head mainPlacements of
+                                Just p ->
+                                    let
+                                        pos =
+                                            Mat4.transform p.matrix (vec3 0 0 0)
+                                    in
+                                    Expect.within (Expect.Absolute 0.001) 20 (Vec3.getX pos)
+
+                                Nothing ->
+                                    Expect.fail "missing group placement"
+                        ]
+                        ()
+            , test "explodeSubmodel inlines constituent placements preserving positions" <|
+                \_ ->
+                    let
+                        rawModel =
+                            String.join "\n"
+                                [ "1 4 10 0 0 1 0 0 0 1 0 0 0 1 3001.dat"
+                                , "1 4 30 0 0 1 0 0 0 1 0 0 0 1 3001.dat"
+                                , ""
+                                ]
+
+                        doc =
+                            Document.parse rawModel
+
+                        grouped =
+                            Document.groupIntoSubmodel "assembly.ldr" [ 0, 1 ] doc
+
+                        exploded =
+                            Document.explodeSubmodel 2 grouped
+
+                        finalPlacements =
+                            Document.mainPlacements exploded
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal 2 (List.length finalPlacements)
+                        , \_ -> Expect.equal False (List.any (\s -> s.name == "assembly.ldr") exploded.submodels)
+                        , \_ ->
+                            let
+                                xCoords =
+                                    finalPlacements
+                                        |> List.map (\p -> Vec3.getX (Mat4.transform p.matrix (vec3 0 0 0)))
+                            in
+                            Expect.equal [ 10, 30 ] (List.map round xCoords)
+                        ]
+                        ()
+            , test "explodeSubmodel preserves submodel when another instance exists" <|
+                \_ ->
+                    let
+                        mpd =
+                            String.join "\n"
+                                [ "0 FILE main.ldr"
+                                , "1 16 0 0 0 1 0 0 0 1 0 0 0 1 sub.ldr"
+                                , "1 16 50 0 0 1 0 0 0 1 0 0 0 1 sub.ldr"
+                                , "0 FILE sub.ldr"
+                                , "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat"
+                                , ""
+                                ]
+
+                        doc =
+                            Document.parse mpd
+
+                        exploded =
+                            Document.explodeSubmodel 0 doc
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal True (List.any (\s -> s.name == "sub.ldr") exploded.submodels)
+                        , \_ -> Expect.equal 2 (List.length (Document.mainPlacements exploded))
+                        ]
+                        ()
+            , test "locatePlacement identifies submodel name and index" <|
+                \_ ->
+                    let
+                        doc =
+                            Document.parse Fixtures.mpdModel
+                    in
+                    case Document.locatePlacement 2 doc of
+                        Just ( subName, idx, _ ) ->
+                            Expect.all
+                                [ \_ -> Expect.equal "Sub Group.ldr" subName
+                                , \_ -> Expect.equal 2 idx
+                                ]
+                                ()
+
+                        Nothing ->
+                            Expect.fail "placement 2 not found"
             ]
         ]
 

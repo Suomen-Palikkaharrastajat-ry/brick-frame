@@ -16,6 +16,7 @@ module Viewport exposing
     , loadDocument
     , needsAnimationFrame
     , pickSource
+    , setActiveSources
     , subscriptions
     , update
     , view
@@ -176,6 +177,7 @@ type alias Model =
     , useWindowResize : Bool
     , supportsPointerEvents : Bool
     , renderStyle : Style.Style
+    , activeSources : Maybe (Set Int)
     }
 
 
@@ -291,6 +293,7 @@ init config =
       , useWindowResize = config.useWindowResize
       , supportsPointerEvents = config.supportsPointerEvents
       , renderStyle = config.renderStyle
+      , activeSources = Nothing
       }
     , Cmd.batch <|
         (if config.useWindowResize then
@@ -332,6 +335,7 @@ type Msg
     | MouseDown Float Float Bool
     | MouseMove Float Float
     | MouseUp Float Float
+    | DoubleClick Float Float
     | Wheel Float
     | TouchStart (List TouchPoint)
     | TouchMove (List TouchPoint)
@@ -386,6 +390,7 @@ type Msg
 type Event
     = CameraSettled
     | Clicked Float Float Bool
+    | DoubleClicked Float Float
     | Tapped Float Float
     | PressStarted Float Float
     | DragMoved Float Float
@@ -613,6 +618,9 @@ updateInner msg model =
                   else
                     [ CameraSettled ]
                 )
+
+        DoubleClick x y ->
+            ( model, Cmd.none, [ DoubleClicked x y ] )
 
         Wheel delta ->
             ( { model
@@ -1596,15 +1604,25 @@ applyDocument document model =
                 ( { model | document = Just document }, Cmd.none, [] )
 
         Just state ->
-            if Document.subfilesSignature document /= state.subfilesSignature then
-                loadDocument document { model | cameraMode = CameraManual }
+            let
+                updatedCache =
+                    Sync.updateSubmodelCache document model.partCache
 
-            else
-                let
-                    ( reconciled, cmd ) =
-                        reconcile { model | document = Just document }
-                in
-                ( reconciled, cmd, [] )
+                updatedSubmodelNames =
+                    document.submodels
+                        |> List.drop 1
+                        |> List.map (.name >> Document.normalise)
+                        |> Set.fromList
+
+                ( reconciled, cmd ) =
+                    reconcile
+                        { model
+                            | document = Just document
+                            , partCache = updatedCache
+                            , submodelNames = updatedSubmodelNames
+                        }
+            in
+            ( reconciled, cmd, [] )
 
 
 {-| Apply whatever `Viewport.Sync.plan` says is out of date.
@@ -1638,6 +1656,7 @@ reconcile model =
                         , built = built
                         , pending = plan.pending
                         , readyParts = plan.readyParts
+                        , subfilesSignature = Document.subfilesSignature document
                     }
 
                 unchanged =
@@ -2038,6 +2057,15 @@ subscriptions model =
 -- ── View ──────────────────────────────────────────────────────────────────────
 
 
+{-| Set active placement sources for ghosted context rendering.
+When set to `Just sources`, only placements matching those sources are rendered normally,
+while all other geometry is rendered in ghost mode. `Nothing` disables ghost mode.
+-}
+setActiveSources : Maybe (Set Int) -> Model -> Model
+setActiveSources sources model =
+    { model | activeSources = sources }
+
+
 {-| How the host decorates the canvas.
 
 `extraEntities camera style aspect` adds host-owned entities — moving gears, a
@@ -2067,12 +2095,13 @@ view config model =
                         ++ config.extraEntities model.camera model.renderStyle aspect
 
                 ( Nothing, Just instanced ) ->
-                    Instanced.render
+                    Instanced.renderWithGhost
                         { camera = model.camera
                         , style = model.renderStyle
                         , width = model.width
                         , height = model.height
                         , coarsen = config.coarsenWhileMoving && model.refineFrames > 0
+                        , activeSources = model.activeSources
                         }
                         instanced
                         ++ config.extraEntities model.camera model.renderStyle aspect
@@ -2092,6 +2121,11 @@ view config model =
                 (Decode.field "clientX" Decode.float)
                 (Decode.field "clientY" Decode.float)
                 (Decode.field "shiftKey" Decode.bool)
+            )
+         , Html.Events.on "dblclick"
+            (Decode.map2 DoubleClick
+                (Decode.field "clientX" Decode.float)
+                (Decode.field "clientY" Decode.float)
             )
          , Html.Events.preventDefaultOn "wheel"
             (Decode.map (\delta -> ( Wheel delta, True )) ViewportDecode.wheelDeltaDecoder)
