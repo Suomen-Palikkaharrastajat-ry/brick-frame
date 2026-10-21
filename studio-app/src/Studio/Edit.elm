@@ -11,6 +11,7 @@ module Studio.Edit exposing
     , pushApplied
     , record
     , redo
+    , rotationAboutAxis
     , selectionCenter
     , snap
     , undo
@@ -70,11 +71,16 @@ type alias NewPart =
 type Command
     = Translate (List Int) Vec3
     | Rotate (List Int) { pivot : Vec3, axis : Axis, radians : Float }
+    | RotateAroundAxis (List Int) { pivot : Vec3, axis : Vec3, radians : Float }
     | Recolor (List ( Int, Int ))
     | SetMatrix (List ( Int, Mat4 ))
     | Add (List NewPart)
+    | AddIn String (List NewPart)
     | Remove (List Int)
-    | Restore (List ( Int, Placement ))
+    | Restore (List ( String, Int, Placement ))
+    | GroupIntoSubmodel String (List Int)
+    | ExplodeSubmodel Int
+    | ReplaceDoc Document Document
     | Group (List Command)
 
 
@@ -89,8 +95,13 @@ apply command doc =
             )
 
         Rotate ids { pivot, axis, radians } ->
-            ( transform ids (Mat4.mul (rotationAbout pivot axis radians) >> clean) doc
-            , Rotate ids { pivot = pivot, axis = axis, radians = -radians }
+            apply (RotateAroundAxis ids { pivot = pivot, axis = axisVector axis, radians = radians }) doc
+                |> Tuple.mapSecond
+                    (\_ -> Rotate ids { pivot = pivot, axis = axis, radians = -radians })
+
+        RotateAroundAxis ids { pivot, axis, radians } ->
+            ( transform ids (Mat4.mul (rotationAboutAxis pivot axis radians) >> clean) doc
+            , RotateAroundAxis ids { pivot = pivot, axis = axis, radians = -radians }
             )
 
         Recolor pairs ->
@@ -126,11 +137,14 @@ apply command doc =
             )
 
         Add parts ->
+            apply (AddIn "" parts) doc
+
+        AddIn submodel parts ->
             let
                 ( added, ids ) =
                     List.foldl
                         (\part ( d, acc ) ->
-                            Document.addPlacement "" part d
+                            Document.addPlacement submodel part d
                                 |> Tuple.mapSecond (\id -> acc ++ [ id ])
                         )
                         ( doc, [] )
@@ -140,24 +154,36 @@ apply command doc =
 
         Remove ids ->
             let
-                present =
+                located =
                     ids
-                        |> List.filterMap
-                            (\id ->
-                                Maybe.map2 Tuple.pair
-                                    (Document.indexOfPlacement id doc)
-                                    (Document.getPlacement id doc)
-                            )
-                        |> List.sortBy Tuple.first
+                        |> List.filterMap (\id -> Document.locatePlacement id doc)
+                        |> List.sortBy (\( _, idx, _ ) -> idx)
             in
-            ( List.foldl (\( _, p ) d -> Document.removePlacement p.id d) doc present
-            , Restore present
+            ( List.foldl (\( _, _, p ) d -> Document.removePlacement p.id d) doc located
+            , Restore located
             )
 
         Restore entries ->
-            ( List.foldl (\( index, p ) d -> Document.insertPlacement index p d) doc entries
-            , Remove (List.map (Tuple.second >> .id) entries)
+            ( List.foldl (\( subName, index, p ) d -> Document.insertPlacementIn subName index p d) doc entries
+            , Remove (List.map (\( _, _, p ) -> p.id) entries)
             )
+
+        GroupIntoSubmodel name ids ->
+            let
+                grouped =
+                    Document.groupIntoSubmodel name ids doc
+            in
+            ( grouped, ReplaceDoc grouped doc )
+
+        ExplodeSubmodel id ->
+            let
+                exploded =
+                    Document.explodeSubmodel id doc
+            in
+            ( exploded, ReplaceDoc exploded doc )
+
+        ReplaceDoc _ target ->
+            ( target, ReplaceDoc target doc )
 
         Group commands ->
             let
@@ -187,8 +213,26 @@ transform ids change doc =
 
 rotationAbout : Vec3 -> Axis -> Float -> Mat4
 rotationAbout pivot axis radians =
+    rotationAboutAxis pivot (axisVector axis) radians
+
+
+{-| Rotation matrix around an arbitrary 3D pivot point and axis vector.
+-}
+rotationAboutAxis : Vec3 -> Vec3 -> Float -> Mat4
+rotationAboutAxis pivot axis radians =
+    let
+        len =
+            Vec3.length axis
+
+        unitAxis =
+            if len < 0.0001 then
+                Vec3.vec3 0 1 0
+
+            else
+                Vec3.scale (1 / len) axis
+    in
     Mat4.mul
-        (Mat4.mul (Mat4.makeTranslate pivot) (Mat4.makeRotate radians (axisVector axis)))
+        (Mat4.mul (Mat4.makeTranslate pivot) (Mat4.makeRotate radians unitAxis))
         (Mat4.makeTranslate (Vec3.negate pivot))
 
 

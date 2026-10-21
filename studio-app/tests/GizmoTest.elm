@@ -4,7 +4,8 @@ module GizmoTest exposing (suite)
 -}
 
 import Expect
-import Math.Vector3 exposing (vec3)
+import Math.Matrix4 as Mat4
+import Math.Vector3 as Vec3 exposing (vec3)
 import Render.Camera as Camera
 import Studio.Edit exposing (Axis(..))
 import Studio.Gizmo as Gizmo
@@ -91,6 +92,27 @@ suite =
                     Expect.within (Expect.Relative 0.01)
                         (screenLength camera)
                         (screenLength { camera | distance = 800 })
+            , test "handlesWithFrame rotates handle directions by the frame's orientation" <|
+                \_ ->
+                    let
+                        rotZ90 =
+                            Mat4.makeRotate (degrees 90) (vec3 0 0 1)
+
+                        xHandle =
+                            Gizmo.handlesWithFrame rotZ90 camera width height (vec3 0 0 0)
+                                |> List.filter (\h -> h.axis == AxisX)
+                                |> List.head
+                    in
+                    case xHandle of
+                        Just h ->
+                            Expect.all
+                                [ \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getX h.tip)
+                                , \_ -> Expect.greaterThan 1 (Vec3.getY h.tip)
+                                ]
+                                ()
+
+                        Nothing ->
+                            Expect.fail "expected rotated X handle"
             ]
         , describe "hit"
             [ test "a point on a handle's line picks it" <|
@@ -177,5 +199,72 @@ suite =
 
                         Nothing ->
                             Expect.fail "no handle"
+            ]
+        , describe "arc handles"
+            [ test "produces three principal arc handles" <|
+                \_ ->
+                    let
+                        arcs =
+                            Gizmo.arcHandles camera width height (vec3 0 0 0)
+                    in
+                    Expect.equal 3 (List.length arcs)
+            , test "creates custom joint arc handle" <|
+                \_ ->
+                    let
+                        jointArc =
+                            Gizmo.jointArcHandle camera width height (vec3 0 0 0) (vec3 0 1 0)
+                    in
+                    case jointArc of
+                        Just arc ->
+                            Expect.greaterThan 10 (List.length arc.screenPoints)
+
+                        Nothing ->
+                            Expect.fail "expected arc handle"
+            , test "hitArc detects point near arc ring" <|
+                \_ ->
+                    let
+                        arcs =
+                            Gizmo.arcHandles camera width height (vec3 0 0 0)
+                    in
+                    case List.head arcs of
+                        Just arc ->
+                            case List.head arc.screenPoints of
+                                Just pt ->
+                                    Gizmo.hitArc 10.0 ( Tuple.first pt + 1, Tuple.second pt + 1 ) arcs
+                                        |> Expect.notEqual Nothing
+
+                                Nothing ->
+                                    Expect.fail "expected screen points"
+
+                        Nothing ->
+                            Expect.fail "expected arc handle"
+            , test "dragArcAngle snaps rotation delta to step" <|
+                \_ ->
+                    let
+                        arcs =
+                            Gizmo.arcHandles camera width height (vec3 0 0 0)
+                    in
+                    case List.head arcs of
+                        Just arc ->
+                            let
+                                ( cx, cy ) =
+                                    arc.screenCenter
+
+                                start =
+                                    ( cx + 50, cy )
+
+                                now =
+                                    ( cx, cy - 50 )
+
+                                step =
+                                    degrees 15
+
+                                angle =
+                                    Gizmo.dragArcAngle step arc start now
+                            in
+                            Expect.within (Expect.Absolute 0.001) (pi / 2) angle
+
+                        Nothing ->
+                            Expect.fail "expected arc handle"
             ]
         ]

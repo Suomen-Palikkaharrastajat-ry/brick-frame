@@ -1,10 +1,10 @@
-module Studio.Tree exposing (Row(..), rows, view)
+module Studio.Tree exposing (Row(..), rows, rowsWithActive, view)
 
-{-| The document's structure: its submodels, and the placements of the main one
+{-| The document's structure: its submodels, and the placements of the active one
 grouped by `0 STEP`.
 
-Selecting a row selects that placement. Only the main submodel lists its parts;
-the others show their names and sizes, since the studio edits the main model.
+Selecting a row selects that placement. The active submodel lists its parts, while
+inactive submodels can be clicked to switch active context.
 
 -}
 
@@ -20,7 +20,7 @@ import UI.Theme as Theme
 {-| A line of the tree.
 -}
 type Row
-    = SubmodelRow { name : String, parts : Int, isMain : Bool }
+    = SubmodelRow { name : String, parts : Int, isMain : Bool, isActive : Bool }
     | StepRow Int
     | PartRow { id : Int, file : String, color : Int }
     | MoreRow Int
@@ -39,6 +39,31 @@ row appears only after the first `0 STEP`.
 -}
 rows : Document -> List Row
 rows document =
+    rowsWithActive "" document
+
+
+{-| The tree for a document highlighting the active submodel.
+-}
+rowsWithActive : String -> Document -> List Row
+rowsWithActive activeSubmodel document =
+    let
+        activeNorm =
+            Document.normalise activeSubmodel
+
+        mainName =
+            Document.normalise (Document.mainSubmodel document).name
+
+        isTargetActive s idx =
+            let
+                sNorm =
+                    Document.normalise s.name
+            in
+            if activeSubmodel == "" then
+                idx == 0
+
+            else
+                sNorm == activeNorm || (idx == 0 && activeNorm == mainName)
+    in
     document.submodels
         |> List.indexedMap Tuple.pair
         |> List.concatMap
@@ -57,6 +82,9 @@ rows document =
                                 )
                             |> List.length
 
+                    isActive =
+                        isTargetActive submodel index
+
                     header =
                         SubmodelRow
                             { name =
@@ -67,9 +95,10 @@ rows document =
                                     submodel.name
                             , parts = parts
                             , isMain = index == 0
+                            , isActive = isActive
                             }
                 in
-                if index == 0 then
+                if isActive then
                     header :: mainRows submodel.entries
 
                 else
@@ -113,24 +142,46 @@ isStep text =
 
 {-| The tree as a list, with the selected placements highlighted.
 -}
-view : { selection : Set Int, onSelect : Int -> Bool -> msg } -> Document -> Html msg
+view :
+    { selection : Set Int
+    , onSelect : Int -> Bool -> msg
+    , activeSubmodel : String
+    , onSelectSubmodel : String -> msg
+    }
+    -> Document
+    -> Html msg
 view config document =
     div
         [ Attr.style "font-family" "monospace"
         , Attr.style "font-size" "12px"
         , Attr.style "color" Theme.textPrimary
         ]
-        (List.map (viewRow config) (rows document))
+        (List.map (viewRow config) (rowsWithActive config.activeSubmodel document))
 
 
-viewRow : { selection : Set Int, onSelect : Int -> Bool -> msg } -> Row -> Html msg
+viewRow :
+    { selection : Set Int
+    , onSelect : Int -> Bool -> msg
+    , activeSubmodel : String
+    , onSelectSubmodel : String -> msg
+    }
+    -> Row
+    -> Html msg
 viewRow config row =
     case row of
-        SubmodelRow { name, parts, isMain } ->
+        SubmodelRow { name, parts, isMain, isActive } ->
             div
                 [ Attr.style "margin-top" "6px"
                 , Attr.style "font-weight" "600"
-                , Attr.style "color" Theme.textPrimary
+                , Attr.style "color"
+                    (if isActive then
+                        Theme.brand
+
+                     else
+                        Theme.textPrimary
+                    )
+                , Attr.style "cursor" "pointer"
+                , Html.Events.onClick (config.onSelectSubmodel name)
                 ]
                 [ text
                     (name
@@ -142,11 +193,11 @@ viewRow config row =
                             else
                                 " parts"
                            )
-                        ++ (if isMain then
-                                ""
+                        ++ (if isActive then
+                                " [Active]"
 
                             else
-                                " (not editable yet)"
+                                ""
                            )
                     )
                 ]

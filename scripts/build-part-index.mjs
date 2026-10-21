@@ -322,6 +322,59 @@ export function writeElementsIndex(ldrawDir) {
   return { target, count: Object.keys(catalog.elements).length }
 }
 
+/**
+ * Extract connection points from LDraw text by detecting standard subfiles
+ * (stud, stud4/tube, axlehole, axle, pinhole, pin, clip, bar, joint8ball, joint8socket).
+ */
+export function extractConnectionsFromText(text) {
+  const connections = []
+  const lines = text.split(/\r?\n/)
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('1 ')) continue
+    const parts = trimmed.split(/\s+/)
+    if (parts.length < 15) continue
+    const subfile = parts.slice(14).join(' ').toLowerCase().replace(/\\/g, '/')
+    const subBase = path.basename(subfile)
+
+    const x = parseFloat(parts[2])
+    const y = parseFloat(parts[3])
+    const z = parseFloat(parts[4])
+    const a = parseFloat(parts[5]), b = parseFloat(parts[6]), c = parseFloat(parts[7])
+    const d = parseFloat(parts[8]), e = parseFloat(parts[9]), f = parseFloat(parts[10])
+    const g = parseFloat(parts[11]), h = parseFloat(parts[12]), i = parseFloat(parts[13])
+
+    function multRot(nx, ny, nz) {
+      const rx = a * nx + b * ny + c * nz
+      const ry = d * nx + e * ny + f * nz
+      const rz = g * nx + h * ny + i * nz
+      const len = Math.hypot(rx, ry, rz) || 1
+      return [rx / len, ry / len, rz / len]
+    }
+
+    if (subBase === 'stud.dat' || subBase === 'stud2.dat' || subBase.startsWith('stud-logo')) {
+      connections.push({ type: 'Stud', position: [x, y, z], normal: multRot(0, -1, 0) })
+    } else if (subBase === 'stud4.dat' || subBase === 'stud3.dat' || subBase === 'tube.dat') {
+      connections.push({ type: 'AntiStud', position: [x, y, z], normal: multRot(0, 1, 0) })
+    } else if (subBase.startsWith('axlehole') || subBase.startsWith('axlehol')) {
+      connections.push({ type: 'TechnicAxleFemale', position: [x, y, z], normal: multRot(0, 0, 1) })
+    } else if (subBase === 'axle.dat' || subBase.startsWith('axleend')) {
+      connections.push({ type: 'TechnicAxleMale', position: [x, y, z], normal: multRot(0, 0, 1) })
+    } else if (subBase.includes('pinhole') || subBase === 'peghole.dat') {
+      connections.push({ type: 'TechnicPinFemale', position: [x, y, z], normal: multRot(0, 0, 1) })
+    } else if (subBase.includes('confric') || subBase === 'connect.dat' || subBase === 'pin.dat') {
+      connections.push({ type: 'TechnicPinMale', position: [x, y, z], normal: multRot(0, 0, 1) })
+    } else if (subBase.includes('clip')) {
+      connections.push({ type: 'ClipMale', position: [x, y, z], normal: multRot(0, 0, 1) })
+    } else if (subBase.includes('joint8ball') || subBase.includes('towball')) {
+      connections.push({ type: 'BallMale', position: [x, y, z], normal: multRot(0, -1, 0) })
+    } else if (subBase.includes('joint8socket')) {
+      connections.push({ type: 'BallSocketFemale', position: [x, y, z], normal: multRot(0, 1, 0) })
+    }
+  }
+  return connections
+}
+
 /** Build the index object for the `parts` directory of an LDraw library. */
 export function buildIndex(ldrawDir) {
   const partsDir = path.join(ldrawDir, 'parts')
@@ -344,6 +397,72 @@ export function writeIndex(ldrawDir) {
   const elementsTarget = writeElementsIndex(ldrawDir)
 
   return { target, count: index.parts.length, elementsTarget }
+}
+
+/**
+ * Ingest Rebrickable part_colors.csv data.
+ * Columns: part_num,color_id,num_sets,num_set_parts,is_spare
+ */
+export function parseRebrickablePartColors(csvText) {
+  const result = new Map()
+  const lines = csvText.trim().split(/\r?\n/)
+  if (lines.length <= 1) return result
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+    const [partNum, colorId, numSets] = line.split(',')
+    if (!partNum || !colorId) continue
+
+    const part = partNum.toLowerCase()
+    const color = parseInt(colorId, 10)
+    const sets = parseInt(numSets, 10) || 0
+
+    if (!result.has(part)) {
+      result.set(part, [])
+    }
+    result.get(part).push({ color, numSets: sets })
+  }
+  return result
+}
+
+/**
+ * Render a clean SVG isometric thumbnail for build-time asset pipelines.
+ */
+export function renderSvgThumbnail(file, description = '', rgb = [201, 26, 9], size = 96) {
+  const [r, g, b] = rgb
+  const topColor = `rgb(${Math.min(255, Math.round(r * 1.15))},${Math.min(255, Math.round(g * 1.15))},${Math.min(255, Math.round(b * 1.15))})`
+  const leftColor = `rgb(${Math.round(r * 0.75)},${Math.round(g * 0.75)},${Math.round(b * 0.75)})`
+  const rightColor = `rgb(${Math.round(r * 0.9)},${Math.round(g * 0.9)},${Math.round(b * 0.9)})`
+
+  const cx = size / 2
+  const cy = size / 2 + 6
+  const s = 18
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">
+  <polygon points="${cx},${cy - s} ${cx + s * 1.4},${cy - s * 0.3} ${cx},${cy + s * 0.4} ${cx - s * 1.4},${cy - s * 0.3}" fill="${topColor}" stroke="rgba(0,0,0,0.2)" stroke-width="0.8" />
+  <polygon points="${cx - s * 1.4},${cy - s * 0.3} ${cx},${cy + s * 0.4} ${cx},${cy + s * 1.4} ${cx - s * 1.4},${cy + s * 0.7}" fill="${leftColor}" stroke="rgba(0,0,0,0.2)" stroke-width="0.8" />
+  <polygon points="${cx},${cy + s * 0.4} ${cx + s * 1.4},${cy - s * 0.3} ${cx + s * 1.4},${cy + s * 0.7} ${cx},${cy + s * 1.4}" fill="${rightColor}" stroke="rgba(0,0,0,0.2)" stroke-width="0.8" />
+</svg>`
+}
+
+/**
+ * Batch render SVG thumbnails into an output directory.
+ */
+export function batchRenderThumbnails(parts, outputDir, rgb = [201, 26, 9]) {
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true })
+  }
+  let count = 0
+  for (const part of parts) {
+    const file = Array.isArray(part) ? part[0] : part
+    const desc = Array.isArray(part) ? part[1] : ''
+    const svg = renderSvgThumbnail(file, desc, rgb)
+    const outPath = path.join(outputDir, `${file.replace(/\.dat$/i, '')}.svg`)
+    fs.writeFileSync(outPath, svg, 'utf8')
+    count++
+  }
+  return count
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

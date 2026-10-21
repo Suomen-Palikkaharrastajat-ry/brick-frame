@@ -5,6 +5,7 @@ module LDraw.BOM exposing
     , PartLot
     , diffBOM
     , generateBOM
+    , generateBOMInPath
     , generateSubmodelBOM
     , toBrickLinkXml
     , toMarkdown
@@ -105,10 +106,24 @@ Traverses the main submodel and expands any referenced submodels recursively.
 Any non-referenced submodels are also aggregated so no parts are omitted.
 -}
 generateBOM : Document -> PartIndex -> ElementCatalog -> ModelBOM
-generateBOM doc index catalog =
+generateBOM =
+    generateBOMInPath []
+
+
+{-| Like `generateBOM`, but for a studio that is editing inside a submodel.
+
+`activePath` is the chain of submodel instance placement ids leading to the
+submodel being edited (as in `Viewport.setActivePath`). Leaf parts inside that
+chain carry their own placement ids, exactly like the viewport's sources for the
+same path; everything else is tagged with the id of the root placement that
+contains it. With an empty path this is `generateBOM`.
+
+-}
+generateBOMInPath : List Int -> Document -> PartIndex -> ElementCatalog -> ModelBOM
+generateBOMInPath activePath doc index catalog =
     let
         instances =
-            collectAllInstances doc
+            collectInstances activePath doc
     in
     buildBOMFromInstances instances index catalog
 
@@ -133,6 +148,7 @@ generateSubmodelBOM submodelName doc index catalog =
                 case Dict.get cleanTarget submodelMap of
                     Just targetSubmodel ->
                         expandSubmodel submodelMap
+                            []
                             Nothing
                             (Set.singleton cleanTarget)
                             Mat4.identity
@@ -143,7 +159,7 @@ generateSubmodelBOM submodelName doc index catalog =
                             |> List.reverse
 
                     Nothing ->
-                        collectAllInstances doc
+                        collectInstances [] doc
         in
         buildBOMFromInstances instances index catalog
 
@@ -161,8 +177,8 @@ type alias TraversalState =
     }
 
 
-collectAllInstances : Document -> List LeafInstance
-collectAllInstances doc =
+collectInstances : List Int -> Document -> List LeafInstance
+collectInstances activePath doc =
     let
         submodelMap =
             buildSubmodelMap doc
@@ -182,6 +198,7 @@ collectAllInstances doc =
 
         mainState =
             expandSubmodel submodelMap
+                activePath
                 Nothing
                 initialVisited
                 Mat4.identity
@@ -212,6 +229,7 @@ collectAllInstances doc =
                                 Set.empty
                     in
                     expandSubmodel submodelMap
+                        []
                         Nothing
                         subPath
                         Mat4.identity
@@ -227,6 +245,7 @@ collectAllInstances doc =
 
 expandSubmodel :
     Dict String Submodel
+    -> List Int
     -> Maybe Int
     -> Set String
     -> Mat4
@@ -234,12 +253,12 @@ expandSubmodel :
     -> Submodel
     -> TraversalState
     -> TraversalState
-expandSubmodel submodelMap rootSourceId currentPath worldMat parentColor submodel state =
+expandSubmodel submodelMap activePath rootSourceId currentPath worldMat parentColor submodel state =
     List.foldl
         (\entry accState ->
             case entry of
                 PlacementEntry p ->
-                    expandPlacement submodelMap rootSourceId currentPath worldMat parentColor p accState
+                    expandPlacement submodelMap activePath rootSourceId currentPath worldMat parentColor p accState
 
                 Raw _ ->
                     accState
@@ -250,6 +269,7 @@ expandSubmodel submodelMap rootSourceId currentPath worldMat parentColor submode
 
 expandPlacement :
     Dict String Submodel
+    -> List Int
     -> Maybe Int
     -> Set String
     -> Mat4
@@ -257,7 +277,7 @@ expandPlacement :
     -> Placement
     -> TraversalState
     -> TraversalState
-expandPlacement submodelMap rootSourceId currentPath worldMat parentColor placement state =
+expandPlacement submodelMap activePath rootSourceId currentPath worldMat parentColor placement state =
     let
         cleanName =
             Catalog.cleanPartId placement.part
@@ -293,9 +313,24 @@ expandPlacement submodelMap rootSourceId currentPath worldMat parentColor placem
 
                     nextVisited =
                         Set.insert cleanName state.visited
+
+                    -- Stepping along the active path keeps placements individually
+                    -- addressable; anything else is tagged with its root placement.
+                    ( nextActivePath, nextRootSource ) =
+                        case ( rootSourceId, activePath ) of
+                            ( Nothing, stepId :: rest ) ->
+                                if stepId == placement.id then
+                                    ( rest, Nothing )
+
+                                else
+                                    ( [], Just effectiveSourceId )
+
+                            _ ->
+                                ( [], Just effectiveSourceId )
                 in
                 expandSubmodel submodelMap
-                    (Just effectiveSourceId)
+                    nextActivePath
+                    nextRootSource
                     nextPath
                     combinedMat
                     childColor

@@ -1,5 +1,6 @@
 port module Ports exposing
-    ( copyToClipboard
+    ( captureRender
+    , copyToClipboard
     , downloadFile
     , fileContentReceived
     , fileLoadError
@@ -7,9 +8,13 @@ port module Ports exposing
     , geometryFlattened
     , requestFileUpload
     , requestGeometryFlatten
+    , requestThumbnails
     , saveDraft
+    , saveFavorites
+    , saveRecents
     , saveRequested
     , setUrlHash
+    , thumbnailLoaded
     , viewportResized
     )
 
@@ -68,6 +73,11 @@ port setUrlHash : String -> Cmd msg
 port downloadFile : { filename : String, mime : String, text : String } -> Cmd msg
 
 
+{-| Request an offscreen high-resolution render capture as a PNG download.
+-}
+port captureRender : { width : Int, height : Int, transparent : Bool, filename : String } -> Cmd msg
+
+
 {-| Offer the current document to be remembered as a draft. The JavaScript side
 debounces and stores it, and gives it back as the `draft` flag next time.
 -}
@@ -82,3 +92,23 @@ port saveRequested : (() -> msg) -> Sub msg
 {-| Copy text to the system clipboard.
 -}
 port copyToClipboard : String -> Cmd msg
+
+
+{-| Save starred favorites list to local storage.
+-}
+port saveFavorites : List String -> Cmd msg
+
+
+{-| Save recently used part history to local storage.
+-}
+port saveRecents : List String -> Cmd msg
+
+
+{-| Request on-demand isometric thumbnail generation for parts in an active colour.
+-}
+port requestThumbnails : List { file : String, color : Int } -> Cmd msg
+
+
+{-| Receive generated or cached thumbnail image data URL from IndexedDB.
+-}
+port thumbnailLoaded : ({ file : String, color : Int, url : String } -> msg) -> Sub msg

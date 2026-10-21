@@ -260,6 +260,34 @@ suite =
                         , \b -> Expect.equal 2 b.uniqueLots
                         ]
                         bom
+            , test "inside a submodel the active chain's leaves carry their own placement ids" <|
+                \_ ->
+                    let
+                        doc =
+                            Document.parse sampleMpd
+
+                        subIds =
+                            Document.placementsOf "subassembly.ldr" doc
+                                |> List.map .id
+
+                        rootId =
+                            Document.placementsOf (Document.mainSubmodel doc).name doc
+                                |> List.head
+                                |> Maybe.map .id
+                                |> Maybe.withDefault -1
+
+                        lotIds path partId colorId =
+                            BOM.generateBOMInPath path doc testPartIndex testCatalog
+                                |> .lots
+                                |> List.filter (\l -> l.partId == partId && l.colorId == colorId)
+                                |> List.concatMap .placementIds
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ rootId ] (lotIds [] "3001" 4)
+                        , \_ -> Expect.equal (List.take 1 subIds) (lotIds [ rootId ] "3001" 4)
+                        , \_ -> Expect.equal (BOM.generateBOM doc testPartIndex testCatalog) (BOM.generateBOMInPath [] doc testPartIndex testCatalog)
+                        ]
+                        ()
             ]
         , describe "marketplace serializers"
             [ test "serializes BrickLink Wanted List XML correctly" <|
