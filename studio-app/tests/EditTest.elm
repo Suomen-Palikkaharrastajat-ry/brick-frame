@@ -346,4 +346,84 @@ suite =
             , test "an empty selection has no centre" <|
                 \_ -> Expect.equal Nothing (Edit.selectionCenter [] doc)
             ]
+        , describe "submodels"
+            [ test "AddIn appends to the named submodel and undo removes them" <|
+                \_ ->
+                    let
+                        groupedDoc =
+                            Document.groupIntoSubmodel "sub.ldr" [ 0, 1 ] doc
+
+                        newPart =
+                            { part = "3004.dat", color = 1, matrix = Mat4.identity }
+
+                        ( added, inverse ) =
+                            Edit.apply (Edit.AddIn "sub.ldr" [ newPart ]) groupedDoc
+
+                        ( undone, _ ) =
+                            Edit.apply inverse added
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal (List.length (Document.placementsOf "sub.ldr" groupedDoc) + 1) (List.length (Document.placementsOf "sub.ldr" added))
+                        , \_ -> Expect.equal (List.length (Document.placementsOf "sub.ldr" groupedDoc)) (List.length (Document.placementsOf "sub.ldr" undone))
+                        ]
+                        ()
+            , test "GroupIntoSubmodel and undo round-trip" <|
+                \_ ->
+                    let
+                        ( grouped, inverse ) =
+                            Edit.apply (Edit.GroupIntoSubmodel "sub.ldr" [ 0, 1 ]) doc
+
+                        ( restored, _ ) =
+                            Edit.apply inverse grouped
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal True (Document.submodelByName "sub.ldr" grouped /= Nothing)
+                        , \_ -> Expect.equal (text doc) (text restored)
+                        ]
+                        ()
+            , test "ExplodeSubmodel and undo round-trip" <|
+                \_ ->
+                    let
+                        grouped =
+                            Document.groupIntoSubmodel "sub.ldr" [ 0, 1 ] doc
+
+                        submodelPlacementId =
+                            grouped.nextId - 1
+
+                        ( exploded, inverse ) =
+                            Edit.apply (Edit.ExplodeSubmodel submodelPlacementId) grouped
+
+                        ( restored, _ ) =
+                            Edit.apply inverse exploded
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal Nothing (Document.getPlacement submodelPlacementId exploded)
+                        , \_ -> Expect.equal (text grouped) (text restored)
+                        ]
+                        ()
+            , test "Remove and undo in a non-main submodel restores the placement in that submodel" <|
+                \_ ->
+                    let
+                        grouped =
+                            Document.groupIntoSubmodel "sub.ldr" [ 0, 1 ] doc
+
+                        subParts =
+                            Document.placementsOf "sub.ldr" grouped
+
+                        targetId =
+                            subParts |> List.head |> Maybe.map .id |> Maybe.withDefault 0
+
+                        ( removed, inverse ) =
+                            Edit.apply (Edit.Remove [ targetId ]) grouped
+
+                        ( restored, _ ) =
+                            Edit.apply inverse removed
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal (List.length subParts - 1) (List.length (Document.placementsOf "sub.ldr" removed))
+                        , \_ -> Expect.equal (List.length subParts) (List.length (Document.placementsOf "sub.ldr" restored))
+                        , \_ -> Expect.equal True (Document.getPlacement targetId restored /= Nothing)
+                        ]
+                        ()
+            ]
         ]

@@ -665,4 +665,37 @@ documentSuite =
                     , \_ -> Expect.equal False (Dict.member "sub.ldr" loaded2.partCache)
                     ]
                     ()
+        , test "setActivePath exposes child placements as sources and filters pickSource to the active submodel" <|
+            \_ ->
+                let
+                    mpd =
+                        String.join "\n"
+                            [ "0 FILE main.ldr"
+                            , "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat"
+                            , "1 16 100 0 0 1 0 0 0 1 0 0 0 1 sub.ldr"
+                            , "0 FILE sub.ldr"
+                            , "1 14 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat"
+                            , ""
+                            ]
+
+                    doc =
+                        Document.parse mpd
+
+                    ( topLevel, _, _ ) =
+                        Viewport.loadDocument doc { studio | width = 800, height = 600 }
+
+                    insideSub =
+                        Viewport.setActivePath [ 1 ] topLevel
+
+                    backToTop =
+                        Viewport.setActivePath [] insideSub
+                in
+                Expect.all
+                    [ \_ -> Expect.equal [ 0, 1 ] (List.sort (sources topLevel))
+                    , \_ -> Expect.equal [ 0, 2 ] (List.sort (sources insideSub))
+                    , \_ -> Expect.equal (Just (Set.singleton 2)) insideSub.activeSources
+                    , \_ -> Expect.equal [ 0, 1 ] (List.sort (sources backToTop))
+                    , \_ -> Expect.equal Nothing backToTop.activeSources
+                    ]
+                    ()
         ]

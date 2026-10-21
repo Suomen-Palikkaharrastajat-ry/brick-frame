@@ -800,6 +800,8 @@ gearEntities camera styleInput aspect model =
                                             , vibrance = style.vibrance
                                             , bevelStrength = style.bevelStrength
                                             , studEmbossStrength = style.studEmbossStrength
+                                            , u_ghostMode = 0.0
+                                            , u_ghostAlpha = 1.0
                                             }
                                     in
                                     Just
@@ -863,6 +865,8 @@ componentEntities camera styleInput aspect model =
                         , vibrance = style.vibrance
                         , bevelStrength = style.bevelStrength
                         , studEmbossStrength = style.studEmbossStrength
+                        , u_ghostMode = 0.0
+                        , u_ghostAlpha = 1.0
                         }
                 in
                 WebGL.entityWith

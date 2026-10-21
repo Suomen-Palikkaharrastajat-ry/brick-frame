@@ -16,6 +16,8 @@ module Viewport exposing
     , loadDocument
     , needsAnimationFrame
     , pickSource
+    , setActivePath
+    , setActiveSources
     , setRenderQuality
     , subscriptions
     , update
@@ -177,6 +179,8 @@ type alias Model =
     , useWindowResize : Bool
     , supportsPointerEvents : Bool
     , renderStyle : Style.Style
+    , activeSources : Maybe (Set Int)
+    , activePath : List Int
     }
 
 
@@ -292,6 +296,8 @@ init config =
       , useWindowResize = config.useWindowResize
       , supportsPointerEvents = config.supportsPointerEvents
       , renderStyle = config.renderStyle
+      , activeSources = Nothing
+      , activePath = []
       }
     , Cmd.batch <|
         (if config.useWindowResize then
@@ -333,6 +339,7 @@ type Msg
     | MouseDown Float Float Bool
     | MouseMove Float Float
     | MouseUp Float Float
+    | DoubleClick Float Float
     | Wheel Float
     | TouchStart (List TouchPoint)
     | TouchMove (List TouchPoint)
@@ -388,6 +395,7 @@ type Msg
 type Event
     = CameraSettled
     | Clicked Float Float Bool
+    | DoubleClicked Float Float
     | Tapped Float Float
     | PressStarted Float Float
     | DragMoved Float Float
@@ -615,6 +623,9 @@ updateInner msg model =
                   else
                     [ CameraSettled ]
                 )
+
+        DoubleClick x y ->
+            ( model, Cmd.none, [ DoubleClicked x y ] )
 
         Wheel delta ->
             ( { model
@@ -1523,6 +1534,8 @@ beginLoad { lines, cache, submodelNames, document } model =
                 , submodelNames = submodelNames
                 , document = document
                 , sync = Nothing
+                , activePath = []
+                , activeSources = Nothing
                 , loadPhase = ResolvingParts
                 , partsTotal = List.length pending
                 , partsLoaded = 0
@@ -1600,16 +1613,26 @@ applyDocument document model =
                 -- Still loading: finishLoadingDocument builds from the latest.
                 ( { model | document = Just document }, Cmd.none, [] )
 
-        Just state ->
-            if Document.subfilesSignature document /= state.subfilesSignature then
-                loadDocument document { model | cameraMode = CameraManual }
+        Just _ ->
+            let
+                updatedCache =
+                    Sync.updateSubmodelCache document model.partCache
 
-            else
-                let
-                    ( reconciled, cmd ) =
-                        reconcile { model | document = Just document }
-                in
-                ( reconciled, cmd, [] )
+                updatedSubmodelNames =
+                    document.submodels
+                        |> List.drop 1
+                        |> List.map (.name >> Document.normalise)
+                        |> Set.fromList
+
+                ( reconciled, cmd ) =
+                    reconcile
+                        { model
+                            | document = Just document
+                            , partCache = updatedCache
+                            , submodelNames = updatedSubmodelNames
+                        }
+            in
+            ( reconciled, cmd, [] )
 
 
 {-| Apply whatever `Viewport.Sync.plan` says is out of date.
@@ -1643,19 +1666,28 @@ reconcile model =
                         , built = built
                         , pending = plan.pending
                         , readyParts = plan.readyParts
+                        , subfilesSignature = Document.subfilesSignature document
                     }
+
+                nextActiveSources =
+                    if List.isEmpty nextState.activePath then
+                        model.activeSources
+
+                    else
+                        Sync.activeSourcesFor nextState.activePath document
 
                 unchanged =
                     List.isEmpty plan.removed && List.isEmpty plan.replaced && List.isEmpty plan.missing
             in
             if unchanged then
-                ( { model | sync = Just nextState }, Cmd.none )
+                ( { model | sync = Just nextState, activeSources = nextActiveSources }, Cmd.none )
 
             else
                 ( frameEditedScene
                     { model
                         | instancedScene = Just nextScene
                         , sync = Just nextState
+                        , activeSources = nextActiveSources
                         , partCache = Resolve.markLoading plan.missing model.partCache
                     }
                 , fetchPending model.resolverConfig plan.missing
@@ -1713,11 +1745,14 @@ finishLoadingDocument document model =
         ready =
             Set.fromList (Dict.keys instanced.parts)
 
+        initialSync =
+            Sync.initialState document ready sourced
+
         loaded =
             { model
                 | instancedScene = Just instanced
                 , scene = Nothing
-                , sync = Just (Sync.initialState document ready sourced)
+                , sync = Just { initialSync | activePath = model.activePath }
                 , loadPhase = Ready
                 , loadingProgressPct = 100
                 , loadingProgressTick = Nothing
@@ -1736,14 +1771,28 @@ Placements are tested as bounding spheres to quickly cull non-candidates, then
 ranked by ray-AABB intersection in each part's local coordinates. When multiple
 parts are pierced, the closest front-face intersection wins; ties at the same depth
 are resolved by choosing the smaller bounding radius (e.g. brick on baseplate).
+When ghost mode is active (`activeSources /= Nothing`), only placements
+belonging to the active submodel are pickable.
 
 -}
 pickSource : Float -> Float -> Model -> Maybe Int
 pickSource x y model =
     case ( model.instancedScene, Pick.screenRay model.camera model.width model.height x y ) of
         ( Just scene, Just ( origin, direction ) ) ->
+            let
+                isPickable p =
+                    p.source
+                        >= 0
+                        && (case model.activeSources of
+                                Just sources ->
+                                    Set.member p.source sources
+
+                                Nothing ->
+                                    True
+                           )
+            in
             scene.placements
-                |> List.filter (\p -> p.source >= 0)
+                |> List.filter isPickable
                 |> List.filterMap
                     (\p ->
                         Pick.raySphereHit origin direction p.center p.radius
@@ -2074,6 +2123,42 @@ subscriptions model =
 -- ── View ──────────────────────────────────────────────────────────────────────
 
 
+{-| Set active placement sources for ghosted context rendering.
+When set to `Just sources`, only placements matching those sources are rendered normally,
+while all other geometry is rendered in ghost mode. `Nothing` disables ghost mode.
+-}
+setActiveSources : Maybe (Set Int) -> Model -> Model
+setActiveSources sources model =
+    { model | activeSources = sources }
+
+
+{-| Set the active submodel instance path (chain of placement ids from the main
+submodel down to the active submodel). Opens up the active submodel's placements
+as individually addressable sources and ghosts everything outside the active
+instance. Passing `[]` returns to the top level.
+-}
+setActivePath : List Int -> Model -> Model
+setActivePath activePath model =
+    case ( model.sync, model.document ) of
+        ( Just state, Just document ) ->
+            reconcile
+                { model
+                    | activePath = activePath
+                    , sync = Just { state | activePath = activePath }
+                    , activeSources = Sync.activeSourcesFor activePath document
+                }
+                |> Tuple.first
+
+        ( Nothing, Just document ) ->
+            { model
+                | activePath = activePath
+                , activeSources = Sync.activeSourcesFor activePath document
+            }
+
+        _ ->
+            { model | activePath = activePath, activeSources = Nothing }
+
+
 {-| How the host decorates the canvas.
 
 `extraEntities camera style aspect` adds host-owned entities — moving gears, a
@@ -2110,12 +2195,13 @@ view config model =
                         ++ config.extraEntities model.camera model.renderStyle aspect
 
                 ( Nothing, Just instanced ) ->
-                    Instanced.render
+                    Instanced.renderWithGhost
                         { camera = model.camera
                         , style = model.renderStyle
                         , width = model.width
                         , height = model.height
                         , coarsen = config.coarsenWhileMoving && model.refineFrames > 0
+                        , activeSources = model.activeSources
                         }
                         instanced
                         ++ config.extraEntities model.camera model.renderStyle aspect
@@ -2140,6 +2226,11 @@ view config model =
                 (Decode.field "clientX" Decode.float)
                 (Decode.field "clientY" Decode.float)
                 (Decode.field "shiftKey" Decode.bool)
+            )
+         , Html.Events.on "dblclick"
+            (Decode.map2 DoubleClick
+                (Decode.field "clientX" Decode.float)
+                (Decode.field "clientY" Decode.float)
             )
          , Html.Events.preventDefaultOn "wheel"
             (Decode.map (\delta -> ( Wheel delta, True )) ViewportDecode.wheelDeltaDecoder)

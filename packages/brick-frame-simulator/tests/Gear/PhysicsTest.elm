@@ -6,11 +6,21 @@ module Gear.PhysicsTest exposing (suite)
 import Array
 import Dict
 import Expect
-import Gear.Physics exposing (angleAt, propagate)
+import Gear.Physics
+    exposing
+        ( KinematicLinkage
+        , angleAt
+        , crankSliderPosition
+        , crankSliderRodAngle
+        , fourBarAngles
+        , propagate
+        , propagateWithLinkages
+        )
 import Gear.Types exposing (GearGraph, GearId, GearSpec)
 import Math.Matrix4 as Mat4
 import Math.Vector3 exposing (vec3)
 import Test exposing (Test, describe, test)
+
 
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
@@ -77,6 +87,7 @@ isolatedGraph =
     , connections = Dict.empty
     , rigidAxles = Dict.empty
     }
+
 
 
 -- ── Suite ─────────────────────────────────────────────────────────────────────
@@ -227,5 +238,139 @@ suite =
                         |> angleAt
                         |> (\f -> f 2)
                         |> Expect.within (Expect.Absolute 1.0e-6) -0.5
+            ]
+        , describe "Kinematic Linkages"
+            [ test "crank-slider calculates exact position at top/bottom dead center and quadrature" <|
+                \_ ->
+                    let
+                        r =
+                            10.0
+
+                        l =
+                            30.0
+
+                        -- At theta = 0: x = r + l = 40
+                        x0 =
+                            crankSliderPosition r l 0.0
+
+                        -- At theta = pi: x = l - r = 20
+                        xPi =
+                            crankSliderPosition r l pi
+
+                        -- At theta = pi/2: x = sqrt(30^2 - 10^2) = sqrt(800) ≈ 28.284
+                        xQuad =
+                            crankSliderPosition r l (pi / 2)
+                    in
+                    Expect.all
+                        [ \_ -> Expect.within (Expect.Absolute 0.001) 40.0 x0
+                        , \_ -> Expect.within (Expect.Absolute 0.001) 20.0 xPi
+                        , \_ -> Expect.within (Expect.Absolute 0.001) (sqrt 800) xQuad
+                        ]
+                        ()
+            , test "connecting rod angle tilts and aligns with stroke" <|
+                \_ ->
+                    let
+                        r =
+                            10.0
+
+                        l =
+                            20.0
+
+                        phi0 =
+                            crankSliderRodAngle r l 0.0
+
+                        phiQuad =
+                            crankSliderRodAngle r l (pi / 2)
+                    in
+                    Expect.all
+                        [ \_ -> Expect.within (Expect.Absolute 0.001) 0.0 phi0
+                        , \_ -> Expect.within (Expect.Absolute 0.001) (asin -0.5) phiQuad
+                        ]
+                        ()
+            , test "propagateWithLinkages updates slider positions from driven gears" <|
+                \_ ->
+                    let
+                        graph =
+                            twoGearGraph 8 16
+
+                        linkage : KinematicLinkage
+                        linkage =
+                            { id = 101
+                            , drivingGearId = 1
+                            , crankRadius = 10.0
+                            , rodLength = 30.0
+                            , crankOffset = 0.0
+                            }
+
+                        -- Motor at gear 0 rotates 2.0 rad. Gear 1 (ratio -8/16 = -0.5) rotates -1.0 rad.
+                        result =
+                            propagateWithLinkages graph [ linkage ] 0 2.0
+                    in
+                    case Dict.get 101 result.linkagePositions of
+                        Just state ->
+                            let
+                                expectedX =
+                                    crankSliderPosition 10.0 30.0 -1.0
+                            in
+                            Expect.within (Expect.Absolute 0.001) expectedX state.sliderX
+
+                        Nothing ->
+                            Expect.fail "expected linkage state"
+            , test "crank-slider clamps gracefully when crank radius exceeds rod length (r > l)" <|
+                \_ ->
+                    let
+                        pos =
+                            crankSliderPosition 25.0 10.0 (pi / 2)
+
+                        rodAngle =
+                            crankSliderRodAngle 25.0 10.0 (pi / 2)
+                    in
+                    Expect.all
+                        [ \_ -> Expect.within (Expect.Absolute 0.001) 0.0 pos
+                        , \_ -> Expect.within (Expect.Absolute 0.001) -(pi / 2) rodAngle
+                        ]
+                        ()
+            , test "fourBarAngles solves closed-loop coupler and rocker angles" <|
+                \_ ->
+                    let
+                        links =
+                            { ground = 40.0, crank = 15.0, coupler = 40.0, rocker = 15.0 }
+
+                        theta =
+                            pi / 3
+                    in
+                    case fourBarAngles links theta of
+                        Just ( couplerAngle, rockerAngle ) ->
+                            let
+                                bx =
+                                    links.crank * cos theta
+
+                                by =
+                                    links.crank * sin theta
+
+                                cxFromCoupler =
+                                    bx + links.coupler * cos couplerAngle
+
+                                cyFromCoupler =
+                                    by + links.coupler * sin couplerAngle
+
+                                cxFromRocker =
+                                    links.ground + links.rocker * cos rockerAngle
+
+                                cyFromRocker =
+                                    links.rocker * sin rockerAngle
+                            in
+                            Expect.all
+                                [ \_ -> Expect.within (Expect.Absolute 0.001) cxFromRocker cxFromCoupler
+                                , \_ -> Expect.within (Expect.Absolute 0.001) cyFromRocker cyFromCoupler
+                                ]
+                                ()
+
+                        Nothing ->
+                            Expect.fail "expected valid four-bar linkage solution"
+            , test "fourBarAngles returns Nothing when linkage cannot close (triangle inequality violated)" <|
+                \_ ->
+                    fourBarAngles { ground = 100.0, crank = 10.0, coupler = 20.0, rocker = 20.0 } 0.0
+                        |> Expect.equal Nothing
             ]
         ]

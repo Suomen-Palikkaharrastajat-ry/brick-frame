@@ -54,11 +54,9 @@ exportBlenderScript : Document -> ExportConfig -> String
 exportBlenderScript doc config =
     let
         allPlacements =
-            if config.groupSubmodels then
-                Document.placements doc
-
-            else
-                Document.mainPlacements doc
+            -- Top-level placements only: submodel references are expanded through the
+            -- part cache, so including every submodel's entries would duplicate parts.
+            Document.mainPlacements doc
 
         colorsUsed =
             List.foldl

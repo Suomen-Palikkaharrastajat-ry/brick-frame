@@ -7,19 +7,28 @@ module LDraw.Document exposing
     , clearTouched
     , empty
     , entryToText
+    , explodeSubmodel
     , fingerprint
     , fromLines
     , getPlacement
+    , groupIntoSubmodel
     , indexOfPlacement
+    , indexOfPlacementIn
     , insertPlacement
+    , insertPlacementIn
     , isMultiFile
+    , isSubmodelReference
+    , locatePlacement
     , mainPlacements
     , mainSubmodel
+    , normalise
     , parse
     , placements
+    , placementsOf
     , removePlacement
     , subfiles
     , subfilesSignature
+    , submodelByName
     , toLines
     , toLinesOf
     , updatePlacement
@@ -49,7 +58,8 @@ writer emits it as a plain `.ldr`. Anything with named submodels is an `.mpd`.
 import LDraw.Format as Format
 import LDraw.Parser as Parser
 import LDraw.Types exposing (LDrawLine(..), SubFileData)
-import Math.Matrix4 exposing (Mat4)
+import Math.Matrix4 as Mat4 exposing (Mat4)
+import Math.Vector3 as Vec3
 import Set exposing (Set)
 
 
@@ -295,19 +305,31 @@ entryToText entry =
 -}
 indexOfPlacement : Int -> Document -> Maybe Int
 indexOfPlacement id doc =
-    (mainSubmodel doc).entries
-        |> List.indexedMap Tuple.pair
-        |> List.filter
-            (\( _, entry ) ->
-                case entry of
-                    PlacementEntry p ->
-                        p.id == id
+    indexOfPlacementIn (mainSubmodel doc).name id doc
 
-                    Raw _ ->
-                        False
-            )
-        |> List.head
-        |> Maybe.map Tuple.first
+
+{-| Position of a placement in a specific submodel's entries.
+-}
+indexOfPlacementIn : String -> Int -> Document -> Maybe Int
+indexOfPlacementIn submodelName id doc =
+    case submodelByName submodelName doc of
+        Just submodel ->
+            submodel.entries
+                |> List.indexedMap Tuple.pair
+                |> List.filter
+                    (\( _, entry ) ->
+                        case entry of
+                            PlacementEntry p ->
+                                p.id == id
+
+                            Raw _ ->
+                                False
+                    )
+                |> List.head
+                |> Maybe.map Tuple.first
+
+        Nothing ->
+            Nothing
 
 
 {-| Put a placement back into the main submodel at an entry index (clamped), with
@@ -315,19 +337,33 @@ its original id. Used to undo a removal.
 -}
 insertPlacement : Int -> Placement -> Document -> Document
 insertPlacement index placement doc =
+    insertPlacementIn (mainSubmodel doc).name index placement doc
+
+
+{-| Put a placement into a specific submodel at an entry index (clamped).
+-}
+insertPlacementIn : String -> Int -> Placement -> Document -> Document
+insertPlacementIn submodelName index placement doc =
     let
         insert entries =
             List.take index entries ++ PlacementEntry placement :: List.drop index entries
 
-        update i submodel =
-            if i == 0 then
+        targetNorm =
+            if String.trim submodelName == "" then
+                normalise (mainSubmodel doc).name
+
+            else
+                normalise submodelName
+
+        update submodel =
+            if normalise submodel.name == targetNorm then
                 { submodel | entries = insert submodel.entries }
 
             else
                 submodel
     in
     { doc
-        | submodels = List.indexedMap update doc.submodels
+        | submodels = List.map update doc.submodels
         , nextId = max doc.nextId (placement.id + 1)
         , touched = Set.insert placement.id doc.touched
     }
@@ -349,6 +385,70 @@ getPlacement id doc =
         |> List.head
 
 
+{-| Locate which submodel contains a placement by id, along with its entry index.
+-}
+locatePlacement : Int -> Document -> Maybe ( String, Int, Placement )
+locatePlacement id doc =
+    let
+        findInSubmodel submodel =
+            submodel.entries
+                |> List.indexedMap Tuple.pair
+                |> List.filterMap
+                    (\( idx, entry ) ->
+                        case entry of
+                            PlacementEntry p ->
+                                if p.id == id then
+                                    Just ( submodel.name, idx, p )
+
+                                else
+                                    Nothing
+
+                            Raw _ ->
+                                Nothing
+                    )
+                |> List.head
+    in
+    doc.submodels
+        |> List.filterMap findInSubmodel
+        |> List.head
+
+
+{-| Find a submodel by name (normalised comparison). Empty string resolves to the main submodel.
+-}
+submodelByName : String -> Document -> Maybe Submodel
+submodelByName name doc =
+    if String.trim name == "" then
+        List.head doc.submodels
+
+    else
+        let
+            norm =
+                normalise name
+        in
+        doc.submodels
+            |> List.filter (\s -> normalise s.name == norm)
+            |> List.head
+
+
+{-| Check if a placement refers to a submodel in the document.
+-}
+isSubmodelReference : Placement -> Document -> Bool
+isSubmodelReference placement doc =
+    String.trim placement.part /= "" && submodelByName placement.part doc /= Nothing
+
+
+{-| Get the placements of a specific submodel by name.
+-}
+placementsOf : String -> Document -> List Placement
+placementsOf name doc =
+    case submodelByName name doc of
+        Just submodel ->
+            List.filterMap placementOf submodel.entries
+
+        Nothing ->
+            []
+
+
 {-| The lines of the main submodel, in the form the geometry and gear code
 consume.
 -}
@@ -361,11 +461,11 @@ toLines doc =
 -}
 toLinesOf : String -> Document -> List LDrawLine
 toLinesOf name doc =
-    case List.filter (\s -> normalise s.name == normalise name) doc.submodels of
-        found :: _ ->
+    case submodelByName name doc of
+        Just found ->
             entriesToLines found.entries
 
-        [] ->
+        Nothing ->
             []
 
 
@@ -391,15 +491,19 @@ addPlacement submodelName spec doc =
             , extra = []
             }
 
-        targetName =
-            if List.any (\s -> s.name == submodelName) doc.submodels then
-                submodelName
+        targetNorm =
+            let
+                norm =
+                    normalise submodelName
+            in
+            if String.trim submodelName /= "" && List.any (\s -> normalise s.name == norm) doc.submodels then
+                norm
 
             else
-                (mainSubmodel doc).name
+                normalise (mainSubmodel doc).name
 
         add submodel =
-            if submodel.name == targetName then
+            if normalise submodel.name == targetNorm then
                 { submodel | entries = submodel.entries ++ [ PlacementEntry placement ] }
 
             else
@@ -448,6 +552,356 @@ removePlacement id doc =
                     True
     in
     mapEntries (List.filter keep) { doc | touched = Set.insert id doc.touched }
+
+
+{-| Group selected placements into a new submodel with the given name.
+The selected placements in their parent submodel are replaced by a single placement
+referencing the new submodel at their shared center, and a new submodel is appended
+to the document containing the placements translated into the submodel's local frame.
+-}
+groupIntoSubmodel : String -> List Int -> Document -> Document
+groupIntoSubmodel name inputIds doc =
+    let
+        baseName =
+            let
+                trimmed =
+                    String.trim name
+            in
+            if trimmed == "" then
+                "submodel.ldr"
+
+            else if String.contains "." trimmed then
+                trimmed
+
+            else
+                trimmed ++ ".ldr"
+
+        existingNorms =
+            doc.submodels
+                |> List.map (.name >> normalise)
+                |> Set.fromList
+                |> Set.insert "main.ldr"
+
+        submodelName =
+            if not (Set.member (normalise baseName) existingNorms) then
+                baseName
+
+            else
+                let
+                    stem =
+                        if String.endsWith ".ldr" (String.toLower baseName) then
+                            String.dropRight 4 baseName
+
+                        else if String.endsWith ".dat" (String.toLower baseName) then
+                            String.dropRight 4 baseName
+
+                        else
+                            baseName
+
+                    findUnique n =
+                        let
+                            candidate =
+                                stem ++ "_" ++ String.fromInt n ++ ".ldr"
+                        in
+                        if Set.member (normalise candidate) existingNorms then
+                            findUnique (n + 1)
+
+                        else
+                            candidate
+                in
+                findUnique 2
+
+        matchingSubmodel =
+            doc.submodels
+                |> List.filter
+                    (\s ->
+                        List.any
+                            (\e ->
+                                case e of
+                                    PlacementEntry p ->
+                                        List.member p.id inputIds
+
+                                    Raw _ ->
+                                        False
+                            )
+                            s.entries
+                    )
+                |> List.head
+    in
+    case matchingSubmodel of
+        Nothing ->
+            doc
+
+        Just parentSubmodel ->
+            let
+                selectedPlacements =
+                    parentSubmodel.entries
+                        |> List.filterMap
+                            (\e ->
+                                case e of
+                                    PlacementEntry p ->
+                                        if List.member p.id inputIds then
+                                            Just p
+
+                                        else
+                                            Nothing
+
+                                    Raw _ ->
+                                        Nothing
+                            )
+            in
+            if List.isEmpty selectedPlacements then
+                doc
+
+            else
+                let
+                    positions =
+                        List.map (\p -> Mat4.transform p.matrix (Vec3.vec3 0 0 0)) selectedPlacements
+
+                    count =
+                        toFloat (List.length positions)
+
+                    center =
+                        Vec3.scale (1 / count) (List.foldl Vec3.add (Vec3.vec3 0 0 0) positions)
+
+                    tInv =
+                        Mat4.makeTranslate (Vec3.negate center)
+
+                    localPlacements =
+                        List.map (\p -> { p | matrix = cleanMatrix (Mat4.mul tInv p.matrix) }) selectedPlacements
+
+                    newPlacementId =
+                        doc.nextId
+
+                    newPlacement =
+                        { id = newPlacementId
+                        , part = normalise submodelName
+                        , fileText = submodelName
+                        , color = 16
+                        , matrix = Mat4.makeTranslate center
+                        , extra = []
+                        }
+
+                    firstIndex =
+                        parentSubmodel.entries
+                            |> List.indexedMap Tuple.pair
+                            |> List.filter
+                                (\( _, e ) ->
+                                    case e of
+                                        PlacementEntry p ->
+                                            List.member p.id inputIds
+
+                                        Raw _ ->
+                                            False
+                                )
+                            |> List.head
+                            |> Maybe.map Tuple.first
+                            |> Maybe.withDefault 0
+
+                    selectedIdSet =
+                        Set.fromList (List.map .id selectedPlacements)
+
+                    remainingEntries =
+                        List.filter
+                            (\e ->
+                                case e of
+                                    PlacementEntry p ->
+                                        not (Set.member p.id selectedIdSet)
+
+                                    Raw _ ->
+                                        True
+                            )
+                            parentSubmodel.entries
+
+                    newParentEntries =
+                        List.take firstIndex remainingEntries
+                            ++ (PlacementEntry newPlacement :: List.drop firstIndex remainingEntries)
+
+                    newSubmodel =
+                        { name = submodelName
+                        , entries = List.map PlacementEntry localPlacements
+                        }
+
+                    isFirstUnnamed s =
+                        s.name == "" && List.head doc.submodels == Just s
+
+                    parentNorm =
+                        normalise parentSubmodel.name
+
+                    updatedSubmodels =
+                        doc.submodels
+                            |> List.map
+                                (\s ->
+                                    if normalise s.name == parentNorm then
+                                        { s
+                                            | name =
+                                                if isFirstUnnamed s then
+                                                    "main.ldr"
+
+                                                else
+                                                    s.name
+                                            , entries = newParentEntries
+                                        }
+
+                                    else
+                                        s
+                                )
+                            |> (\subs -> subs ++ [ newSubmodel ])
+
+                    touchedIds =
+                        Set.insert newPlacementId (Set.union selectedIdSet doc.touched)
+                in
+                { doc
+                    | submodels = updatedSubmodels
+                    , nextId = newPlacementId + 1
+                    , touched = touchedIds
+                }
+
+
+{-| Explode / inline a submodel placement into its parent submodel.
+Replaces the submodel placement with its constituent placements transformed by the
+placement's matrix. Inherited colours (code 16) take the placement's colour.
+If the exploded submodel is no longer referenced anywhere in the document, it is removed.
+-}
+explodeSubmodel : Int -> Document -> Document
+explodeSubmodel placementId doc =
+    case locatePlacement placementId doc of
+        Nothing ->
+            doc
+
+        Just ( parentName, placementIndex, submodelPlacement ) ->
+            case submodelByName submodelPlacement.part doc of
+                Nothing ->
+                    doc
+
+                Just submodel ->
+                    let
+                        step entry ( inlined, nextIdAcc ) =
+                            case entry of
+                                PlacementEntry child ->
+                                    let
+                                        inlinedPlacement =
+                                            { id = nextIdAcc
+                                            , part = child.part
+                                            , fileText = child.fileText
+                                            , color =
+                                                if child.color == 16 then
+                                                    submodelPlacement.color
+
+                                                else
+                                                    child.color
+                                            , matrix = cleanMatrix (Mat4.mul submodelPlacement.matrix child.matrix)
+                                            , extra = child.extra
+                                            }
+                                    in
+                                    ( PlacementEntry inlinedPlacement :: inlined, nextIdAcc + 1 )
+
+                                Raw text ->
+                                    ( Raw text :: inlined, nextIdAcc )
+
+                        ( reversedInlined, finalNextId ) =
+                            List.foldl step ( [], doc.nextId ) submodel.entries
+
+                        inlinedEntries =
+                            List.reverse reversedInlined
+
+                        inlinedPlacementIds =
+                            inlinedEntries
+                                |> List.filterMap
+                                    (\e ->
+                                        case e of
+                                            PlacementEntry p ->
+                                                Just p.id
+
+                                            Raw _ ->
+                                                Nothing
+                                    )
+
+                        replaceInEntries entries =
+                            List.take placementIndex entries
+                                ++ inlinedEntries
+                                ++ List.drop (placementIndex + 1) entries
+
+                        parentNorm =
+                            normalise parentName
+
+                        updatedSubmodels =
+                            List.map
+                                (\s ->
+                                    if normalise s.name == parentNorm then
+                                        { s | entries = replaceInEntries s.entries }
+
+                                    else
+                                        s
+                                )
+                                doc.submodels
+
+                        isReferenced name subs =
+                            let
+                                norm =
+                                    normalise name
+                            in
+                            subs
+                                |> List.concatMap .entries
+                                |> List.any
+                                    (\e ->
+                                        case e of
+                                            PlacementEntry p ->
+                                                normalise p.part == norm
+
+                                            Raw _ ->
+                                                False
+                                    )
+
+                        explodedNorm =
+                            normalise submodel.name
+
+                        -- Keep main submodel always; remove non-main if no longer referenced
+                        prunedSubmodels =
+                            case updatedSubmodels of
+                                main :: rest ->
+                                    main :: List.filter (\s -> normalise s.name /= explodedNorm || isReferenced s.name updatedSubmodels) rest
+
+                                [] ->
+                                    []
+
+                        touched =
+                            List.foldl Set.insert doc.touched (placementId :: inlinedPlacementIds)
+                    in
+                    { doc
+                        | submodels = prunedSubmodels
+                        , nextId = finalNextId
+                        , touched = touched
+                    }
+
+
+cleanMatrix : Mat4 -> Mat4
+cleanMatrix matrix =
+    let
+        m =
+            Mat4.toRecord matrix
+
+        r v =
+            toFloat (round (v * 1000000)) / 1000000
+    in
+    Mat4.fromRecord
+        { m11 = r m.m11
+        , m21 = r m.m21
+        , m31 = r m.m31
+        , m41 = 0
+        , m12 = r m.m12
+        , m22 = r m.m22
+        , m32 = r m.m32
+        , m42 = 0
+        , m13 = r m.m13
+        , m23 = r m.m23
+        , m33 = r m.m33
+        , m43 = 0
+        , m14 = r m.m14
+        , m24 = r m.m24
+        , m34 = r m.m34
+        , m44 = 1
+        }
 
 
 

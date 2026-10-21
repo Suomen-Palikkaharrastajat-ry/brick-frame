@@ -3,6 +3,7 @@ module Viewport.Framing exposing
     , ViewPreset(..)
     , applyZoomRange
     , cameraForBounds
+    , cameraForStep
     , groundLevel
     , modelBoundsFromInstanced
     , modelBoundsFromLines
@@ -19,6 +20,7 @@ distances, so city-scale and single-brick models both frame sensibly.
 
 import LDraw.Geometry as Geometry
 import LDraw.Resolve exposing (PartCache)
+import LDraw.Steps as Steps exposing (Step)
 import LDraw.Types exposing (LDrawLine)
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3
@@ -182,6 +184,44 @@ cameraForBounds width height center radius currentCamera =
         , elevation = 0.6
     }
         |> applyZoomRange width height radius
+
+
+{-| Frame the camera to focus on the parts introduced in a building instruction step.
+Falls back to accumulated placements if the step itself has no placements.
+Converts LDraw placement coordinates (Y-down) to render coordinates (Y-up).
+-}
+cameraForStep : Int -> Int -> Step -> Camera -> Camera
+cameraForStep width height step currentCamera =
+    let
+        targetPlacements =
+            if List.isEmpty step.placements then
+                step.accumulatedPlacements
+
+            else
+                step.placements
+    in
+    case Steps.stepBounds targetPlacements of
+        Just bounds ->
+            let
+                renderCenter =
+                    Vec3.vec3
+                        (Vec3.getX bounds.center)
+                        -(Vec3.getY bounds.center)
+                        -(Vec3.getZ bounds.center)
+
+                sceneRadius =
+                    case Steps.stepBounds step.accumulatedPlacements of
+                        Just accBounds ->
+                            max bounds.radius accBounds.radius
+
+                        Nothing ->
+                            bounds.radius
+            in
+            cameraForBounds width height renderCenter bounds.radius currentCamera
+                |> applyZoomRange width height sceneRadius
+
+        Nothing ->
+            currentCamera
 
 
 {-| Orbit distance at which a bounding sphere of `radius` fills the viewport.

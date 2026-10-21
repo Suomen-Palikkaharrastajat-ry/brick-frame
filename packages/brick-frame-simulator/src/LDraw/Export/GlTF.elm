@@ -227,11 +227,9 @@ exportGlTF doc cache config =
             Dict.toList grouped
 
         placements =
-            if config.groupSubmodels then
-                Document.placements doc
-
-            else
-                Document.mainPlacements doc
+            -- Top-level placements only: submodel references are expanded through the
+            -- part cache, so including every submodel's entries would duplicate parts.
+            Document.mainPlacements doc
 
         placementColors =
             placements
