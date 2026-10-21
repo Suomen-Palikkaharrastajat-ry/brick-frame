@@ -15,6 +15,7 @@ import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (vec3)
 import Render.Style as Style
 import Set
+import Studio.BOM as BOM
 import Studio.Edit as Edit exposing (Axis(..))
 import Studio.Gizmo as Gizmo
 import Studio.Layout as Layout
@@ -1148,6 +1149,52 @@ panelSuite =
                         , \m -> Expect.equal Nothing (step (OpenPanel Nothing) (step (OpenPanel (Just Layout.PartsPanel)) m)).panel
                         ]
                         loaded
+            ]
+        , describe "BOM & marketplace integration"
+            [ test "ToggleBOM opens and CloseBOM closes the BOM panel" <|
+                \_ ->
+                    let
+                        opened =
+                            step ToggleBOM loaded
+
+                        closed =
+                            step CloseBOM opened
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal True opened.bomOpen
+                        , \_ -> Expect.equal False closed.bomOpen
+                        ]
+                        ()
+            , test "BOMSelectLot selects matching placements in the viewport" <|
+                \_ ->
+                    let
+                        lotSelected =
+                            step (BOMSelectLot "3001" 4) loaded
+                    in
+                    Expect.equal (Set.singleton 0) lotSelected.selection
+            , test "BOMSelectLot selects parent submodel placements for parts nested in MPD submodels" <|
+                \_ ->
+                    let
+                        mpdFile =
+                            "0 FILE main.ldr\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 wheel.ldr\n1 1 40 0 0 1 0 0 0 1 0 0 0 1 wheel.ldr\n0 FILE wheel.ldr\n1 0 0 0 0 1 0 0 0 1 0 0 0 1 3023.dat\n"
+
+                        mpdLoaded =
+                            start
+                                |> step (FileTextReceived mpdFile)
+                                |> step (BOMSelectLot "3023" 0)
+                    in
+                    Expect.equal (Set.fromList [ 0, 1 ]) mpdLoaded.selection
+            , test "BOMSort toggles column and order" <|
+                \_ ->
+                    let
+                        sorted =
+                            step (BOMSort BOM.SortName) loaded
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal BOM.SortName m.bomState.sortColumn
+                        , \m -> Expect.equal False m.bomState.sortAscending
+                        ]
+                        sorted
             ]
         , describe "rendering quality and exporters"
             [ test "toggling render quality switches between Draft and Realistic and updates viewport style" <|

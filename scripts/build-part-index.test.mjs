@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { buildIndex, extractConnectionsFromText, parsePartHeader, writeIndex, parseRebrickablePartColors, renderSvgThumbnail, batchRenderThumbnails } from './build-part-index.mjs'
+import { buildIndex, extractConnectionsFromText, parseElementsCsv, parsePartHeader, writeElementsIndex, writeIndex, parseRebrickablePartColors, renderSvgThumbnail, batchRenderThumbnails } from './build-part-index.mjs'
 import { parseLDrawGeometry } from '../studio-app/thumbnail-pipeline.js'
 
 const brick = `0 Brick  2 x  4
@@ -59,6 +59,27 @@ test('writes parts-index.json next to the parts', () => {
   const { target, count } = writeIndex(dir)
   assert.equal(count, 1)
   assert.equal(JSON.parse(fs.readFileSync(target, 'utf8')).parts.length, 1)
+})
+
+test('parses Rebrickable elements CSV and maps to BrickLink & Element IDs', () => {
+  const csv = `element_id,part_num,color_id,design_id
+300121,3001,4,3001
+302326,3023,0,3023
+`
+  const catalog = parseElementsCsv(csv)
+  assert.equal(catalog.version, 1)
+  assert.deepEqual(catalog.elements['3001:4'], ['300121', '3001', 5, 'Red'])
+  assert.deepEqual(catalog.elements['3023:0'], ['302326', '3023', 11, 'Black'])
+})
+
+test('writes elements-index.json', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ldraw-'))
+  const { target, count } = writeElementsIndex(dir)
+  assert.ok(count > 0)
+  assert.ok(fs.existsSync(target))
+  const data = JSON.parse(fs.readFileSync(target, 'utf8'))
+  assert.equal(data.version, 1)
+  assert.ok(data.elements['3001:4'])
 })
 
 test('parseRebrickablePartColors ingests csv into map of part colors', () => {

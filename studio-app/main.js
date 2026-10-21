@@ -97,6 +97,15 @@ ports.downloadFile.subscribe(({ filename, mime, text }) => {
   URL.revokeObjectURL(url)
 })
 
+// Copy text to clipboard
+if (ports.copyToClipboard) {
+  ports.copyToClipboard.subscribe((text) => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {})
+    }
+  })
+}
+
 // High-resolution screenshot / render capture
 if (ports.captureRender) {
   ports.captureRender.subscribe(({ width, height, transparent, filename }) => {
