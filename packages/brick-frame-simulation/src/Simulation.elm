@@ -798,6 +798,8 @@ gearEntities camera styleInput aspect model =
                                             , rimStrength = style.rimStrength
                                             , rimPower = style.rimPower
                                             , vibrance = style.vibrance
+                                            , bevelStrength = style.bevelStrength
+                                            , studEmbossStrength = style.studEmbossStrength
                                             , u_ghostMode = 0.0
                                             , u_ghostAlpha = 1.0
                                             }
@@ -861,6 +863,8 @@ componentEntities camera styleInput aspect model =
                         , rimStrength = style.rimStrength
                         , rimPower = style.rimPower
                         , vibrance = style.vibrance
+                        , bevelStrength = style.bevelStrength
+                        , studEmbossStrength = style.studEmbossStrength
                         , u_ghostMode = 0.0
                         , u_ghostAlpha = 1.0
                         }

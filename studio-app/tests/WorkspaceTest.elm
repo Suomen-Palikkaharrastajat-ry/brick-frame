@@ -9,9 +9,11 @@ import Expect
 import Http
 import LDraw.Connectivity as Connectivity exposing (CollisionMode(..))
 import LDraw.Document as Document
+import LDraw.Export as Export
 import LDraw.Writer as Writer
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (vec3)
+import Render.Style as Style
 import Set
 import Studio.Edit as Edit exposing (Axis(..))
 import Studio.Gizmo as Gizmo
@@ -1146,6 +1148,39 @@ panelSuite =
                         , \m -> Expect.equal Nothing (step (OpenPanel Nothing) (step (OpenPanel (Just Layout.PartsPanel)) m)).panel
                         ]
                         loaded
+            ]
+        , describe "rendering quality and exporters"
+            [ test "toggling render quality switches between Draft and Realistic and updates viewport style" <|
+                \_ ->
+                    let
+                        realistic =
+                            step ToggleRenderQuality loaded
+
+                        backToDraft =
+                            step ToggleRenderQuality realistic
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal Style.Realistic realistic.renderQuality
+                        , \_ -> Expect.greaterThan 0.1 realistic.viewport.renderStyle.bevelStrength
+                        , \_ -> Expect.greaterThan 0.1 realistic.viewport.renderStyle.studEmbossStrength
+                        , \_ -> Expect.equal Style.Draft backToDraft.renderQuality
+                        , \_ -> Expect.within (Expect.Absolute 0.0001) 0 backToDraft.viewport.renderStyle.bevelStrength
+                        ]
+                        ()
+            , test "export menu opens and closes when selecting an export format or snapshot" <|
+                \_ ->
+                    let
+                        opened =
+                            step ToggleExportMenu loaded
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal True opened.exportMenuOpen
+                        , \_ -> Expect.equal False (step (ExportFormat Export.GlTFBinary) opened).exportMenuOpen
+                        , \_ -> Expect.equal False (step (ExportFormat Export.BlenderScript) opened).exportMenuOpen
+                        , \_ -> Expect.equal False (step (ExportFormat Export.UsdzArchive) opened).exportMenuOpen
+                        , \_ -> Expect.equal False (step CaptureSnapshot opened).exportMenuOpen
+                        ]
+                        ()
             ]
         ]
 

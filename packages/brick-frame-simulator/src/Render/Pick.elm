@@ -1,4 +1,4 @@
-module Render.Pick exposing (isSphereVisible, raySphereHit, screenRay)
+module Render.Pick exposing (isSphereVisible, rayAabbHit, raySphereHit, screenRay)
 
 {-| Camera-space tests shared by the viewport and the simulation: is a bounding
 sphere on screen, and which world-space ray does a screen point look along.
@@ -230,4 +230,90 @@ raySphereHit rayOrigin rayDir center radius =
             Just t2
 
         else
+            Nothing
+
+
+{-| Intersection of a ray (origin, direction) with an axis-aligned bounding box (min, max).
+Returns the distance `t` along the ray to the entry point, or `Nothing` if no hit.
+-}
+rayAabbHit : Vec3.Vec3 -> Vec3.Vec3 -> Vec3.Vec3 -> Vec3.Vec3 -> Maybe Float
+rayAabbHit rayOrigin rayDir boxMin boxMax =
+    let
+        ox =
+            Vec3.getX rayOrigin
+
+        oy =
+            Vec3.getY rayOrigin
+
+        oz =
+            Vec3.getZ rayOrigin
+
+        dx =
+            Vec3.getX rayDir
+
+        dy =
+            Vec3.getY rayDir
+
+        dz =
+            Vec3.getZ rayDir
+
+        minX =
+            min (Vec3.getX boxMin) (Vec3.getX boxMax)
+
+        minY =
+            min (Vec3.getY boxMin) (Vec3.getY boxMax)
+
+        minZ =
+            min (Vec3.getZ boxMin) (Vec3.getZ boxMax)
+
+        maxX =
+            max (Vec3.getX boxMin) (Vec3.getX boxMax)
+
+        maxY =
+            max (Vec3.getY boxMin) (Vec3.getY boxMax)
+
+        maxZ =
+            max (Vec3.getZ boxMin) (Vec3.getZ boxMax)
+
+        axisInterval orig dir lo hi =
+            if abs dir < 1.0e-7 then
+                if orig < lo || orig > hi then
+                    Nothing
+
+                else
+                    Just ( -1.0e30, 1.0e30 )
+
+            else
+                let
+                    invDir =
+                        1 / dir
+
+                    t0 =
+                        (lo - orig) * invDir
+
+                    t1 =
+                        (hi - orig) * invDir
+                in
+                Just ( min t0 t1, max t0 t1 )
+    in
+    case ( axisInterval ox dx minX maxX, axisInterval oy dy minY maxY, axisInterval oz dz minZ maxZ ) of
+        ( Just ( tNearX, tFarX ), Just ( tNearY, tFarY ), Just ( tNearZ, tFarZ ) ) ->
+            let
+                tEnter =
+                    max (max tNearX tNearY) tNearZ
+
+                tExit =
+                    min (min tFarX tFarY) tFarZ
+            in
+            if tEnter <= tExit && tExit >= 0 then
+                if tEnter >= 0 then
+                    Just tEnter
+
+                else
+                    Just 0
+
+            else
+                Nothing
+
+        _ ->
             Nothing

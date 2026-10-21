@@ -43,6 +43,7 @@ import LDraw.Connectivity as Connectivity
         , WorldConnectionPoint
         )
 import LDraw.Document as Document exposing (Document)
+import LDraw.Export as Export
 import LDraw.Resolve as Resolve
 import LDraw.Types exposing (LDrawLine)
 import LDraw.Writer as Writer
@@ -150,6 +151,8 @@ type alias Model =
     , panel : Maybe Panel
     , hints : Hints.Hints
     , hintGeneration : Int
+    , renderQuality : Style.Quality
+    , exportMenuOpen : Bool
     , context : WorkspaceContext
     , snapDistance : Float
     , collisionMode : CollisionMode
@@ -205,6 +208,10 @@ type Msg
     | SetRotateStep Int
     | KeyUp String
     | Save
+    | ToggleRenderQuality
+    | ToggleExportMenu
+    | ExportFormat Export.ExportFormat
+    | CaptureSnapshot
     | WindowSized Int Int
     | PartIndexLoaded (Result Http.Error PartIndex.PartIndex)
     | PaletteQuery String
@@ -282,6 +289,8 @@ init flags =
             , panel = Nothing
             , hints = Hints.empty
             , hintGeneration = 0
+            , renderQuality = Style.Draft
+            , exportMenuOpen = False
             , context =
                 { activeSubmodel = ""
                 , path = []
@@ -707,6 +716,71 @@ update msg model =
                         "model.ldr"
                 , mime = "text/plain"
                 , text = Writer.writeDocument model.document
+                }
+            )
+
+        ToggleRenderQuality ->
+            let
+                nextQuality =
+                    case model.renderQuality of
+                        Style.Draft ->
+                            Style.Realistic
+
+                        Style.Realistic ->
+                            Style.Draft
+            in
+            ( { model
+                | renderQuality = nextQuality
+                , viewport = Viewport.setRenderQuality nextQuality model.viewport
+              }
+            , Cmd.none
+            )
+
+        ToggleExportMenu ->
+            ( { model | exportMenuOpen = not model.exportMenuOpen }, Cmd.none )
+
+        ExportFormat format ->
+            let
+                downloadCmd =
+                    case format of
+                        Export.GlTFBinary ->
+                            let
+                                payload =
+                                    Export.exportGlTF model.document model.viewport.partCache Export.defaultConfig
+                            in
+                            Ports.downloadFile
+                                { filename = payload.filename
+                                , mime = "model/gltf-binary;application/octet-stream"
+                                , text = payload.glbBase64
+                                }
+
+                        Export.BlenderScript ->
+                            Ports.downloadFile
+                                { filename = "model_cycles_setup.py"
+                                , mime = "text/x-python"
+                                , text = Export.exportBlenderScript model.document Export.defaultConfig
+                                }
+
+                        Export.UsdzArchive ->
+                            let
+                                payload =
+                                    Export.exportUSDZ model.document model.viewport.partCache Export.defaultConfig
+                            in
+                            Ports.downloadFile
+                                { filename = payload.filename
+                                , mime = "model/vnd.usdz+zip;application/octet-stream"
+                                , text = payload.usdzBase64
+                                }
+            in
+            ( { model | exportMenuOpen = False }, downloadCmd )
+
+        CaptureSnapshot ->
+            ( { model | exportMenuOpen = False }
+            , Ports.captureRender
+                { width = 1920
+                , height = 1080
+                , transparent = True
+                , filename = "palikkakehys-render.png"
                 }
             )
 
@@ -2698,6 +2772,12 @@ overlay model =
          , viewBreadcrumbs model
          , viewToolbar model
          ]
+            ++ (if model.exportMenuOpen then
+                    [ viewExportMenu ]
+
+                else
+                    []
+               )
             ++ (if model.panel == Nothing then
                     [ viewPad model ]
 
@@ -2824,6 +2904,15 @@ viewTopBar model =
                 )
             ]
         , span [ Attr.style "flex" "1", Attr.style "min-width" "0", Attr.style "overflow" "hidden", Attr.style "text-overflow" "ellipsis" ] [ text (documentSummary model) ]
+        , Button.toggle
+            { active = model.renderQuality == Style.Realistic, enabled = True }
+            ToggleRenderQuality
+            (if narrow then
+                "HD"
+
+             else
+                "Realistic"
+            )
         , Button.secondary SimulateRequested "▶ Simulate"
         , Button.secondary InstructionsRequested "📖 Instructions"
         , Button.secondary NewDocument "New"
@@ -2835,6 +2924,30 @@ viewTopBar model =
                 "Open file"
             )
         , Button.secondary Save "Save"
+        , Button.toggle { active = model.exportMenuOpen, enabled = True } ToggleExportMenu "Export"
+        ]
+
+
+viewExportMenu : Html Msg
+viewExportMenu =
+    div
+        [ Attr.style "position" "absolute"
+        , Attr.style "top" "44px"
+        , Attr.style "right" "12px"
+        , Attr.style "display" "flex"
+        , Attr.style "flex-direction" "column"
+        , Attr.style "gap" "6px"
+        , Attr.style "padding" "10px"
+        , Attr.style "background" Theme.panelSurface
+        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "border-radius" "8px"
+        , Attr.style "pointer-events" "auto"
+        , Attr.style "z-index" "20"
+        ]
+        [ Button.secondary (ExportFormat Export.GlTFBinary) "Export glTF (.glb)"
+        , Button.secondary (ExportFormat Export.BlenderScript) "Export Blender (.py)"
+        , Button.secondary (ExportFormat Export.UsdzArchive) "Export AR (.usdz)"
+        , Button.secondary CaptureSnapshot "Render PNG (1080p)"
         ]
 
 

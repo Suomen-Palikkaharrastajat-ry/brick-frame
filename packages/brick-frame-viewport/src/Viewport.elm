@@ -18,6 +18,7 @@ module Viewport exposing
     , pickSource
     , setActivePath
     , setActiveSources
+    , setRenderQuality
     , subscriptions
     , update
     , view
@@ -360,6 +361,7 @@ type Msg
     | FitView
     | ToggleWalkMode
     | SetViewPreset ViewPreset
+    | SetRenderQuality Style.Quality
     | KeyPressed Shortcuts.KeyEvent
     | KeyReleased String
     | AllKeysReleased
@@ -807,6 +809,9 @@ updateInner msg model =
 
         SetViewPreset preset ->
             ( applyViewPreset preset model, Cmd.none, [ CameraSettled ] )
+
+        SetRenderQuality quality ->
+            ( { model | renderStyle = Style.fromQuality quality }, Cmd.none, [] )
 
         KeyPressed event ->
             if Shortcuts.isTextEntryTarget event then
@@ -1762,10 +1767,12 @@ finishLoadingDocument document model =
 
 {-| The document placement under a screen point, nearest first.
 
-Placements are tested as bounding spheres — cheap, and good enough to pick a
-brick out of a model; an exact triangle test can replace it later without
-changing the signature. When ghost mode is active (`activeSources /= Nothing`),
-only placements belonging to the active submodel are pickable.
+Placements are tested as bounding spheres to quickly cull non-candidates, then
+ranked by ray-AABB intersection in each part's local coordinates. When multiple
+parts are pierced, the closest front-face intersection wins; ties at the same depth
+are resolved by choosing the smaller bounding radius (e.g. brick on baseplate).
+When ghost mode is active (`activeSources /= Nothing`), only placements
+belonging to the active submodel are pickable.
 
 -}
 pickSource : Float -> Float -> Model -> Maybe Int
@@ -1789,7 +1796,37 @@ pickSource x y model =
                 |> List.filterMap
                     (\p ->
                         Pick.raySphereHit origin direction p.center p.radius
-                            |> Maybe.map (\t -> ( ( t + p.radius, p.radius ), p.source ))
+                            |> Maybe.map
+                                (\sphereT ->
+                                    let
+                                        aabbHit =
+                                            Dict.get p.part scene.parts
+                                                |> Maybe.andThen
+                                                    (\mesh ->
+                                                        Mat4.inverse p.matrix
+                                                            |> Maybe.andThen
+                                                                (\inv ->
+                                                                    let
+                                                                        localOrigin =
+                                                                            Mat4.transform inv origin
+
+                                                                        localTarget =
+                                                                            Mat4.transform inv (Vec3.add origin direction)
+
+                                                                        localDir =
+                                                                            Vec3.sub localTarget localOrigin
+                                                                    in
+                                                                    Pick.rayAabbHit localOrigin localDir mesh.boundsMin mesh.boundsMax
+                                                                )
+                                                    )
+                                    in
+                                    case aabbHit of
+                                        Just t ->
+                                            ( ( t, p.radius ), p.source )
+
+                                        Nothing ->
+                                            ( ( sphereT + p.radius + 1.0e6, p.radius ), p.source )
+                                )
                     )
                 |> List.sortBy Tuple.first
                 |> List.head
@@ -2136,6 +2173,13 @@ type alias ViewConfig =
     }
 
 
+{-| Switch the viewport's rendering quality preset (e.g. Draft or Realistic).
+-}
+setRenderQuality : Style.Quality -> Model -> Model
+setRenderQuality quality model =
+    { model | renderStyle = Style.fromQuality quality }
+
+
 {-| The WebGL canvas with its mouse, wheel and touch/pointer listeners.
 -}
 view : ViewConfig -> Model -> Html Msg
@@ -2165,7 +2209,12 @@ view config model =
                 ( Nothing, Nothing ) ->
                     []
     in
-    WebGL.toHtml
+    WebGL.toHtmlWith
+        [ WebGL.antialias
+        , WebGL.alpha True
+        , WebGL.depth 24
+        , WebGL.preserveDrawingBuffer
+        ]
         ([ Attr.width model.width
          , Attr.height model.height
          , Attr.style "display" "block"
