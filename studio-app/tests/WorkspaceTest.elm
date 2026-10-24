@@ -23,7 +23,7 @@ import Studio.Palette as Palette
 import Studio.PartIndex as PartIndex
 import Studio.Shortcuts as Shortcuts exposing (Tool(..))
 import Studio.Transform as Transform
-import Studio.Workspace as Workspace exposing (Msg(..))
+import Studio.Workspace as Workspace exposing (CoordinateFrame(..), Msg(..))
 import Test exposing (Test, describe, test)
 import Viewport
 
@@ -750,6 +750,216 @@ editingSuite =
                         , \_ -> Expect.equal [ "submodel_1.ldr", "3001.dat" ] (List.map .part (Document.mainPlacements undone.document))
                         ]
                         ()
+            , test "arc gizmo inside a submodel respects LocalFrame vs WorldFrame orientations and centers" <|
+                \_ ->
+                    let
+                        ( subX, subY ) =
+                            screenOf 0 loaded
+
+                        grouped =
+                            loaded
+                                |> click ( subX, subY )
+                                |> step GroupSelection
+
+                        -- Rotate submodel placement (id 2) by 90 degrees around Z
+                        ( rotatedDoc, _ ) =
+                            Edit.apply
+                                (Edit.RotateAroundAxis [ 2 ]
+                                    { pivot = vec3 0 0 0
+                                    , axis = vec3 0 0 1
+                                    , radians = degrees 90
+                                    }
+                                )
+                                grouped.document
+
+                        entered =
+                            step EnterSubmodel { grouped | document = rotatedDoc }
+
+                        -- Translate child part (id 0) inside submodel by (10, 0, 0)
+                        ( movedDoc, _ ) =
+                            Edit.apply (Edit.Translate [ 0 ] (vec3 10 0 0)) entered.document
+
+                        selectedChild =
+                            { entered | document = movedDoc }
+                                |> step (SelectPlacement 0 False)
+                                |> step (UseTool RotateTool)
+
+                        localArcs =
+                            Workspace.currentArcHandles selectedChild
+
+                        worldFrameModel =
+                            step ToggleCoordinateFrame selectedChild
+
+                        worldArcs =
+                            Workspace.currentArcHandles worldFrameModel
+
+                        findKind kind list =
+                            List.filter (\a -> a.axisKind == Just kind) list |> List.head
+                    in
+                    case ( findKind AxisX localArcs, findKind AxisY localArcs, findKind AxisX worldArcs ) of
+                        ( Just lx, Just ly, Just wx ) ->
+                            Expect.all
+                                -- worldCenter: (10, 0, 0) rotated 90 deg around Z becomes (0, 10, 0)
+                                [ \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getX lx.center)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 10 (Vec3.getY lx.center)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getZ lx.center)
+
+                                -- LocalFrame: local X axis (1, 0, 0) rotated 90 deg around Z is (0, 1, 0)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getX lx.axis)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 1 (Vec3.getY lx.axis)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getZ lx.axis)
+
+                                -- LocalFrame: local Y axis (0, 1, 0) rotated 90 deg around Z is (-1, 0, 0)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) -1 (Vec3.getX ly.axis)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getY ly.axis)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getZ ly.axis)
+
+                                -- WorldFrame: center is still worldCenter (0, 10, 0)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getX wx.center)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 10 (Vec3.getY wx.center)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getZ wx.center)
+
+                                -- WorldFrame: X axis is world cardinal (1, 0, 0)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 1 (Vec3.getX wx.axis)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getY wx.axis)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getZ wx.axis)
+                                ]
+                                ()
+
+                        _ ->
+                            Expect.fail "expected arc handles"
+            , test "ArcDrag inside a rotated submodel correctly maps rotation to local space and undoes" <|
+                \_ ->
+                    let
+                        ( subX, subY ) =
+                            screenOf 0 loaded
+
+                        grouped =
+                            loaded
+                                |> click ( subX, subY )
+                                |> step GroupSelection
+
+                        -- Rotate submodel reference by 90 degrees around Z
+                        ( rotatedDoc, _ ) =
+                            Edit.apply
+                                (Edit.RotateAroundAxis [ 2 ]
+                                    { pivot = vec3 0 0 0
+                                    , axis = vec3 0 0 1
+                                    , radians = degrees 90
+                                    }
+                                )
+                                grouped.document
+
+                        entered =
+                            step EnterSubmodel { grouped | document = rotatedDoc }
+
+                        ready =
+                            entered
+                                |> step (SelectPlacement 0 False)
+                                |> step (UseTool RotateTool)
+
+                        zArc =
+                            Workspace.currentArcHandles ready
+                                |> List.filter (\a -> a.axisKind == Just AxisZ)
+                                |> List.head
+
+                        dragged =
+                            case zArc of
+                                Just arc ->
+                                    case arc.screenPoints of
+                                        ( sx, sy ) :: _ ->
+                                            let
+                                                ( cx, cy ) =
+                                                    arc.screenCenter
+
+                                                ( ex, ey ) =
+                                                    ( cx + (sy - cy), cy - (sx - cx) )
+                                            in
+                                            Just
+                                                (ready
+                                                    |> step (ViewportMsg (Viewport.MouseDown sx sy False))
+                                                    |> step (ViewportMsg (Viewport.MouseMove ex ey))
+                                                    |> step (ViewportMsg (Viewport.MouseUp ex ey))
+                                                )
+
+                                        [] ->
+                                            Nothing
+
+                                Nothing ->
+                                    Nothing
+
+                        euler m =
+                            Document.getPlacement 0 m.document
+                                |> Maybe.map (.matrix >> Transform.eulerDegrees)
+                    in
+                    case dragged of
+                        Just m ->
+                            Expect.all
+                                [ \d -> Expect.notEqual (Just { x = 0, y = 0, z = 0 }) (euler d)
+                                , \d -> Expect.equal (Just { x = 0, y = 0, z = 0 }) (euler (step Undo d))
+                                , \d -> Expect.equal (euler d) (euler (step Redo (step Undo d)))
+                                ]
+                                m
+
+                        Nothing ->
+                            Expect.fail "expected rotation arc handle"
+            , test "ArcDrag with altHeld rotates without angle snapping" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded
+                                |> click (screenOf 0 loaded)
+                                |> step (UseTool RotateTool)
+                                |> (\m -> { m | altHeld = True, rotateStep = 15 })
+
+                        zArc =
+                            Workspace.currentArcHandles ready
+                                |> List.filter (\a -> a.axisKind == Just AxisZ)
+                                |> List.head
+
+                        dragged =
+                            case zArc of
+                                Just arc ->
+                                    let
+                                        ( cx, cy ) =
+                                            arc.screenCenter
+
+                                        r =
+                                            50.0
+
+                                        -- 3 degrees in radians (less than 15 / 2 = 7.5 deg snapping threshold)
+                                        ang =
+                                            degrees 3
+
+                                        ( sx, sy ) =
+                                            ( cx + r, cy )
+
+                                        ( ex, ey ) =
+                                            ( cx + r * cos ang, cy - r * sin ang )
+                                    in
+                                    Just
+                                        (ready
+                                            |> step (ViewportMsg (Viewport.MouseDown sx sy False))
+                                            |> step (ViewportMsg (Viewport.MouseMove ex ey))
+                                            |> step (ViewportMsg (Viewport.MouseUp ex ey))
+                                        )
+
+                                Nothing ->
+                                    Nothing
+
+                        euler m =
+                            Document.getPlacement 0 m.document
+                                |> Maybe.map (.matrix >> Transform.eulerDegrees)
+                    in
+                    case dragged of
+                        Just m ->
+                            Expect.all
+                                [ \d -> Expect.notEqual (Just { x = 0, y = 0, z = 0 }) (euler d)
+                                ]
+                                m
+
+                        Nothing ->
+                            Expect.fail "expected rotation arc handle"
             ]
         , describe "files"
             [ test "an opened file starts with a clean history and selection" <|

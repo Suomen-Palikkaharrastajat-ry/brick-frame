@@ -1,6 +1,7 @@
 module Studio.Transform exposing
     ( Euler
     , Placement3
+    , determinant3
     , eulerDegrees
     , isRigid
     , position
@@ -57,6 +58,18 @@ withPosition target matrix =
     Mat4.fromRecord { m | m14 = Vec3.getX target, m24 = Vec3.getY target, m34 = Vec3.getZ target }
 
 
+{-| Determinant of the upper-left 3×3 part of a 4×4 matrix. Negative values
+indicate reflection or mirroring.
+-}
+determinant3 : Mat4 -> Float
+determinant3 matrix =
+    let
+        m =
+            Mat4.toRecord matrix
+    in
+    m.m11 * (m.m22 * m.m33 - m.m23 * m.m32) - m.m12 * (m.m21 * m.m33 - m.m23 * m.m31) + m.m13 * (m.m21 * m.m32 - m.m22 * m.m31)
+
+
 {-| Whether the 3×3 part is a pure rotation: orthonormal, determinant +1. Parts
 with scale or mirroring return `False`, and their angles are not meaningful.
 -}
@@ -73,7 +86,7 @@ isRigid matrix =
             1.0e-4
 
         det =
-            m.m11 * (m.m22 * m.m33 - m.m23 * m.m32) - m.m12 * (m.m21 * m.m33 - m.m23 * m.m31) + m.m13 * (m.m21 * m.m32 - m.m22 * m.m31)
+            determinant3 matrix
     in
     abs (dot m.m11 m.m21 m.m31 m.m11 m.m21 m.m31 - 1)
         < tolerance

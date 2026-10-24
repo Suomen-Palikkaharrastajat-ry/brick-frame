@@ -1,7 +1,10 @@
 module Studio.Workspace exposing
-    ( Flags
+    ( CoordinateFrame(..)
+    , Flags
     , Model
     , Msg(..)
+    , currentArcHandles
+    , currentHandles
     , init
     , restore
     , subscriptions
@@ -2116,11 +2119,11 @@ currentArcHandles model =
 
             Nothing ->
                 let
-                    mainPlacements =
-                        Document.mainPlacements model.document
+                    activePlacements =
+                        Document.placementsOf model.context.activeSubmodel model.document
 
                     joints =
-                        Joint.detectJoints mainPlacements
+                        Joint.detectJoints activePlacements
 
                     selectedJoints =
                         List.filter
@@ -2129,13 +2132,22 @@ currentArcHandles model =
                                     || Set.member j.childPlacementId model.selection
                             )
                             joints
+
+                    accum =
+                        case List.reverse model.context.path of
+                            head :: _ ->
+                                head.accumulatedTransform
+
+                            [] ->
+                                Mat4.identity
                 in
                 case selectedJoints of
                     firstJoint :: _ ->
                         case firstJoint.jointType of
                             Joint.RevoluteJoint rev ->
                                 case
-                                    Gizmo.jointArcHandle
+                                    Gizmo.jointArcHandleWithFrame
+                                        accum
                                         model.viewport.camera
                                         model.viewport.width
                                         model.viewport.height
@@ -2161,8 +2173,28 @@ currentArcHandles model =
 defaultArcHandles : Model -> List ArcHandle
 defaultArcHandles model =
     case Edit.selectionCenter (Set.toList model.selection) model.document of
-        Just center ->
-            Gizmo.arcHandles model.viewport.camera model.viewport.width model.viewport.height center
+        Just localCenter ->
+            let
+                accum =
+                    case List.reverse model.context.path of
+                        head :: _ ->
+                            head.accumulatedTransform
+
+                        [] ->
+                            Mat4.identity
+
+                worldCenter =
+                    Mat4.transform accum localCenter
+
+                frameMatrix =
+                    case model.context.coordinateFrame of
+                        LocalFrame ->
+                            accum
+
+                        WorldFrame ->
+                            Mat4.identity
+            in
+            Gizmo.arcHandlesWithFrame frameMatrix model.viewport.camera model.viewport.width model.viewport.height worldCenter
 
         Nothing ->
             []
@@ -2219,7 +2251,11 @@ moveDrag drag point model =
         ArcDrag arcHandle ->
             let
                 step =
-                    degrees (toFloat model.rotateStep)
+                    if model.altHeld then
+                        0
+
+                    else
+                        degrees (toFloat model.rotateStep)
 
                 amount =
                     Gizmo.dragArcAngle step arcHandle drag.start point
@@ -2229,15 +2265,55 @@ moveDrag drag point model =
 
             else
                 let
-                    ( moved, _ ) =
-                        Edit.apply
-                            (RotateAroundAxis drag.ids
+                    rotationCommand =
+                        if not (List.isEmpty model.context.path) then
+                            case List.reverse model.context.path of
+                                head :: _ ->
+                                    case Mat4.inverse head.accumulatedTransform of
+                                        Just inv ->
+                                            let
+                                                localPivot =
+                                                    Mat4.transform inv arcHandle.center
+
+                                                localAxis =
+                                                    Gizmo.transformDirection inv arcHandle.axis
+
+                                                effectiveRadians =
+                                                    if Transform.determinant3 head.accumulatedTransform < 0 then
+                                                        -amount
+
+                                                    else
+                                                        amount
+                                            in
+                                            RotateAroundAxis drag.ids
+                                                { pivot = localPivot
+                                                , axis = localAxis
+                                                , radians = effectiveRadians
+                                                }
+
+                                        Nothing ->
+                                            RotateAroundAxis drag.ids
+                                                { pivot = arcHandle.center
+                                                , axis = arcHandle.axis
+                                                , radians = amount
+                                                }
+
+                                [] ->
+                                    RotateAroundAxis drag.ids
+                                        { pivot = arcHandle.center
+                                        , axis = arcHandle.axis
+                                        , radians = amount
+                                        }
+
+                        else
+                            RotateAroundAxis drag.ids
                                 { pivot = arcHandle.center
                                 , axis = arcHandle.axis
                                 , radians = amount
                                 }
-                            )
-                            drag.original
+
+                    ( moved, _ ) =
+                        Edit.apply rotationCommand drag.original
                 in
                 syncDocumentLive { model | document = moved, drag = Just { drag | amount = amount, lastPoint = point } }
 

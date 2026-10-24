@@ -113,6 +113,33 @@ suite =
 
                         Nothing ->
                             Expect.fail "expected rotated X handle"
+            , test "handlesWithFrame with non-zero origin and translated/rotated frame avoids double translation" <|
+                \_ ->
+                    let
+                        frame =
+                            Mat4.mul (Mat4.makeTranslate3 100 200 300) (Mat4.makeRotate (degrees 90) (vec3 0 0 1))
+
+                        worldCenter =
+                            vec3 10 20 30
+
+                        hList =
+                            Gizmo.handlesWithFrame frame camera width height worldCenter
+
+                        xHandle =
+                            hList |> List.filter (\h -> h.axis == AxisX) |> List.head
+                    in
+                    case xHandle of
+                        Just h ->
+                            Expect.all
+                                [ \_ -> Expect.equal { x = 10, y = 20, z = 30 } (Vec3.toRecord h.origin)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 10 (Vec3.getX h.tip)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) (20 + h.length) (Vec3.getY h.tip)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 30 (Vec3.getZ h.tip)
+                                ]
+                                ()
+
+                        Nothing ->
+                            Expect.fail "expected X handle"
             ]
         , describe "hit"
             [ test "a point on a handle's line picks it" <|
@@ -266,5 +293,72 @@ suite =
 
                         Nothing ->
                             Expect.fail "expected arc handle"
+            , test "arcHandlesWithFrame in LocalFrame rotates axes whereas WorldFrame retains cardinal axes" <|
+                \_ ->
+                    let
+                        rotZ90 =
+                            Mat4.makeRotate (degrees 90) (vec3 0 0 1)
+
+                        worldCenter =
+                            vec3 10 20 30
+
+                        worldArcs =
+                            Gizmo.arcHandlesWithFrame Mat4.identity camera width height worldCenter
+
+                        localArcs =
+                            Gizmo.arcHandlesWithFrame rotZ90 camera width height worldCenter
+
+                        findKind kind list =
+                            List.filter (\a -> a.axisKind == Just kind) list |> List.head
+                    in
+                    case ( findKind AxisX worldArcs, findKind AxisX localArcs, findKind AxisY localArcs ) of
+                        ( Just wx, Just lx, Just ly ) ->
+                            Expect.all
+                                [ \_ -> Expect.equal { x = 10, y = 20, z = 30 } (Vec3.toRecord wx.center)
+                                , \_ -> Expect.equal { x = 10, y = 20, z = 30 } (Vec3.toRecord lx.center)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 1 (Vec3.getX wx.axis)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getY wx.axis)
+
+                                -- Local X handle rotated 90 degrees around Z points along +Y
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getX lx.axis)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 1 (Vec3.getY lx.axis)
+
+                                -- Local Y handle rotated 90 degrees around Z points along -X
+                                , \_ -> Expect.within (Expect.Absolute 0.01) -1 (Vec3.getX ly.axis)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getY ly.axis)
+                                ]
+                                ()
+
+                        _ ->
+                            Expect.fail "expected arc handles for X and Y axes"
+            , test "jointArcHandleWithFrame transforms pivot and axis by frame accumulated transform" <|
+                \_ ->
+                    let
+                        accum =
+                            Mat4.mul (Mat4.makeTranslate3 50 100 -50) (Mat4.makeRotate (degrees 90) (vec3 1 0 0))
+
+                        localPivot =
+                            vec3 10 0 0
+
+                        localAxis =
+                            vec3 0 1 0
+
+                        jointArc =
+                            Gizmo.jointArcHandleWithFrame accum camera width height localPivot localAxis
+                    in
+                    case jointArc of
+                        Just arc ->
+                            Expect.all
+                                [ \_ -> Expect.within (Expect.Absolute 0.01) 60 (Vec3.getX arc.center)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 100 (Vec3.getY arc.center)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) -50 (Vec3.getZ arc.center)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getX arc.axis)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 0 (Vec3.getY arc.axis)
+                                , \_ -> Expect.within (Expect.Absolute 0.01) 1 (Vec3.getZ arc.axis)
+                                ]
+                                ()
+
+                        Nothing ->
+                            Expect.fail "expected transformed joint arc handle"
             ]
         ]

@@ -3,6 +3,7 @@ module Studio.Gizmo exposing
     , DragHandle(..)
     , Handle
     , arcHandles
+    , arcHandlesWithFrame
     , dragAmount
     , dragArcAngle
     , handles
@@ -10,9 +11,11 @@ module Studio.Gizmo exposing
     , hit
     , hitArc
     , jointArcHandle
+    , jointArcHandleWithFrame
     , orthogonalBasis
     , project
     , toRender
+    , transformDirection
     )
 
 {-| Move and rotation gizmos: linear axis handles and circular arc rotation handles.
@@ -108,14 +111,32 @@ handles camera width height center =
     handlesWithFrame Mat4.identity camera width height center
 
 
-{-| The three handles for a selection centred at `localCenter` inside a
+{-| Transform a direction vector (w = 0) by a 4×4 matrix, normalizing the result.
+-}
+transformDirection : Mat4 -> Vec3 -> Vec3
+transformDirection mat v =
+    let
+        dir =
+            Vec3.sub (Mat4.transform mat v) (Mat4.transform mat (vec3 0 0 0))
+
+        len =
+            Vec3.length dir
+    in
+    if len < 1.0e-5 then
+        v
+
+    else
+        Vec3.scale (1 / len) dir
+
+
+{-| The three handles for a selection centred at `worldCenter` inside a
 coordinate frame transformed by `frameTransform` (document coordinates).
 -}
 handlesWithFrame : Mat4 -> Camera -> Int -> Int -> Vec3 -> List Handle
-handlesWithFrame frameTransform camera width height localCenter =
+handlesWithFrame frameTransform camera width height worldCenter =
     let
         worldOrigin =
-            Mat4.transform frameTransform localCenter
+            worldCenter
 
         eye =
             Camera.position camera
@@ -125,11 +146,11 @@ handlesWithFrame frameTransform camera width height localCenter =
 
         make axis =
             let
-                localTip =
-                    Vec3.add localCenter (Vec3.scale length (Edit.axisVector axis))
+                worldAxis =
+                    transformDirection frameTransform (Edit.axisVector axis)
 
                 worldTip =
-                    Mat4.transform frameTransform localTip
+                    Vec3.add worldOrigin (Vec3.scale length worldAxis)
             in
             Maybe.map2
                 (\start end ->
@@ -241,13 +262,18 @@ jointArcHandle camera width height center axis =
             Nothing
 
 
-{-| The three principal rotational arc handles (X, Y, Z) around `center`.
+{-| The three principal rotational arc handles (X, Y, Z) around `worldCenter`,
+oriented according to `frameTransform`.
 -}
-arcHandles : Camera -> Int -> Int -> Vec3 -> List ArcHandle
-arcHandles camera width height center =
+arcHandlesWithFrame : Mat4 -> Camera -> Int -> Int -> Vec3 -> List ArcHandle
+arcHandlesWithFrame frameTransform camera width height worldCenter =
     let
         make ( axis, kind ) =
-            case jointArcHandle camera width height center axis of
+            let
+                transformedAxis =
+                    transformDirection frameTransform axis
+            in
+            case jointArcHandle camera width height worldCenter transformedAxis of
                 Just h ->
                     Just { h | axisKind = Just kind }
 
@@ -255,10 +281,31 @@ arcHandles camera width height center =
                     Nothing
     in
     List.filterMap make
-        [ ( Edit.axisVector AxisX, AxisX )
-        , ( Edit.axisVector AxisY, AxisY )
-        , ( Edit.axisVector AxisZ, AxisZ )
+        [ ( vec3 1 0 0, AxisX )
+        , ( vec3 0 1 0, AxisY )
+        , ( vec3 0 0 1, AxisZ )
         ]
+
+
+{-| The three principal rotational arc handles (X, Y, Z) around `center`.
+-}
+arcHandles : Camera -> Int -> Int -> Vec3 -> List ArcHandle
+arcHandles camera width height center =
+    arcHandlesWithFrame Mat4.identity camera width height center
+
+
+{-| Create a rotational arc handle around an arbitrary axis vector in a local coordinate frame transformed by `accum`.
+-}
+jointArcHandleWithFrame : Mat4 -> Camera -> Int -> Int -> Vec3 -> Vec3 -> Maybe ArcHandle
+jointArcHandleWithFrame accum camera width height localCenter localAxis =
+    let
+        worldCenter =
+            Mat4.transform accum localCenter
+
+        worldAxis =
+            transformDirection accum localAxis
+    in
+    jointArcHandle camera width height worldCenter worldAxis
 
 
 {-| The linear handle under a screen point, within `tolerance` pixels.
