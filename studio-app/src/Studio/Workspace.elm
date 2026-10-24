@@ -231,6 +231,7 @@ type Msg
     | PartIndexLoaded (Result Http.Error PartIndex.PartIndex)
     | PaletteQuery String
     | PaletteCategory (Maybe String)
+    | PaletteGroup (Maybe String)
     | PaletteToggleFavorite String
     | PaletteSelectShelf Palette.Shelf
     | PaletteToggleColorFilter
@@ -1138,6 +1139,27 @@ updatePage msg model =
             ( updated, requestVisibleThumbnails updated )
 
         PaletteCategory category ->
+        PaletteGroup group ->
+            let
+                palette =
+                    model.palette
+
+                -- A group and an LDraw category are two ways to narrow the
+                -- shelf; the category picker only shows under "Everything".
+                -- Picking a group means browsing it: leave any search, and the
+                -- personal shelves, which ignore groups.
+                shelf =
+                    if palette.shelf == Palette.FavoritesShelf || palette.shelf == Palette.RecentShelf then
+                        Palette.AllShelf
+
+                    else
+                        palette.shelf
+
+                updated =
+                    { model | palette = { palette | group = group, category = Nothing, query = "", shelf = shelf } }
+            in
+            ( updated, requestVisibleThumbnails updated )
+
             let
                 palette =
                     model.palette
@@ -3352,6 +3374,7 @@ viewPalette model =
         , onAddManual = AddManualPart
         , onToggleFavorite = PaletteToggleFavorite
         , onSelectShelf = PaletteSelectShelf
+        , onGroup = PaletteGroup
         , onToggleColorFilter = PaletteToggleColorFilter
         , onInspect = PaletteInspect
         , onRotateTurntable = PaletteRotateTurntable

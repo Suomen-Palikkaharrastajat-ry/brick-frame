@@ -1190,8 +1190,8 @@ shortcutIn context key =
 catalogue : PartIndex.PartIndex
 catalogue =
     { parts =
-        [ { file = "3001.dat", description = "Brick 2 x 4", category = "Brick", haystack = "3001.dat brick 2 x 4" }
-        , { file = "3023.dat", description = "Plate 1 x 2", category = "Plate", haystack = "3023.dat plate 1 x 2" }
+        [ PartIndex.makePart "3001.dat" "Brick 2 x 4" "Brick" ""
+        , PartIndex.makePart "3023.dat" "Plate 1 x 2" "Plate" ""
         ]
     , categories = [ ( "Brick", 1 ), ( "Plate", 1 ) ]
     }
@@ -1206,7 +1206,7 @@ withCatalogue =
 
 part3001 : PartIndex.Part
 part3001 =
-    { file = "3001.dat", description = "Brick 2 x 4", category = "Brick", haystack = "3001.dat brick 2 x 4" }
+    PartIndex.makePart "3001.dat" "Brick 2 x 4" "Brick" ""
 
 
 panelSuite : Test

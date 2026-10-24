@@ -10,6 +10,7 @@ import LDraw.Document as Document
 import Set
 import Studio.Colours as Colours
 import Studio.Inspector as Inspector
+import Studio.Palette as Palette
 import Studio.PartIndex as PartIndex exposing (PartIndex)
 import Studio.Tree as Tree exposing (Row(..))
 import Test exposing (Test, describe, test)
@@ -60,6 +61,18 @@ document =
         )
 
 
+{-| A search across every part, as the palette runs one: no build group, the
+given LDraw category, any colour.
+-}
+search : Int -> String -> Maybe String -> PartIndex -> List PartIndex.Part
+search limit query category idx =
+    let
+        state =
+            Palette.init
+    in
+    Palette.filterParts limit { state | query = query, category = category, group = Nothing } 4 idx
+
+
 suite : Test
 suite =
     describe "Studio side panels"
@@ -75,59 +88,60 @@ suite =
                 \_ ->
                     Expect.equal [ ( "Brick", 4 ), ( "Technic", 2 ), ( "Plate", 1 ) ] index.categories
             ]
-        , describe "PartIndex.search"
+        , describe "Palette.filterParts search"
             [ test "matches words in the description in any order" <|
                 \_ ->
-                    PartIndex.search 10 "2 brick" Nothing index
+                    search 10 "2 brick" Nothing index
                         |> files
                         |> List.sort
                         |> Expect.equal [ "3001.dat", "3002.dat", "3003.dat" ]
             , test "every word has to match" <|
                 \_ ->
-                    PartIndex.search 10 "brick 2 x 4" Nothing index
+                    search 10 "brick 2 x 4" Nothing index
                         |> files
                         |> Expect.equal [ "3001.dat" ]
             , test "finds parts by keyword" <|
                 \_ ->
-                    PartIndex.search 10 "cog" Nothing index
+                    search 10 "cog" Nothing index
                         |> files
                         |> List.sort
                         |> Expect.equal [ "3647.dat", "4019.dat" ]
             , test "an exact part number comes first" <|
                 \_ ->
-                    PartIndex.search 10 "3023" Nothing index
+                    search 10 "3023" Nothing index
                         |> files
                         |> List.head
                         |> Expect.equal (Just "3023.dat")
             , test "a number typed without .dat still finds the file" <|
                 \_ ->
-                    PartIndex.search 10 "3647.dat" Nothing index
+                    search 10 "3647.dat" Nothing index
                         |> files
                         |> Expect.equal [ "3647.dat" ]
             , test "parts whose number starts with the query come before looser matches" <|
                 \_ ->
-                    PartIndex.search 10 "300" Nothing index
+                    search 10 "300" Nothing index
                         |> files
-                        |> Expect.equal [ "3001.dat", "3002.dat", "3003.dat", "30001.dat" ]
+                        |> List.sort
+                        |> Expect.equal [ "30001.dat", "3001.dat", "3002.dat", "3003.dat" ]
             , test "a category narrows the search" <|
                 \_ ->
-                    PartIndex.search 10 "" (Just "Technic") index
+                    search 10 "" (Just "Technic") index
                         |> files
                         |> List.sort
                         |> Expect.equal [ "3647.dat", "4019.dat" ]
             , test "the limit caps the list" <|
                 \_ ->
-                    PartIndex.search 2 "" Nothing index
+                    search 2 "" Nothing index
                         |> List.length
                         |> Expect.equal 2
             , test "case does not matter" <|
                 \_ ->
-                    PartIndex.search 10 "TECHNIC GEAR" Nothing index
+                    search 10 "TECHNIC GEAR" Nothing index
                         |> List.length
                         |> Expect.equal 2
             , test "nothing matches nothing" <|
                 \_ ->
-                    PartIndex.search 10 "zzzz" Nothing index
+                    search 10 "zzzz" Nothing index
                         |> Expect.equal []
             ]
         , describe "Colours"

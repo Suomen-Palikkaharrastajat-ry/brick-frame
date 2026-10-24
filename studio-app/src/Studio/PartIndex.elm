@@ -4,7 +4,7 @@ module Studio.PartIndex exposing
     , categories
     , decoder
     , fetch
-    , search
+    , makePart
     )
 
 {-| The catalogue the part palette searches.
@@ -18,16 +18,41 @@ It is fetched once, when the palette is first opened, and searched in memory.
 import Dict
 import Http
 import Json.Decode as Decode exposing (Decoder)
+import Studio.BuildGroups as BuildGroups exposing (Shelving)
 
 
 {-| One part of the library. `haystack` is everything searchable about it, in
-lower case, so a search is a substring test.
+lower case, so a search is a substring test; `descriptionLower` is the
+description alone, for ranking. `shelving` and `size` are the
+palette's build groups and size order, worked out once here rather than on
+every render.
 -}
 type alias Part =
     { file : String
     , description : String
     , category : String
     , haystack : String
+    , descriptionLower : String
+    , shelving : Shelving
+    , size : List Float
+    }
+
+
+{-| A part from its index entry: file, description, category and keywords.
+-}
+makePart : String -> String -> String -> String -> Part
+makePart file description category keywords =
+    let
+        entry =
+            { file = file, description = description, category = category }
+    in
+    { file = file
+    , description = description
+    , category = category
+    , haystack = String.toLower (String.join " " [ file, description, keywords ])
+    , descriptionLower = String.toLower description
+    , shelving = BuildGroups.classify entry
+    , size = BuildGroups.sizeKey description
     }
 
 
@@ -57,14 +82,7 @@ decoder =
 
 partDecoder : Decoder Part
 partDecoder =
-    Decode.map4
-        (\file description category keywords ->
-            { file = file
-            , description = description
-            , category = category
-            , haystack = String.toLower (String.join " " [ file, description, keywords ])
-            }
-        )
+    Decode.map4 makePart
         (Decode.index 0 Decode.string)
         (Decode.index 1 Decode.string)
         (Decode.index 2 Decode.string)
@@ -100,42 +118,3 @@ categories parts =
             Dict.empty
         |> Dict.toList
         |> List.sortBy (\( name, count ) -> ( -count, name ))
-
-
-{-| Parts matching every word of `query` (in the file name, description or
-keywords) and, if given, a category — best matches first, at most `limit`.
-
-A part number typed exactly comes first, then parts whose number starts with
-the query, then those whose description does, then the rest by name.
-
--}
-search : Int -> String -> Maybe String -> PartIndex -> List Part
-search limit query category index =
-    let
-        words =
-            query |> String.toLower |> String.words
-
-        wanted part =
-            (category == Nothing || category == Just part.category)
-                && List.all (\word -> String.contains word part.haystack) words
-
-        whole =
-            String.toLower (String.trim query)
-
-        rank part =
-            if part.file == whole || part.file == whole ++ ".dat" then
-                0
-
-            else if String.startsWith whole part.file then
-                1
-
-            else if String.startsWith whole (String.toLower part.description) then
-                2
-
-            else
-                3
-    in
-    index.parts
-        |> List.filter wanted
-        |> List.sortBy (\part -> ( rank part, String.length part.description, part.file ))
-        |> List.take limit

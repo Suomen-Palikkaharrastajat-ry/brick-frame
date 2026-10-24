@@ -84,6 +84,26 @@ tells the viewport where its canvas sits (`Viewport.setCanvasOrigin`, from
 studio loads it once and searches in memory. A typed part number works even when
 the index is missing.
 
+Browsing is by **build group** (`Studio.BuildGroups`), LEGO Creator style:
+Bricks, Plates, Tiles, Slopes, Round, Arches, Windows & doors, Walls & fences,
+Brackets & hinges, Wedges & wings, Wheels, Nature, Baseplates, then Technic.
+The palette opens on Bricks. Each group maps a few LDraw categories and lists a
+curated set of classic part numbers first (1 x 1, 1 x 2 … 2 x 4), then the rest
+by size. Prints, stickers, Duplo and other systems are never shelved; a search
+still finds them, last. "Everything" drops the group and shows LDraw's own
+category picker. A search ignores the group: exact part number, part-number
+prefix, description prefix, description match, then keyword-only matches; within
+each, curated classics first, then everyday building parts before Technic, ties
+in group order. Sizes are matched whole, never inside a larger number ("2 x 4"
+does not match "12 x 4"), and "2x4", "2 x4" and "2x 4" are read as "2 x 4".
+Picking a group clears the search and leaves Favourites or Recent for All.
+Train, vehicle, boat and similar parts are on no shelf; find them under
+Everything or by search. Group membership is computed once per part when the
+index is decoded (`PartIndex.makePart`), because the palette filters the whole
+catalogue on every render. When curating, check part numbers against
+`parts-index.json`: many classics carry a suffix there (`3023b`, `3040b`,
+`3665b`).
+
 ## Layout
 
 A header row (56 px wide, 48 px narrow) holds the brand, a document summary and

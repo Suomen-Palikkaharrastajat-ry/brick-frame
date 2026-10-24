@@ -12,7 +12,12 @@ module Studio.Palette exposing
     )
 
 {-| The part palette: a search box, shelves (All, Favourites, Recent and
-Official colours), a category filter, a part preview, and a grid of part cards.
+Official colours), build groups, a part preview, and a grid of part cards.
+
+Browsing starts from the build groups (`Studio.BuildGroups`) — Bricks, Plates,
+Tiles, Slopes and so on, Technic last — each listing its classic parts first.
+"Everything" drops the group and offers LDraw's own categories instead. A search
+looks through every part, everyday building parts first.
 
 The catalogue itself is `Studio.PartIndex`. Clicking a card arms that part and
 the Add button places it (double-clicking a card adds it at once). Each card
@@ -28,6 +33,7 @@ import Html.Events
 import Json.Decode as Decode
 import LDraw.ColorAvailability as ColorAvailability exposing (ColorAvailability(..))
 import Set exposing (Set)
+import Studio.BuildGroups as BuildGroups exposing (Tier(..))
 import Studio.PartIndex as PartIndex exposing (Part, PartIndex)
 import UI.Theme as Theme
 
@@ -57,11 +63,13 @@ type ColorFilterMode
 
 
 {-| What the palette remembers between renders: the catalogue, search query,
-shelves, favorite parts, recently used parts, armed part, and inspect widget state.
+build group (`Nothing` is "Everything"), LDraw category, shelves, favorite
+parts, recently used parts, armed part, and inspect widget state.
 -}
 type alias State =
     { index : Index
     , query : String
+    , group : Maybe String
     , category : Maybe String
     , armed : Maybe Part
     , manual : String
@@ -78,6 +86,7 @@ type alias State =
 -}
 type alias Config msg =
     { onQuery : String -> msg
+    , onGroup : Maybe String -> msg
     , onCategory : Maybe String -> msg
     , onArm : Part -> msg
     , onAdd : msg
@@ -100,6 +109,7 @@ init : State
 init =
     { index = Loading
     , query = ""
+    , group = Just BuildGroups.defaultGroup
     , category = Nothing
     , armed = Nothing
     , manual = ""
@@ -118,6 +128,7 @@ initWith : { favorites : List String, recentParts : List String } -> State
 initWith persisted =
     { index = Loading
     , query = ""
+    , group = Just BuildGroups.defaultGroup
     , category = Nothing
     , armed = Nothing
     , manual = ""
@@ -137,7 +148,17 @@ resultLimit =
     64
 
 
-{-| Filter and rank parts according to query, category, shelf, and color availability.
+{-| Filter and rank parts according to query, build group, category, shelf, and
+colour availability.
+
+With no search, the All and Official colours shelves show the chosen build
+group: its classics in curated order, then the rest by size. A search ignores
+the group and ranks every match: exact part number, part-number prefix,
+description prefix, description match, then keyword-only matches; within each,
+curated classics first, then everyday building parts before Technic and the
+rest, printed or Duplo variants last. Favourites and Recent are personal lists
+and ignore the group.
+
 -}
 filterParts : Int -> State -> Int -> PartIndex -> List Part
 filterParts limit state activeColour index =
@@ -161,12 +182,29 @@ filterParts limit state activeColour index =
                 ColorMatchedShelf ->
                     List.filter (\p -> ColorAvailability.isOfficial p.file activeColour) index.parts
 
+        whole =
+            normaliseQuery state.query
+
         words =
-            state.query |> String.toLower |> String.words
+            searchTerms whole
+
+        browsedGroup =
+            if whole == "" && (state.shelf == AllShelf || state.shelf == ColorMatchedShelf) then
+                state.group
+
+            else
+                Nothing
 
         matchesQuery part =
             (state.category == Nothing || state.category == Just part.category)
-                && List.all (\word -> String.contains word part.haystack) words
+                && (case browsedGroup of
+                        Just id ->
+                            List.member id part.shelving.groups
+
+                        Nothing ->
+                            True
+                   )
+                && List.all (\word -> termIn word part.haystack) words
 
         matchesColorFilter part =
             case state.colorFilterMode of
@@ -176,9 +214,6 @@ filterParts limit state activeColour index =
                 OfficialOnly ->
                     ColorAvailability.checkAvailability part.file activeColour /= Unofficial
 
-        whole =
-            String.toLower (String.trim state.query)
-
         rank part =
             if part.file == whole || part.file == whole ++ ".dat" then
                 0
@@ -186,24 +221,190 @@ filterParts limit state activeColour index =
             else if String.startsWith whole part.file then
                 1
 
-            else if String.startsWith whole (String.toLower part.description) then
+            else if String.startsWith whole part.descriptionLower then
                 2
 
-            else
+            else if List.all (\word -> termIn word part.descriptionLower) words then
                 3
-    in
-    let
+
+            else
+                -- Matched only through keywords.
+                4
+
         filtered =
             sourceParts
                 |> List.filter (\p -> matchesQuery p && matchesColorFilter p)
+
+        -- Keys are computed once per part, then sorted on: `sortBy` would
+        -- recompute them on every comparison.
+        sortedBy key parts =
+            parts
+                |> List.map (\p -> ( key p, p ))
+                |> List.sortBy Tuple.first
+                |> List.map Tuple.second
     in
-    if state.shelf == RecentShelf && String.trim state.query == "" then
+    if state.shelf == RecentShelf && whole == "" then
         List.take limit filtered
 
     else
-        filtered
-            |> List.sortBy (\part -> ( rank part, String.length part.description, part.file ))
-            |> List.take limit
+        case browsedGroup of
+            Just id ->
+                filtered
+                    |> sortedBy (\part -> ( classicPosition id part, part.size, ( String.length part.description, part.file ) ))
+                    |> List.take limit
+
+            Nothing ->
+                filtered
+                    |> sortedBy
+                        (\part ->
+                            ( rank part
+                            , -- Browsing "Everything" keeps building parts first; a
+                              -- search lets its classics lead.
+                              if whole == "" then
+                                0
+
+                              else
+                                classicFirst part
+                            , ( tierOrder part.shelving.tier, part.shelving.classicOrder, ( String.length part.description, part.file ) )
+                            )
+                        )
+                    |> List.take limit
+
+
+{-| A part's place among a group's classics, after every classic when it is
+not one.
+-}
+classicPosition : String -> Part -> Int
+classicPosition group part =
+    part.shelving.classics
+        |> List.filter (\( id, _ ) -> id == group)
+        |> List.map Tuple.second
+        |> List.minimum
+        |> Maybe.withDefault BuildGroups.notClassic
+
+
+{-| Curated classics lead a search whatever their tier, so "axle" or "gear"
+starts with Technic Axle 4 and Gear 8 Tooth rather than every plate with an
+axle hole.
+-}
+classicFirst : Part -> Int
+classicFirst part =
+    if List.isEmpty part.shelving.classics then
+        1
+
+    else
+        0
+
+
+{-| Whether a search term occurs in a text. A size ("2 x 4") must not run into
+neighbouring digits, so it does not match "12 x 4" or "2 x 48".
+-}
+termIn : String -> String -> Bool
+termIn term text =
+    if String.contains " x " term then
+        String.indexes term text
+            |> List.any
+                (\i ->
+                    not (isDigitAt (i - 1) text || isDigitAt (i + String.length term) text)
+                )
+
+    else
+        String.contains term text
+
+
+isDigitAt : Int -> String -> Bool
+isDigitAt i text =
+    if i < 0 then
+        False
+
+    else
+        case String.uncons (String.slice i (i + 1) text) of
+            Just ( c, _ ) ->
+                Char.isDigit c || c == '.'
+
+            Nothing ->
+                False
+
+
+tierOrder : Tier -> Int
+tierOrder tier =
+    case tier of
+        Basic ->
+            0
+
+        Other ->
+            1
+
+        Clutter ->
+            2
+
+
+{-| Lower-case and trim a search, and spell sizes the way LDraw does: "2x4",
+"2 x4" and "2x 4" all become "2 x 4".
+-}
+normaliseQuery : String -> String
+normaliseQuery query =
+    query
+        |> String.toLower
+        |> String.words
+        |> List.map spellSize
+        |> String.join " "
+
+
+{-| The words of a normalised search, with each size kept whole: "brick 1 x 2"
+looks for "brick" and "1 x 2", not for "1", "x" and "2" anywhere.
+-}
+searchTerms : String -> List String
+searchTerms whole =
+    let
+        isNumber w =
+            String.toFloat w /= Nothing
+
+        go ws =
+            case ws of
+                a :: "x" :: b :: rest ->
+                    if isNumber a && isNumber b then
+                        sizeRun (a ++ " x " ++ b) rest
+
+                    else
+                        a :: go ("x" :: b :: rest)
+
+                w :: rest ->
+                    w :: go rest
+
+                [] ->
+                    []
+
+        sizeRun acc ws =
+            case ws of
+                "x" :: c :: rest ->
+                    if isNumber c then
+                        sizeRun (acc ++ " x " ++ c) rest
+
+                    else
+                        acc :: go ws
+
+                _ ->
+                    acc :: go ws
+    in
+    go (String.words whole)
+
+
+spellSize : String -> String
+spellSize word =
+    let
+        pieces =
+            String.split "x" word
+
+        isNumber piece =
+            String.toFloat piece /= Nothing
+    in
+    -- "2x4" and also the halves of "2 x4" / "2x 4": "x4" and "2x".
+    if List.length pieces >= 2 && List.any isNumber pieces && List.all (\piece -> piece == "" || isNumber piece) pieces then
+        String.join " x " pieces
+
+    else
+        word
 
 
 view : Config msg -> State -> Html msg
@@ -228,12 +429,19 @@ view config state =
             Loaded index ->
                 [ searchBox config state
                 , shelfTabs config state
-                , categoryPicker config state index
-                , config.preview
-                , addButton config state
-                , resultsGrid config state index
-                , viewInspectModal config state
+                , groupChips config state
                 ]
+                    ++ (if state.group == Nothing then
+                            [ categoryPicker config state index ]
+
+                        else
+                            []
+                       )
+                    ++ [ config.preview
+                       , addButton config state
+                       , resultsGrid config state index
+                       , viewInspectModal config state
+                       ]
         )
 
 
@@ -296,16 +504,69 @@ shelfTabs config state =
 
 shelfButton : Config msg -> State -> Shelf -> String -> Html msg
 shelfButton config state targetShelf label =
+    chip (config.onSelectShelf targetShelf) (state.shelf == targetShelf) label
+
+
+{-| The build groups as a row of chips, Technic last and "Everything" after it.
+
+A chip shows as chosen only where the group applies: not during a search (which
+looks through every part, as the note says) and not on Favourites or Recent.
+
+-}
+groupChips : Config msg -> State -> Html msg
+groupChips config state =
     let
-        isActive =
-            state.shelf == targetShelf
+        searching =
+            String.trim state.query /= ""
+
+        groupShelf =
+            state.shelf == AllShelf || state.shelf == ColorMatchedShelf
+
+        groupChip id label =
+            compactChip (config.onGroup id) (groupShelf && not searching && state.group == id) label
     in
+    div [ Attr.style "display" "flex", Attr.style "flex-direction" "column", Attr.style "gap" "4px" ]
+        (div
+            [ Attr.attribute "role" "group"
+            , Attr.attribute "aria-label" "Build group"
+            , Attr.style "display" "flex"
+            , Attr.style "flex-wrap" "wrap"
+            , Attr.style "gap" "4px"
+            ]
+            (List.map (\group -> groupChip (Just group.id) group.label) BuildGroups.all
+                ++ [ groupChip Nothing "Everything" ]
+            )
+            :: [ div [ Attr.attribute "aria-live" "polite" ]
+                    (if searching && groupShelf && state.category == Nothing then
+                        [ note "Searching every part. Pick a group to browse it." ]
+
+                     else
+                        []
+                    )
+               ]
+        )
+
+
+chip : msg -> Bool -> String -> Html msg
+chip =
+    chipSized "4px 10px" "12px"
+
+
+{-| Fifteen group chips have to share a 300 px pane with the results grid.
+-}
+compactChip : msg -> Bool -> String -> Html msg
+compactChip =
+    chipSized "3px 8px" "11px"
+
+
+chipSized : String -> String -> msg -> Bool -> String -> Html msg
+chipSized padding fontSize onPress isActive label =
     button
-        [ Html.Events.onClick (config.onSelectShelf targetShelf)
+        [ Html.Events.onClick onPress
         , Attr.class "palette-item"
         , Attr.attribute "aria-pressed" (ariaBool isActive)
-        , Attr.style "padding" "4px 10px"
-        , Attr.style "font-size" "12px"
+        , Attr.style "padding" padding
+        , Attr.style "font-size" fontSize
         , Attr.style "font-family" "inherit"
         , Attr.style "border-radius" "12px"
         , Attr.style "cursor" "pointer"
