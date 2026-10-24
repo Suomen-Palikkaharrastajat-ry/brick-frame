@@ -197,8 +197,65 @@ snapGuideEntities draw maybeGuide =
 
                 p2 =
                     Vec3.add rPos (Vec3.scale halfLen rAxis)
+
+                rTangent =
+                    let
+                        hint =
+                            if abs (Vec3.getX rAxis) < 0.9 then
+                                vec3 1 0 0
+
+                            else
+                                vec3 0 0 1
+
+                        proj =
+                            Vec3.sub hint (Vec3.scale (Vec3.dot hint rAxis) rAxis)
+
+                        pLen =
+                            Vec3.length proj
+                    in
+                    if pLen < 1.0e-6 then
+                        vec3 1 0 0
+
+                    else
+                        Vec3.scale (1 / pLen) proj
+
+                rBitangent =
+                    Vec3.cross rAxis rTangent
+
+                radius =
+                    6.0
+
+                segments =
+                    16
+
+                step =
+                    2 * pi / toFloat segments
+
+                circlePoint i =
+                    let
+                        angle =
+                            toFloat i * step
+                    in
+                    Vec3.add
+                        rPos
+                        (Vec3.add
+                            (Vec3.scale (radius * cos angle) rTangent)
+                            (Vec3.scale (radius * sin angle) rBitangent)
+                        )
+
+                circleEdges =
+                    List.range 0 (segments - 1)
+                        |> List.map
+                            (\i ->
+                                ( { position = circlePoint i }
+                                , { position = circlePoint (modBy segments (i + 1)) }
+                                )
+                            )
+
+                axisEdge =
+                    ( { position = p1 }, { position = p2 } )
             in
-            [ draw (WebGL.lines [ ( { position = p1 }, { position = p2 } ) ]) color ]
+            [ draw (WebGL.lines (axisEdge :: circleEdges)) color ]
 
         Just (ClipLockGuide pos _ isColliding) ->
             let

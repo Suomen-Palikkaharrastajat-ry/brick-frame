@@ -3285,8 +3285,12 @@ movePlaneDrag drag grab ( x, y ) model =
                             draggedBoxes =
                                 List.map (\p -> ( p.id, p.matrix, effectiveBoxOf p )) snappedDraggedPlacements
 
+                            activeSceneBoxes =
+                                sceneBoxes
+                                    |> List.filter (\( id, _, _ ) -> id /= snap.targetPlacementId)
+
                             collidingPairs =
-                                Connectivity.checkCollisions 0.5 draggedBoxes sceneBoxes
+                                Connectivity.checkCollisions 0.5 draggedBoxes activeSceneBoxes
 
                             isColliding =
                                 not (List.isEmpty collidingPairs)
@@ -3483,8 +3487,12 @@ applyDragDelta drag amount point delta model =
                             draggedBoxes =
                                 List.map (\p -> ( p.id, p.matrix, effectiveBoxOf p )) snappedDraggedPlacements
 
+                            activeSceneBoxes =
+                                sceneBoxes
+                                    |> List.filter (\( id, _, _ ) -> id /= snap.targetPlacementId)
+
                             collidingPairs =
-                                Connectivity.checkCollisions 0.5 draggedBoxes sceneBoxes
+                                Connectivity.checkCollisions 0.5 draggedBoxes activeSceneBoxes
 
                             isColliding =
                                 not (List.isEmpty collidingPairs)

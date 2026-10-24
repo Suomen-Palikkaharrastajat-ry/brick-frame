@@ -2167,6 +2167,55 @@ snappingSuite =
                         mouseMove 100 100 modelDuringDrag
                 in
                 Expect.equal (Set.fromList [ 0 ]) moved.collidingPlacements
+        , test "mated snap connection exempts target placement from collision detection" <|
+            \_ ->
+                let
+                    ( docWithTwo, _ ) =
+                        Edit.apply
+                            (Edit.Add
+                                [ { part = "3705.dat", color = 4, matrix = Mat4.identity }
+                                , { part = "3647.dat", color = 14, matrix = Mat4.identity }
+                                ]
+                            )
+                            start.document
+
+                    vp =
+                        start.viewport
+
+                    modelDuringDrag =
+                        { start
+                            | viewport = { vp | captured = True, mousePressed = True }
+                            , document = docWithTwo
+                            , drag =
+                                Just
+                                    { kind =
+                                        Gizmo.LinearDrag
+                                            { axis = AxisX
+                                            , origin = vec3 0 0 0
+                                            , tip = vec3 0 0 0
+                                            , length = 50
+                                            , screenStart = ( 100, 100 )
+                                            , screenEnd = ( 150, 100 )
+                                            }
+                                    , ids = [ 0 ]
+                                    , start = ( 100, 100 )
+                                    , lastPoint = ( 100, 100 )
+                                    , original = docWithTwo
+                                    , amount = 0
+                                    }
+                            , altHeld = False
+                            , snapDistance = 15.0
+                            , collisionMode = Connectivity.CollisionStrict
+                        }
+
+                    moved =
+                        mouseMove 100 100 modelDuringDrag
+                in
+                Expect.all
+                    [ \m -> Expect.notEqual Nothing m.activeSnap
+                    , \m -> Expect.equal Set.empty m.collidingPlacements
+                    ]
+                    moved
         , test "Shift key press and release toggles shiftHeld" <|
             \_ ->
                 let

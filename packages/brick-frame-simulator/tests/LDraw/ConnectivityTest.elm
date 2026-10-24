@@ -17,6 +17,8 @@ import LDraw.Connectivity as Connectivity
         , extractConnections
         , isCompatible
         , knownCatalogPart
+        , makeAxle
+        , makeGear
         , snapEnterDistance
         , snapReleaseDistance
         , solveSnap
@@ -81,6 +83,20 @@ compatibilityTests =
             \_ ->
                 Expect.equal False
                     (isCompatible Stud (TechnicAxleFemale { length = 20.0 }))
+        , test "Technic axle male meshes with Technic pin female" <|
+            \_ ->
+                Expect.equal True
+                    (isCompatible
+                        (TechnicAxleMale { length = 40.0 })
+                        (TechnicPinFemale { length = 20.0 })
+                    )
+        , test "Technic pin female meshes with Technic axle male" <|
+            \_ ->
+                Expect.equal True
+                    (isCompatible
+                        (TechnicPinFemale { length = 20.0 })
+                        (TechnicAxleMale { length = 40.0 })
+                    )
         ]
 
 
@@ -196,6 +212,118 @@ extractionTests =
 
                     Nothing ->
                         Expect.fail "Catalog part 3034.dat was not found"
+        , test "makeAxle produces connection points at stud intervals and correct bounds" <|
+            \_ ->
+                let
+                    axle4 =
+                        makeAxle 4 "3705.dat"
+
+                    xCoords =
+                        List.map (\c -> Vec3.getX c.localPosition) axle4.connections
+                in
+                Expect.all
+                    [ \_ -> Expect.equal 4 (List.length axle4.connections)
+                    , \_ -> Expect.equal [ -30.0, -10.0, 10.0, 30.0 ] xCoords
+                    , \_ ->
+                        case axle4.boundingBoxes of
+                            [ box ] ->
+                                Expect.all
+                                    [ \_ -> Expect.equal (vec3 -40 -4 -4) box.min
+                                    , \_ -> Expect.equal (vec3 40 4 4) box.max
+                                    ]
+                                    ()
+
+                            _ ->
+                                Expect.fail "Expected 1 bounding box for axle"
+                    ]
+                    ()
+        , test "makeGear produces central axle hole and bounds" <|
+            \_ ->
+                let
+                    gear8 =
+                        makeGear 10.0 20.0 "3647.dat"
+                in
+                Expect.all
+                    [ \_ -> Expect.equal 1 (List.length gear8.connections)
+                    , \_ ->
+                        case gear8.connections of
+                            [ c ] ->
+                                Expect.all
+                                    [ \_ -> Expect.equal (TechnicAxleFemale { length = 20.0 }) c.connType
+                                    , \_ -> Expect.equal (vec3 0 0 0) c.localPosition
+                                    , \_ -> Expect.equal (vec3 0 0 1) c.normal
+                                    ]
+                                    ()
+
+                            _ ->
+                                Expect.fail "Expected 1 connection point for gear"
+                    ]
+                    ()
+        , test "40T gear (3649) includes 4 extra pin/axle holes" <|
+            \_ ->
+                case knownCatalogPart "3649.dat" of
+                    Just gear40 ->
+                        let
+                            extraHoles =
+                                List.filter (\c -> c.id > 1) gear40.connections
+                        in
+                        Expect.all
+                            [ \_ -> Expect.equal 5 (List.length gear40.connections)
+                            , \_ -> Expect.equal 4 (List.length extraHoles)
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "Catalog part 3649.dat was not found"
+        , test "knownCatalogPart supports classic and modern gears, axles, beams, and bushings" <|
+            \_ ->
+                let
+                    partsToCheck =
+                        [ "3647"
+                        , "10928"
+                        , "11955"
+                        , "4019"
+                        , "3648"
+                        , "3648b"
+                        , "3649"
+                        , "32198"
+                        , "32269"
+                        , "6589"
+                        , "32270"
+                        , "4143"
+                        , "3650b"
+                        , "4716"
+                        , "32905"
+                        , "3704"
+                        , "4519"
+                        , "3705"
+                        , "32073"
+                        , "3706"
+                        , "44294"
+                        , "3707"
+                        , "60485"
+                        , "3737"
+                        , "3708"
+                        , "32062"
+                        , "6587"
+                        , "3700"
+                        , "3701"
+                        , "3702"
+                        , "3703"
+                        , "32523"
+                        , "32316"
+                        , "32524"
+                        , "32449"
+                        , "32525"
+                        , "32009"
+                        , "3713"
+                        , "4265c"
+                        ]
+
+                    missing =
+                        List.filter (\p -> knownCatalogPart p == Nothing) partsToCheck
+                in
+                Expect.equal [] missing
         ]
 
 
@@ -345,6 +473,39 @@ snapSolverTests =
 
                     Nothing ->
                         Expect.fail "Axle snap into gear failed"
+        , test "snaps Technic axle into beam pin hole" <|
+            \_ ->
+                let
+                    beamPinHole =
+                        { placementId = 2
+                        , pointId = 1
+                        , connType = TechnicPinFemale { length = 20.0 }
+                        , worldPosition = vec3 0 10 0
+                        , worldNormal = vec3 0 0 1
+                        , worldTangent = vec3 1 0 0
+                        }
+
+                    axleConn =
+                        { id = 1
+                        , connType = TechnicAxleMale { length = 80.0 }
+                        , localPosition = vec3 -10 0 0
+                        , normal = vec3 1 0 0
+                        , tangent = vec3 0 1 0
+                        }
+
+                    hoverMat =
+                        Mat4.makeTranslate3 2 11 3
+                in
+                case solveSnap 12.0 0 hoverMat [ axleConn ] [ beamPinHole ] of
+                    Just snap ->
+                        let
+                            axlePos =
+                                Mat4.transform snap.snapMatrix axleConn.localPosition
+                        in
+                        Expect.lessThan 0.001 (Vec3.distance (vec3 0 10 0) axlePos)
+
+                    Nothing ->
+                        Expect.fail "Axle snap into beam pin hole failed"
         ]
 
 

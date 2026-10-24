@@ -16,6 +16,8 @@ module LDraw.Connectivity exposing
     , invertRigid
     , isCompatible
     , knownCatalogPart
+    , makeAxle
+    , makeGear
     , setGuideColliding
     , snapEnterDistance
     , snapReleaseDistance
@@ -185,6 +187,12 @@ isCompatible a b =
             True
 
         ( TechnicAxleFemale _, TechnicAxleMale _ ) ->
+            True
+
+        ( TechnicAxleMale _, TechnicPinFemale _ ) ->
+            True
+
+        ( TechnicPinFemale _, TechnicAxleMale _ ) ->
             True
 
         ( ClipMale _, BarFemale _ ) ->
@@ -1207,59 +1215,167 @@ knownCatalogPart name =
             Just (makeBrick 3 1 8 "3623.dat")
 
         "3700" ->
-            -- Technic Brick 1 x 2 with Hole
+            Just (makeTechnicBrick 2 "3700.dat")
+
+        "3701" ->
+            Just (makeTechnicBrick 4 "3701.dat")
+
+        "3702" ->
+            Just (makeTechnicBrick 8 "3702.dat")
+
+        "3703" ->
+            Just (makeTechnicBrick 16 "3703.dat")
+
+        "32523" ->
+            Just (makeLiftarm 3 "32523.dat")
+
+        "32316" ->
+            Just (makeLiftarm 5 "32316.dat")
+
+        "32524" ->
+            Just (makeLiftarm 7 "32524.dat")
+
+        "32449" ->
+            Just (makeLiftarm 9 "32449.dat")
+
+        "40490" ->
+            Just (makeLiftarm 9 "40490.dat")
+
+        "32525" ->
+            Just (makeLiftarm 11 "32525.dat")
+
+        "32009" ->
+            Just (makeLiftarm 15 "32009.dat")
+
+        "32278" ->
+            Just (makeLiftarm 15 "32278.dat")
+
+        "3647" ->
+            Just (makeGear 10.0 20.0 "3647.dat")
+
+        "10928" ->
+            Just (makeGear 10.0 20.0 "10928.dat")
+
+        "11955" ->
+            Just (makeGear 10.0 20.0 "11955.dat")
+
+        "4019" ->
+            Just (makeGear 20.0 20.0 "4019.dat")
+
+        "3648" ->
+            Just (makeGear 30.0 20.0 "3648.dat")
+
+        "3648b" ->
+            Just (makeGear 30.0 20.0 "3648b.dat")
+
+        "3649" ->
             let
                 base =
-                    makeBrick 2 1 24 "3700.dat"
+                    makeGear 50.0 20.0 "3649.dat"
 
-                pinHoles =
-                    [ { id = 101
-                      , connType = TechnicPinFemale { length = 20.0 }
-                      , localPosition = vec3 0 10 10
+                extraHoles =
+                    [ { id = 2
+                      , connType = TechnicAxleFemale { length = 20.0 }
+                      , localPosition = vec3 0 20 0
                       , normal = vec3 0 0 1
                       , tangent = vec3 1 0 0
                       }
-                    , { id = 102
-                      , connType = TechnicPinFemale { length = 20.0 }
-                      , localPosition = vec3 0 10 -10
-                      , normal = vec3 0 0 -1
+                    , { id = 3
+                      , connType = TechnicAxleFemale { length = 20.0 }
+                      , localPosition = vec3 0 -20 0
+                      , normal = vec3 0 0 1
+                      , tangent = vec3 1 0 0
+                      }
+                    , { id = 4
+                      , connType = TechnicAxleFemale { length = 20.0 }
+                      , localPosition = vec3 20 0 0
+                      , normal = vec3 0 0 1
+                      , tangent = vec3 1 0 0
+                      }
+                    , { id = 5
+                      , connType = TechnicAxleFemale { length = 20.0 }
+                      , localPosition = vec3 -20 0 0
+                      , normal = vec3 0 0 1
                       , tangent = vec3 1 0 0
                       }
                     ]
             in
-            Just { base | connections = base.connections ++ pinHoles }
+            Just { base | connections = base.connections ++ extraHoles }
 
-        "3647" ->
-            -- Technic Gear 8 Tooth
-            Just
-                { part = "3647.dat"
-                , connections =
-                    [ { id = 1
-                      , connType = TechnicAxleFemale { length = 20.0 }
-                      , localPosition = vec3 0 0 0
-                      , normal = vec3 0 0 1
-                      , tangent = vec3 1 0 0
-                      }
-                    ]
-                , boundingBoxes =
-                    [ { min = vec3 -10 -10 -10, max = vec3 10 10 10 } ]
-                }
+        "32198" ->
+            Just (makeGear 25.0 20.0 "32198.dat")
+
+        "32269" ->
+            Just (makeGear 25.0 20.0 "32269.dat")
+
+        "6589" ->
+            Just (makeGear 15.0 20.0 "6589.dat")
+
+        "32270" ->
+            Just (makeGear 15.0 20.0 "32270.dat")
+
+        "4143" ->
+            Just (makeGear 17.5 20.0 "4143.dat")
+
+        "3650b" ->
+            Just (makeGear 30.0 20.0 "3650b.dat")
+
+        "3650" ->
+            Just (makeGear 30.0 20.0 "3650.dat")
+
+        "4716" ->
+            Just (makeGear 12.0 40.0 "4716.dat")
+
+        "32905" ->
+            Just (makeGear 12.0 40.0 "32905.dat")
+
+        "3704" ->
+            Just (makeAxle 2 "3704.dat")
+
+        "4519" ->
+            Just (makeAxle 3 "4519.dat")
 
         "3705" ->
-            -- Technic Axle 4
-            Just
-                { part = "3705.dat"
-                , connections =
-                    [ { id = 1
-                      , connType = TechnicAxleMale { length = 80.0 }
-                      , localPosition = vec3 0 0 0
-                      , normal = vec3 1 0 0
-                      , tangent = vec3 0 1 0
-                      }
-                    ]
-                , boundingBoxes =
-                    [ { min = vec3 -40 -4 -4, max = vec3 40 4 4 } ]
-                }
+            Just (makeAxle 4 "3705.dat")
+
+        "32073" ->
+            Just (makeAxle 5 "32073.dat")
+
+        "3706" ->
+            Just (makeAxle 6 "3706.dat")
+
+        "44294" ->
+            Just (makeAxle 7 "44294.dat")
+
+        "3707" ->
+            Just (makeAxle 8 "3707.dat")
+
+        "60485" ->
+            Just (makeAxle 9 "60485.dat")
+
+        "3737" ->
+            Just (makeAxle 10 "3737.dat")
+
+        "3708" ->
+            Just (makeAxle 12 "3708.dat")
+
+        "32062" ->
+            Just (makeAxle 2 "32062.dat")
+
+        "6587" ->
+            Just (makeAxle 3 "6587.dat")
+
+        "3713" ->
+            Just (makeGear 9.0 20.0 "3713.dat")
+
+        "4265c" ->
+            Just (makeGear 9.0 10.0 "4265c.dat")
+
+        "32123" ->
+            Just (makeGear 9.0 10.0 "4265c.dat")
+
+        "32123a" ->
+            Just (makeGear 9.0 10.0 "4265c.dat")
 
         "2780" ->
             -- Technic Pin with Friction
@@ -1410,5 +1526,163 @@ makeBrick length width height partName =
     in
     { part = partName
     , connections = allConnections
+    , boundingBoxes = [ bbox ]
+    }
+
+
+{-| Procedurally generate connectivity descriptor for a Technic axle of given length in studs.
+Each stud center along the axle has a connection point.
+-}
+makeAxle : Int -> String -> PartConnectivity
+makeAxle studs partName =
+    let
+        halfL =
+            toFloat studs * 10.0
+
+        totalLen =
+            toFloat studs * 20.0
+
+        connections =
+            List.range 0 (studs - 1)
+                |> List.map
+                    (\i ->
+                        let
+                            x =
+                                -10.0 * toFloat studs + 10.0 + toFloat i * 20.0
+                        in
+                        { id = i + 1
+                        , connType = TechnicAxleMale { length = totalLen }
+                        , localPosition = vec3 x 0 0
+                        , normal = vec3 1 0 0
+                        , tangent = vec3 0 1 0
+                        }
+                    )
+
+        bbox =
+            { min = vec3 -halfL -4 -4
+            , max = vec3 halfL 4 4
+            }
+    in
+    { part = partName
+    , connections = connections
+    , boundingBoxes = [ bbox ]
+    }
+
+
+{-| Procedurally generate connectivity descriptor for a Technic gear with given pitch radius and thickness.
+Center axle hole at (0, 0, 0).
+-}
+makeGear : Float -> Float -> String -> PartConnectivity
+makeGear radius thickness partName =
+    let
+        halfThick =
+            thickness / 2.0
+
+        connections =
+            [ { id = 1
+              , connType = TechnicAxleFemale { length = thickness }
+              , localPosition = vec3 0 0 0
+              , normal = vec3 0 0 1
+              , tangent = vec3 1 0 0
+              }
+            ]
+
+        bbox =
+            { min = vec3 -radius -radius -halfThick
+            , max = vec3 radius radius halfThick
+            }
+    in
+    { part = partName
+    , connections = connections
+    , boundingBoxes = [ bbox ]
+    }
+
+
+makeTechnicBrick : Int -> String -> PartConnectivity
+makeTechnicBrick studs partName =
+    let
+        base =
+            makeBrick studs 1 24 partName
+
+        holePoints =
+            List.range 0 (studs - 2)
+                |> List.concatMap
+                    (\i ->
+                        let
+                            x =
+                                -10.0 * toFloat (studs - 2) + toFloat i * 20.0
+
+                            baseId =
+                                200 + i * 3
+                        in
+                        [ { id = baseId
+                          , connType = TechnicPinFemale { length = 20.0 }
+                          , localPosition = vec3 x 10 0
+                          , normal = vec3 0 0 1
+                          , tangent = vec3 1 0 0
+                          }
+                        , { id = baseId + 1
+                          , connType = TechnicPinFemale { length = 20.0 }
+                          , localPosition = vec3 x 10 10
+                          , normal = vec3 0 0 1
+                          , tangent = vec3 1 0 0
+                          }
+                        , { id = baseId + 2
+                          , connType = TechnicPinFemale { length = 20.0 }
+                          , localPosition = vec3 x 10 -10
+                          , normal = vec3 0 0 -1
+                          , tangent = vec3 1 0 0
+                          }
+                        ]
+                    )
+    in
+    { base | connections = base.connections ++ holePoints }
+
+
+makeLiftarm : Int -> String -> PartConnectivity
+makeLiftarm studs partName =
+    let
+        halfL =
+            toFloat studs * 10.0
+
+        connections =
+            List.range 0 (studs - 1)
+                |> List.concatMap
+                    (\i ->
+                        let
+                            z =
+                                -10.0 * toFloat (studs - 1) + toFloat i * 20.0
+
+                            baseId =
+                                i * 3 + 1
+                        in
+                        [ { id = baseId
+                          , connType = TechnicPinFemale { length = 20.0 }
+                          , localPosition = vec3 0 0 z
+                          , normal = vec3 0 1 0
+                          , tangent = vec3 0 0 1
+                          }
+                        , { id = baseId + 1
+                          , connType = TechnicPinFemale { length = 20.0 }
+                          , localPosition = vec3 0 10 z
+                          , normal = vec3 0 1 0
+                          , tangent = vec3 0 0 1
+                          }
+                        , { id = baseId + 2
+                          , connType = TechnicPinFemale { length = 20.0 }
+                          , localPosition = vec3 0 -10 z
+                          , normal = vec3 0 -1 0
+                          , tangent = vec3 0 0 1
+                          }
+                        ]
+                    )
+
+        bbox =
+            { min = vec3 -10 -10 -halfL
+            , max = vec3 10 10 halfL
+            }
+    in
+    { part = partName
+    , connections = connections
     , boundingBoxes = [ bbox ]
     }
