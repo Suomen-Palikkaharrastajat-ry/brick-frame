@@ -400,7 +400,9 @@ resized width height model =
     { model
         | layout = layout
         , window = ( width, height )
-        , viewport = sized ( layout.canvasWidth, layout.canvasHeight ) model.viewport
+        , viewport =
+            sized ( layout.canvasWidth, layout.canvasHeight ) model.viewport
+                |> Viewport.setCanvasOrigin (toFloat layout.canvasLeft) (toFloat layout.canvasTop)
         , panel =
             -- Panels are sheets of the narrow layout; the wide one shows them all.
             if layout.mode == Layout.Wide then

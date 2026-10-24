@@ -114,6 +114,10 @@ positions for type-2 and type-5 lines, and the stroke colour is the `edgeColor`
 uniform — and the triangle buffer is re-coloured per placement by the shader, so
 the whole record is shared across every colour the part is placed in.
 
+`surface` keeps the triangles on the CPU side so a click can be tested against
+the part's real shape rather than its (often mostly empty) bounding box. It is
+the list `WebGL.triangles` already holds on to, so it costs no extra memory.
+
 -}
 type alias PartMesh =
     { triangles : WebGL.Mesh Vertex
@@ -124,6 +128,7 @@ type alias PartMesh =
     , localCenter : Vec3
     , localRadius : Float
     , bfcCertified : Bool
+    , surface : List ( Vertex, Vertex, Vertex )
     }
 
 
@@ -493,6 +498,7 @@ buildPartMesh cache partLines =
     , localCenter = center
     , localRadius = 0.5 * Vec3.length (Vec3.sub bounds.max bounds.min)
     , bfcCertified = geom.bfcCertified
+    , surface = geom.triangles
     }
 
 

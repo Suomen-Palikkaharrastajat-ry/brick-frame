@@ -293,7 +293,14 @@ instanced renderer, and `Viewport.applyDocument` keeps the scene in step with
 later edits, rebuilding only what changed — see `docs/rendering.md`. The document
 records which placements an edit touched (`Document.touched`); call
 `Document.clearTouched` after applying. `Viewport.pickSource x y viewport` returns
-the id of the document placement under a point.
+the id of the document placement under a point: the nearest surface the ray
+actually hits (part triangles, not bounding boxes), or `Nothing` over empty space.
+
+Event coordinates are canvas pixels only if the viewport knows where the canvas
+sits. A host that places it anywhere but the window's top-left corner (beside a
+panel, under a header) must call `Viewport.setCanvasOrigin left top` whenever its
+layout changes, or every pick lands offset from the pointer. The studio does this
+from `Studio.Layout`.
 
 ---
 
@@ -368,7 +375,7 @@ document-wide keydowns hijacking a host page's form fields.
 | `LDraw.ColorData` | Generated LDraw colour table (do not edit) | `colorTable` |
 | `LDraw.Geometry` | Flatten part tree → vertex buffers | `flatten`, `FlatGeometry` |
 | `Render.Camera` | Orbit and walk camera | `init`, `viewMatrix`, `projectionMatrix`, `onMouseMove`, `onPan`, `onWheel`, `zoomByRatio`, `orbitBy`, `lookAround`, `moveBy`, `dollyBy`, `enterWalk`, `walkSpeed`, `setNavigation`, `setSceneRadius`, `setZoomRange`, `setViewportHeight`, `fovYDegrees` |
-| `Render.Pick` | Screen rays, ray–sphere tests, frustum test | `screenRay`, `raySphereHit`, `isSphereVisible` |
+| `Render.Pick` | Screen rays, ray–sphere/box/triangle tests, frustum test | `screenRay`, `raySphereHit`, `rayAabbHit`, `rayTriangleHit`, `nearestTriangleHit`, `nearestTriangleHitBy`, `isSphereVisible` |
 | `Render.Mesh` | Vertex type aliases | `Vertex`, `EdgeVertex` |
 | `Render.Shader` | Lightweight plastic GLSL shaders | `vertexShader`, `fragmentShader` |
 | `Render.EdgeShader` | Edge line GLSL shaders | `vertexShader`, `fragmentShader` |
@@ -381,7 +388,7 @@ document-wide keydowns hijacking a host page's form fields.
 | `Gear.Physics` | Rotation propagation | `propagate`, `angleAt` |
 | `Gear.Animate` | Motor + animation state | `MotorState`, `defaultMotor`, `gearAngles` |
 | `Gear.Components` | Axle/beam detection | `extractComponents`, `ComponentInstance` |
-| `Viewport` | The viewport component | `init`, `update`, `view`, `subscriptions`, `loadDocument`, `applyDocument`, `pickSource`, `captureDrag`, `beginFlatten` |
+| `Viewport` | The viewport component | `init`, `update`, `view`, `subscriptions`, `loadDocument`, `applyDocument`, `pickSource`, `setCanvasOrigin`, `captureDrag`, `beginFlatten` |
 | `Viewport.Shortcuts` | Pure keyboard mapping and its typing guard | `actionFor`, `movementFor`, `lookFor`, `helpRows` |
 | `Viewport.Hash` | Camera ↔ URL hash | `decode`, `encodeCamera` |
 | `Viewport.Framing` | Model bounds, auto-fit, zoom range, view presets | `cameraForBounds`, `applyZoomRange`, `ViewPreset` |

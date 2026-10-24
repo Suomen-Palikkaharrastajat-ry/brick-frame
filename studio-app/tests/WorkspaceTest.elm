@@ -138,7 +138,7 @@ brickFile =
 
 brickPart : String
 brickPart =
-    "4 16 -10 0 -10 10 0 -10 10 0 10 -10 0 10\n4 16 -10 -20 -10 10 -20 -10 10 -20 10 -10 -20 10\n4 16 -10 0 -10 10 0 -10 10 -20 -10 -10 -20 -10\n4 16 -10 0 10 10 0 10 10 -20 10 -10 -20 10\n"
+    "4 16 -10 0 -10 10 0 -10 10 0 10 -10 0 10\n4 16 -10 -20 -10 10 -20 -10 10 -20 10 -10 -20 10\n4 16 -10 0 -10 10 0 -10 10 -20 -10 -10 -20 -10\n4 16 -10 0 10 10 0 10 10 -20 10 -10 -20 10\n4 16 -10 0 -10 -10 0 10 -10 -20 10 -10 -20 -10\n4 16 10 0 -10 10 0 10 10 -20 10 10 -20 -10\n"
 
 
 {-| A workspace with the two bricks loaded, parts included.
@@ -159,20 +159,69 @@ step msg model =
     Workspace.update msg model |> Tuple.first
 
 
+{-| Browsers report pointer events in window coordinates, so a test aiming at a
+canvas point adds the canvas origin the layout gave the viewport, as a real
+event would.
+-}
+mouseDown : Float -> Float -> Bool -> Workspace.Model -> Workspace.Model
+mouseDown x y shift model =
+    let
+        ( left, top ) =
+            model.viewport.canvasOrigin
+    in
+    step (ViewportMsg (Viewport.MouseDown (x + left) (y + top) shift)) model
+
+
+mouseMove : Float -> Float -> Workspace.Model -> Workspace.Model
+mouseMove x y model =
+    let
+        ( left, top ) =
+            model.viewport.canvasOrigin
+    in
+    step (ViewportMsg (Viewport.MouseMove (x + left) (y + top))) model
+
+
+mouseUp : Float -> Float -> Workspace.Model -> Workspace.Model
+mouseUp x y model =
+    let
+        ( left, top ) =
+            model.viewport.canvasOrigin
+    in
+    step (ViewportMsg (Viewport.MouseUp (x + left) (y + top))) model
+
+
+doubleClick : Float -> Float -> Workspace.Model -> Workspace.Model
+doubleClick x y model =
+    let
+        ( left, top ) =
+            model.viewport.canvasOrigin
+    in
+    step (ViewportMsg (Viewport.DoubleClick (x + left) (y + top))) model
+
+
+touchStart : Int -> Float -> Float -> Workspace.Model -> Workspace.Model
+touchStart id x y model =
+    let
+        ( left, top ) =
+            model.viewport.canvasOrigin
+    in
+    step (ViewportMsg (Viewport.PointerTouchStart { id = id, x = x + left, y = y + top })) model
+
+
 {-| Press and release at a point, as a mouse click.
 -}
 click : ( Float, Float ) -> Workspace.Model -> Workspace.Model
 click ( x, y ) model =
     model
-        |> step (ViewportMsg (Viewport.MouseDown x y False))
-        |> step (ViewportMsg (Viewport.MouseUp x y))
+        |> mouseDown x y False
+        |> mouseUp x y
 
 
 shiftClick : ( Float, Float ) -> Workspace.Model -> Workspace.Model
 shiftClick ( x, y ) model =
     model
-        |> step (ViewportMsg (Viewport.MouseDown x y True))
-        |> step (ViewportMsg (Viewport.MouseUp x y))
+        |> mouseDown x y True
+        |> mouseUp x y
 
 
 {-| Where a placement's centre is on screen.
@@ -244,7 +293,7 @@ editingSuite =
                             screenOf 0 loaded
                     in
                     loaded
-                        |> step (ViewportMsg (Viewport.PointerTouchStart { id = 1, x = x, y = y }))
+                        |> touchStart 1 x y
                         |> step (ViewportMsg (Viewport.PointerTouchEnd 1))
                         |> selected
                         |> Expect.equal [ 0 ]
@@ -377,9 +426,9 @@ editingSuite =
                                     in
                                     Just
                                         (ready
-                                            |> step (ViewportMsg (Viewport.MouseDown gx gy False))
-                                            |> step (ViewportMsg (Viewport.MouseMove (gx + (bx - ax)) (gy + (by - ay))))
-                                            |> step (ViewportMsg (Viewport.MouseUp (gx + (bx - ax)) (gy + (by - ay))))
+                                            |> mouseDown gx gy False
+                                            |> mouseMove (gx + (bx - ax)) (gy + (by - ay))
+                                            |> mouseUp (gx + (bx - ax)) (gy + (by - ay))
                                         )
 
                                 Nothing ->
@@ -421,10 +470,10 @@ editingSuite =
 
                                 dragged =
                                     ready
-                                        |> step (ViewportMsg (Viewport.MouseDown gx gy False))
-                                        |> step (ViewportMsg (Viewport.MouseMove (gx + (bx - ax)) (gy + (by - ay))))
-                                        |> step (ViewportMsg (Viewport.MouseMove (gx + 2 * (bx - ax)) (gy + 2 * (by - ay))))
-                                        |> step (ViewportMsg (Viewport.MouseUp (gx + 2 * (bx - ax)) (gy + 2 * (by - ay))))
+                                        |> mouseDown gx gy False
+                                        |> mouseMove (gx + (bx - ax)) (gy + (by - ay))
+                                        |> mouseMove (gx + 2 * (bx - ax)) (gy + 2 * (by - ay))
+                                        |> mouseUp (gx + 2 * (bx - ax)) (gy + 2 * (by - ay))
                             in
                             Expect.all
                                 [ \m -> Expect.equal True (Maybe.withDefault 0 (positionOf 0 m) > 0)
@@ -459,7 +508,7 @@ editingSuite =
 
                                 inDrag =
                                     ready
-                                        |> step (ViewportMsg (Viewport.MouseDown gx gy False))
+                                        |> mouseDown gx gy False
 
                                 afterDelete =
                                     step DeleteSelection inDrag
@@ -477,9 +526,9 @@ editingSuite =
 
                         moved =
                             ready
-                                |> step (ViewportMsg (Viewport.MouseDown 100 500 False))
-                                |> step (ViewportMsg (Viewport.MouseMove 160 500))
-                                |> step (ViewportMsg (Viewport.MouseUp 160 500))
+                                |> mouseDown 100 500 False
+                                |> mouseMove 160 500
+                                |> mouseUp 160 500
                     in
                     Expect.all
                         [ \m -> Expect.greaterThan 0.001 (abs (ready.viewport.camera.azimuth - m.viewport.camera.azimuth))
@@ -525,9 +574,9 @@ editingSuite =
                                             in
                                             Just
                                                 (ready
-                                                    |> step (ViewportMsg (Viewport.MouseDown sx sy False))
-                                                    |> step (ViewportMsg (Viewport.MouseMove ex ey))
-                                                    |> step (ViewportMsg (Viewport.MouseUp ex ey))
+                                                    |> mouseDown sx sy False
+                                                    |> mouseMove ex ey
+                                                    |> mouseUp ex ey
                                                 )
 
                                         [] ->
@@ -755,7 +804,7 @@ editingSuite =
                                 |> step ClearSelection
 
                         entered =
-                            step (ViewportMsg (Viewport.DoubleClick subX subY)) withSubmodel
+                            doubleClick subX subY withSubmodel
 
                         exited =
                             step ExitSubmodel entered
@@ -951,9 +1000,9 @@ editingSuite =
                                             in
                                             Just
                                                 (ready
-                                                    |> step (ViewportMsg (Viewport.MouseDown sx sy False))
-                                                    |> step (ViewportMsg (Viewport.MouseMove ex ey))
-                                                    |> step (ViewportMsg (Viewport.MouseUp ex ey))
+                                                    |> mouseDown sx sy False
+                                                    |> mouseMove ex ey
+                                                    |> mouseUp ex ey
                                                 )
 
                                         [] ->
@@ -1013,9 +1062,9 @@ editingSuite =
                                     in
                                     Just
                                         (ready
-                                            |> step (ViewportMsg (Viewport.MouseDown sx sy False))
-                                            |> step (ViewportMsg (Viewport.MouseMove ex ey))
-                                            |> step (ViewportMsg (Viewport.MouseUp ex ey))
+                                            |> mouseDown sx sy False
+                                            |> mouseMove ex ey
+                                            |> mouseUp ex ey
                                         )
 
                                 Nothing ->
@@ -1734,7 +1783,7 @@ snappingSuite =
                         }
 
                     afterEndDrag =
-                        step (ViewportMsg (Viewport.MouseUp 150 100)) modelWithCollidingDrag
+                        mouseUp 150 100 modelWithCollidingDrag
                 in
                 Expect.all
                     [ \m -> Expect.equal Nothing m.drag
@@ -1788,7 +1837,7 @@ snappingSuite =
                         }
 
                     afterEndDrag =
-                        step (ViewportMsg (Viewport.MouseUp 150 100)) modelWithSoftCollision
+                        mouseUp 150 100 modelWithSoftCollision
                 in
                 Expect.all
                     [ \m -> Expect.equal Nothing m.drag

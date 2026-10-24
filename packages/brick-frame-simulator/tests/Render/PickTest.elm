@@ -1,6 +1,6 @@
 module Render.PickTest exposing (suite)
 
-{-| Unit tests for ray-AABB and ray-sphere picking tests.
+{-| Unit tests for ray-AABB, ray-sphere and ray-triangle picking tests.
 -}
 
 import Expect
@@ -107,5 +107,29 @@ suite =
 
                         _ ->
                             Expect.fail "expected both to hit"
+            ]
+        , describe "rayTriangleHit"
+            [ test "hits a triangle facing the ray" <|
+                \_ ->
+                    Pick.rayTriangleHit (vec3 0 0 10) (vec3 0 0 -1) ( vec3 -1 -1 0, vec3 1 -1 0, vec3 0 1 0 )
+                        |> Maybe.map (Expect.within (Expect.Absolute 1.0e-5) 10)
+                        |> Maybe.withDefault (Expect.fail "expected hit at t=10")
+            , test "hits a triangle from its back face" <|
+                \_ ->
+                    Pick.rayTriangleHit (vec3 0 0 10) (vec3 0 0 -1) ( vec3 -1 -1 0, vec3 0 1 0, vec3 1 -1 0 )
+                        |> Expect.notEqual Nothing
+            , test "misses beside the triangle, inside its bounding box" <|
+                \_ ->
+                    Pick.rayTriangleHit (vec3 0.9 0.9 10) (vec3 0 0 -1) ( vec3 -1 -1 0, vec3 1 -1 0, vec3 0 1 0 )
+                        |> Expect.equal Nothing
+            , test "nearestTriangleHit takes the closest surface" <|
+                \_ ->
+                    Pick.nearestTriangleHit (vec3 0 0 10)
+                        (vec3 0 0 -1)
+                        [ ( vec3 -1 -1 -5, vec3 1 -1 -5, vec3 0 1 -5 )
+                        , ( vec3 -1 -1 3, vec3 1 -1 3, vec3 0 1 3 )
+                        ]
+                        |> Maybe.map (Expect.within (Expect.Absolute 1.0e-5) 7)
+                        |> Maybe.withDefault (Expect.fail "expected hit at t=7")
             ]
         ]

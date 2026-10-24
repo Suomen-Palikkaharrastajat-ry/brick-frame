@@ -14,11 +14,11 @@ suite =
         [ test "a wide window gets two side panes and a canvas between them" <|
             \_ ->
                 Layout.compute 1400 800
-                    |> Expect.equal { mode = Wide, canvasWidth = 800, canvasHeight = 800 - Layout.headerHeight Wide }
+                    |> Expect.equal { mode = Wide, canvasLeft = Layout.panelWidth, canvasTop = Layout.headerHeight Wide, canvasWidth = 800, canvasHeight = 800 - Layout.headerHeight Wide }
         , test "a phone gets the window above its tab bar for the canvas" <|
             \_ ->
                 Layout.compute 390 780
-                    |> Expect.equal { mode = Narrow, canvasWidth = 390, canvasHeight = 780 - Layout.tabBarHeight - Layout.headerHeight Narrow }
+                    |> Expect.equal { mode = Narrow, canvasLeft = 0, canvasTop = Layout.headerHeight Narrow, canvasWidth = 390, canvasHeight = 780 - Layout.tabBarHeight - Layout.headerHeight Narrow }
         , test "the switch happens at 960 pixels" <|
             \_ ->
                 ( .mode (Layout.compute 959 600), .mode (Layout.compute 960 600) )

@@ -18,6 +18,7 @@ module Viewport exposing
     , pickSource
     , setActivePath
     , setActiveSources
+    , setCanvasOrigin
     , setRenderQuality
     , subscriptions
     , update
@@ -181,6 +182,7 @@ type alias Model =
     , renderStyle : Style.Style
     , activeSources : Maybe (Set Int)
     , activePath : List Int
+    , canvasOrigin : ( Float, Float )
     }
 
 
@@ -298,6 +300,7 @@ init config =
       , renderStyle = config.renderStyle
       , activeSources = Nothing
       , activePath = []
+      , canvasOrigin = ( 0, 0 )
       }
     , Cmd.batch <|
         (if config.useWindowResize then
@@ -333,6 +336,10 @@ fetchTopLevel url =
 {-| Everything the viewport reacts to. Hosts forward their port subscriptions
 as `FileContentReceived`, `FileLoadError`, `GeometryFlattened` and
 `GeometryFlattenFailed`.
+
+Pointer messages carry window (client) coordinates, as the DOM reports them;
+`update` turns them into canvas pixels using `setCanvasOrigin`.
+
 -}
 type Msg
     = WindowResize Int Int
@@ -371,8 +378,9 @@ type Msg
 
   - `CameraSettled` — the camera came to rest (or moved discretely); a good time
     to write the URL hash. Not sent on every drag step.
-  - `Clicked` — a mouse press-release that did not drag, in canvas pixels, and
-    whether Shift was held. The host decides what is under it.
+  - `Clicked` — a mouse press-release that did not drag, in canvas pixels (see
+    `setCanvasOrigin`), and whether Shift was held. The host decides what is
+    under it.
   - `Tapped` — the same for a one-finger touch.
   - `PressStarted` — a mouse button or a single finger went down at this point.
     The camera has started to follow it; call `captureDrag` to take the gesture
@@ -465,7 +473,7 @@ update : Msg -> Model -> ( Model, Cmd Msg, List Event )
 update msg model =
     let
         ( newModel, cmd, events ) =
-            updateInner msg model
+            updateInner (toCanvasPixels model.canvasOrigin msg) model
     in
     -- The instanced renderer's settle countdown is maintained at this single
     -- choke point, so no camera-mutating branch has to thread it through.
@@ -473,6 +481,49 @@ update msg model =
     , cmd
     , events
     )
+
+
+{-| Pointer input arrives in window (client) coordinates; everything downstream
+— picking, gizmo handles, the `Clicked`/`Press…`/`Drag…` events — works in
+canvas pixels. The two only coincide when the canvas sits at the window origin,
+so translate once here, at the single entry point.
+-}
+toCanvasPixels : ( Float, Float ) -> Msg -> Msg
+toCanvasPixels ( left, top ) msg =
+    let
+        point p =
+            { p | x = p.x - left, y = p.y - top }
+    in
+    case msg of
+        MouseDown x y shift ->
+            MouseDown (x - left) (y - top) shift
+
+        MouseMove x y ->
+            MouseMove (x - left) (y - top)
+
+        MouseUp x y ->
+            MouseUp (x - left) (y - top)
+
+        DoubleClick x y ->
+            DoubleClick (x - left) (y - top)
+
+        TouchStart points ->
+            TouchStart (List.map point points)
+
+        TouchMove points ->
+            TouchMove (List.map point points)
+
+        TouchEnd points ->
+            TouchEnd (List.map point points)
+
+        PointerTouchStart p ->
+            PointerTouchStart (point p)
+
+        PointerTouchMove p ->
+            PointerTouchMove (point p)
+
+        _ ->
+            msg
 
 
 {-| Countdown of frames still to be drawn at reduced detail.
@@ -1769,12 +1820,18 @@ finishLoadingDocument document model =
 
 {-| The document placement under a screen point, nearest first.
 
-Placements are tested as bounding spheres to quickly cull non-candidates, then
-ranked by ray-AABB intersection in each part's local coordinates. When multiple
-parts are pierced, the closest front-face intersection wins; ties at the same depth
-are resolved by choosing the smaller bounding radius (e.g. brick on baseplate).
+Placements are culled by bounding sphere, then by ray-AABB in each part's local
+coordinates, and finally hit-tested against the part's triangles: the visually
+nearest surface wins, so a brick seen through the empty corners of a gear's box
+is picked rather than the gear. Candidates are visited in box-entry order, so a
+part whose box starts behind the best hit so far is never triangle-tested.
+Surfaces at the same depth (within `pickDepthTolerance`) go to the smaller part
+(e.g. brick on baseplate). A ray that touches no triangle picks nothing.
 When ghost mode is active (`activeSources /= Nothing`), only placements
 belonging to the active submodel are pickable.
+
+The local ray direction is the inverse-transformed world direction, unnormalised,
+so a local `t` is also the world distance along the (unit) world ray.
 
 -}
 pickSource : Float -> Float -> Model -> Maybe Int
@@ -1792,50 +1849,73 @@ pickSource x y model =
                                 Nothing ->
                                     True
                            )
+
+                -- Sphere first: inverting every placement's matrix on each
+                -- click is what makes picking slow on a city-scale model.
+                boxCandidate p =
+                    Pick.raySphereHit origin direction p.center p.radius
+                        |> Maybe.andThen (\_ -> Dict.get p.part scene.parts)
+                        |> Maybe.andThen
+                            (\mesh ->
+                                Mat4.inverse p.matrix
+                                    |> Maybe.andThen
+                                        (\inv ->
+                                            let
+                                                localOrigin =
+                                                    Mat4.transform inv origin
+
+                                                localDir =
+                                                    Vec3.sub (Mat4.transform inv (Vec3.add origin direction)) localOrigin
+                                            in
+                                            Pick.rayAabbHit localOrigin localDir mesh.boundsMin mesh.boundsMax
+                                                |> Maybe.map (\boxT -> { boxT = boxT, placement = p, mesh = mesh, localOrigin = localOrigin, localDir = localDir })
+                                        )
+                            )
+
+                surfaceHit c =
+                    Pick.nearestTriangleHitBy .position c.localOrigin c.localDir c.mesh.surface
+
+                closer c best =
+                    case best of
+                        Just ( bestT, bestPlacement ) ->
+                            if c.boxT > bestT + pickDepthTolerance then
+                                best
+
+                            else
+                                case surfaceHit c of
+                                    Just t ->
+                                        if t < bestT - pickDepthTolerance then
+                                            Just ( t, c.placement )
+
+                                        else if t <= bestT + pickDepthTolerance && c.placement.radius < bestPlacement.radius then
+                                            Just ( t, c.placement )
+
+                                        else
+                                            best
+
+                                    Nothing ->
+                                        best
+
+                        Nothing ->
+                            surfaceHit c
+                                |> Maybe.map (\t -> ( t, c.placement ))
             in
             scene.placements
                 |> List.filter isPickable
-                |> List.filterMap
-                    (\p ->
-                        Pick.raySphereHit origin direction p.center p.radius
-                            |> Maybe.map
-                                (\sphereT ->
-                                    let
-                                        aabbHit =
-                                            Dict.get p.part scene.parts
-                                                |> Maybe.andThen
-                                                    (\mesh ->
-                                                        Mat4.inverse p.matrix
-                                                            |> Maybe.andThen
-                                                                (\inv ->
-                                                                    let
-                                                                        localOrigin =
-                                                                            Mat4.transform inv origin
-
-                                                                        localTarget =
-                                                                            Mat4.transform inv (Vec3.add origin direction)
-
-                                                                        localDir =
-                                                                            Vec3.sub localTarget localOrigin
-                                                                    in
-                                                                    Pick.rayAabbHit localOrigin localDir mesh.boundsMin mesh.boundsMax
-                                                                )
-                                                    )
-                                    in
-                                    case aabbHit of
-                                        Just t ->
-                                            ( ( t, p.radius ), p.source )
-
-                                        Nothing ->
-                                            ( ( sphereT + p.radius + 1.0e6, p.radius ), p.source )
-                                )
-                    )
-                |> List.sortBy Tuple.first
-                |> List.head
-                |> Maybe.map Tuple.second
+                |> List.filterMap boxCandidate
+                |> List.sortBy .boxT
+                |> List.foldl closer Nothing
+                |> Maybe.map (Tuple.second >> .source)
 
         _ ->
             Nothing
+
+
+{-| How close, in LDU, two surface hits must be to count as the same depth.
+-}
+pickDepthTolerance : Float
+pickDepthTolerance =
+    0.01
 
 
 {-| Called when all parts have been resolved. Build the scene and gear graph.
@@ -2132,6 +2212,18 @@ while all other geometry is rendered in ghost mode. `Nothing` disables ghost mod
 setActiveSources : Maybe (Set Int) -> Model -> Model
 setActiveSources sources model =
     { model | activeSources = sources }
+
+
+{-| Where the canvas's top-left corner sits in the window, in CSS pixels.
+
+Hosts that place the canvas anywhere but the window origin (beside a side
+panel, under a header) must set this, or picks land offset from the pointer.
+Like the canvas size, it is the host's layout arithmetic, not a DOM measurement.
+
+-}
+setCanvasOrigin : Float -> Float -> Model -> Model
+setCanvasOrigin left top model =
+    { model | canvasOrigin = ( left, top ) }
 
 
 {-| Set the active submodel instance path (chain of placement ids from the main

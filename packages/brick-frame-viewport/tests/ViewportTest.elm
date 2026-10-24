@@ -117,6 +117,14 @@ suite =
                         |> update (MouseUp 10 20)
                         |> Tuple.second
                         |> Expect.equal [ Clicked 10 20 False ]
+            , test "a canvas placed away from the window origin reports canvas pixels" <|
+                \_ ->
+                    Viewport.setCanvasOrigin 300 56 idle
+                        |> update (MouseDown 310 76 False)
+                        |> Tuple.first
+                        |> update (MouseUp 310 76)
+                        |> Tuple.second
+                        |> Expect.equal [ Clicked 10 20 False ]
             , test "press, drag and release settles the camera instead" <|
                 \_ ->
                     idle

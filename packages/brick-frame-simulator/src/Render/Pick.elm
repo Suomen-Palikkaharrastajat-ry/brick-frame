@@ -1,10 +1,10 @@
-module Render.Pick exposing (isSphereVisible, rayAabbHit, raySphereHit, screenRay)
+module Render.Pick exposing (isSphereVisible, nearestTriangleHit, nearestTriangleHitBy, rayAabbHit, raySphereHit, rayTriangleHit, screenRay)
 
 {-| Camera-space tests shared by the viewport and the simulation: is a bounding
 sphere on screen, and which world-space ray does a screen point look along.
 
-Picking a placement is a ray test against its bounding sphere. What a click
-_does_ stays with the host application.
+Picking a placement narrows by bounding sphere and box, then settles on the
+nearest actual triangle. What a click _does_ stays with the host application.
 
 -}
 
@@ -317,3 +317,89 @@ rayAabbHit rayOrigin rayDir boxMin boxMax =
 
         _ ->
             Nothing
+
+
+{-| Distance `t` along a ray (origin, direction) to a triangle, Möller–Trumbore.
+Both faces count: picking must not depend on winding or BFC certification.
+-}
+rayTriangleHit : Vec3.Vec3 -> Vec3.Vec3 -> ( Vec3.Vec3, Vec3.Vec3, Vec3.Vec3 ) -> Maybe Float
+rayTriangleHit rayOrigin rayDir ( a, b, c ) =
+    let
+        edge1 =
+            Vec3.sub b a
+
+        edge2 =
+            Vec3.sub c a
+
+        pVec =
+            Vec3.cross rayDir edge2
+
+        det =
+            Vec3.dot edge1 pVec
+    in
+    if abs det < 1.0e-12 then
+        Nothing
+
+    else
+        let
+            invDet =
+                1 / det
+
+            tVec =
+                Vec3.sub rayOrigin a
+
+            u =
+                Vec3.dot tVec pVec * invDet
+        in
+        if u < 0 || u > 1 then
+            Nothing
+
+        else
+            let
+                qVec =
+                    Vec3.cross tVec edge1
+
+                v =
+                    Vec3.dot rayDir qVec * invDet
+            in
+            if v < 0 || u + v > 1 then
+                Nothing
+
+            else
+                let
+                    t =
+                        Vec3.dot edge2 qVec * invDet
+                in
+                if t > 0 then
+                    Just t
+
+                else
+                    Nothing
+
+
+{-| The nearest of `rayTriangleHit` over a list of triangles.
+-}
+nearestTriangleHit : Vec3.Vec3 -> Vec3.Vec3 -> List ( Vec3.Vec3, Vec3.Vec3, Vec3.Vec3 ) -> Maybe Float
+nearestTriangleHit =
+    nearestTriangleHitBy identity
+
+
+{-| `nearestTriangleHit` over triangles of any vertex type, given its position.
+Lets a caller test a mesh's own vertex list without copying out positions.
+-}
+nearestTriangleHitBy : (v -> Vec3.Vec3) -> Vec3.Vec3 -> Vec3.Vec3 -> List ( v, v, v ) -> Maybe Float
+nearestTriangleHitBy position rayOrigin rayDir triangles =
+    List.foldl
+        (\( a, b, c ) best ->
+            case ( rayTriangleHit rayOrigin rayDir ( position a, position b, position c ), best ) of
+                ( Just t, Just nearest ) ->
+                    Just (min t nearest)
+
+                ( Just t, Nothing ) ->
+                    Just t
+
+                ( Nothing, _ ) ->
+                    best
+        )
+        Nothing
+        triangles

@@ -32,8 +32,13 @@ type Panel
     | TreePanel
 
 
+{-| `canvasLeft`/`canvasTop` place the canvas in the window: the viewport needs
+them to turn pointer positions into canvas pixels for picking.
+-}
 type alias Layout =
     { mode : Mode
+    , canvasLeft : Int
+    , canvasTop : Int
     , canvasWidth : Int
     , canvasHeight : Int
     }
@@ -78,12 +83,16 @@ compute : Int -> Int -> Layout
 compute width height =
     if width >= wideFrom then
         { mode = Wide
+        , canvasLeft = panelWidth
+        , canvasTop = headerHeight Wide
         , canvasWidth = width - 2 * panelWidth
         , canvasHeight = max 1 (height - headerHeight Wide)
         }
 
     else
         { mode = Narrow
+        , canvasLeft = 0
+        , canvasTop = headerHeight Narrow
         , canvasWidth = width
         , canvasHeight = max 1 (height - tabBarHeight - headerHeight Narrow)
         }
