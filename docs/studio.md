@@ -67,7 +67,15 @@ Clicking picks a placement (`Viewport.pickSource`); shift-click extends the
 selection. The gizmo captures the drag (`Viewport.captureDrag`), so the camera
 holds still. Translation snaps to a grid of 20/8/4/1 LDU; rotation is in 90° or
 15° steps; the inspector accepts exact position and Euler angles. Selected parts
-get outlines from `Studio.Overlay`.
+get outlines from `Studio.Overlay`, and at rest nothing else is outlined: gear
+hints (meshed / cannot turn) appear only in the status summary, and red
+collision boxes only while a drag is under way.
+
+Picking narrows by bounding sphere and box, then tests the part's triangles
+(`Instanced.PartMesh.surface`), so the visually nearest surface wins and empty
+space picks nothing. Pointer events arrive in window coordinates; the studio
+tells the viewport where its canvas sits (`Viewport.setCanvasOrigin`, from
+`Studio.Layout`), and the viewport converts to canvas pixels before picking.
 
 ## Palette and part index
 

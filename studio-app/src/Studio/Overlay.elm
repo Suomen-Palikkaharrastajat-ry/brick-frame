@@ -25,13 +25,15 @@ import WebGL.Settings.DepthTest as DepthTest
 
 
 {-| Which placements to outline, and in which colour: the selection in yellow,
-gears that mesh in green, gears that cannot turn in orange, collisions in red,
-and active magnetic snap guides.
+collisions in red while a drag is under way, and active magnetic snap guides.
+
+Only the selection is outlined at rest. Gear hints (meshed / cannot turn) live
+in the status summary; boxes around every gear competed with the selection
+outline and made it unclear which part was selected.
+
 -}
 type alias Highlights =
     { selection : Set Int
-    , meshed : Set Int
-    , isolated : Set Int
     , colliding : Set Int
     , snapGuide : Maybe SnapGuide
     }
@@ -69,9 +71,7 @@ entities camera aspect scene highlights handles arcHandles =
                 Nothing ->
                     []
     in
-    outline highlights.meshed meshedColor
-        ++ outline highlights.isolated isolatedColor
-        ++ outline highlights.colliding collidingColor
+    outline highlights.colliding collidingColor
         ++ outline highlights.selection outlineColor
         ++ snapGuideEntities draw highlights.snapGuide
         ++ List.map (\h -> draw (WebGL.triangles (handleTriangles camera h)) (axisColor h.axis)) handles
@@ -259,16 +259,6 @@ clipColor =
 outlineColor : Vec4
 outlineColor =
     vec4 0.98 0.78 0.04 1
-
-
-meshedColor : Vec4
-meshedColor =
-    vec4 0.15 0.65 0.25 1
-
-
-isolatedColor : Vec4
-isolatedColor =
-    vec4 0.95 0.45 0.1 1
 
 
 axisColor : Axis -> Vec4

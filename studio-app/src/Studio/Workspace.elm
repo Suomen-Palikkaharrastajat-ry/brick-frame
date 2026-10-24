@@ -3283,9 +3283,15 @@ canvasView model =
                         aspect
                         model.viewport.instancedScene
                         { selection = model.selection
-                        , meshed = model.hints.meshed
-                        , isolated = model.hints.isolated
-                        , colliding = model.collidingPlacements
+
+                        -- Soft collision keeps the set after a drag for the
+                        -- inspector's warning; the 3D outline is drag feedback only.
+                        , colliding =
+                            if model.drag == Nothing then
+                                Set.empty
+
+                            else
+                                model.collidingPlacements
                         , snapGuide = Maybe.map .guide model.activeSnap
                         }
                         (currentHandles model)
