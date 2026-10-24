@@ -447,6 +447,13 @@ contributes a 12-triangle box of its own colour, merged by spatial cell into
 placements fall into `Far`, so the frame costs roughly 2,000 draw calls instead
 of 50,000.
 
+A chunk is drawn only while none of its visible placements is `Near` or `Mid`.
+Hiding a box behind the real part with the depth buffer only works for parts
+that are boxes: a wheel, a slope or a Technic beam sits inside its own bounding
+box, which covered it and left a grey slab with the part's edge lines showing
+through. In a cell that also holds a resolved placement, the `Far` members draw
+their own triangle mesh (no edges) instead of the merged box.
+
 ### Static-scene detail settling
 
 When `simulationAvailable` is false nothing animates, so the image only changes

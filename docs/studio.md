@@ -37,7 +37,7 @@ ports: they return events and `Main` maps them to `Ports`. `Main` also intercept
 | `Studio.PartIndex` / `Studio.Palette` | Part search and the add-part palette |
 | `Studio.Colours` / `Studio.Inspector` / `Studio.Tree` | Colour picker, selection fields, submodel/placement tree |
 | `Studio.Shortcuts` | Editing keys, layered on `Viewport.Shortcuts` and its typing guard |
-| `Studio.Layout` | Wide/narrow layout and canvas-size arithmetic |
+| `Studio.Layout` | Wide/narrow layout, header height and canvas-size arithmetic |
 | `Studio.Hints` | Live gear hints for the document |
 | `Studio.Preview` | Simulation preview page |
 
@@ -78,8 +78,59 @@ the index is missing.
 
 ## Layout
 
-At ≥ 960 px the studio shows 300 px side panes. Narrower, it shows a 46 px tab
-bar with sheets. The canvas size is computed in `Studio.Layout`, not measured.
+A header row (56 px wide, 48 px narrow) holds the brand, a document summary and
+the actions: New, Open, Save, Export (a popover), Realistic, Parts list,
+Instructions and Simulate. At ≥ 960 px the studio shows 300 px side panes (parts
+and colour on the left, selection and structure on the right). Narrower, the
+header keeps only Simulate and a "More" menu, and a 46 px tab bar opens the
+panels as sheets. The canvas size is computed in `Studio.Layout` from the window
+size, not measured; `Workspace`, `Preview` and `Instructions` listen to
+`Browser.Events.onResize` themselves, because Elm replaces the runtime's mount
+node and its `ResizeObserver` never fires.
+
+On the canvas: the tool rail (tools, undo/redo, edit and submodel actions) at
+the top left, the snapping buttons along the bottom (top on a phone) and the
+camera pad at the bottom right. Everything floating over the canvas is opaque.
+
+## Keyboard
+
+Keys are pure functions in `Studio.Shortcuts` on top of `Viewport.Shortcuts`;
+`?` lists them all. Besides the editing keys (V M R, X Y Z, Delete, Ctrl D/A/G,
+Ctrl Z/Y, `[` `]` `,` `.`):
+
+- **Arrows** nudge the selection by the move step relative to the screen (the
+  camera's right and forward snapped to a ground axis), Shift by 1 LDU, and
+  **PageUp/PageDown** raise and lower it. Without a selection the arrows orbit.
+  `Workspace` intercepts these key presses before the viewport sees them, so the
+  camera does not orbit at the same time.
+- `/` part search, Ctrl O open, Ctrl S save, B parts list, I instructions,
+  P simulate, Esc closes the menu, clears the selection, leaves a submodel, or
+  leaves Simulate/Instructions.
+
+The guard (`Viewport.Shortcuts.isTextEntryTarget` and `isWidgetKey`) leaves
+typing in form fields alone, and leaves Space/Enter to a focused button and the
+arrows to composite widgets (by ARIA role: `treeitem`, `option`, `radio`, …).
+Buttons are deliberately *not* text-entry targets: clicking a toolbar button
+focuses it, and that used to silence every shortcut.
+
+Page changes (Simulate, Instructions, back) are decided in `Main`, which only
+sees messages that come from outside a page, so key-driven page changes are
+re-sent as commands (`Request` in `Workspace`).
+
+## Accessibility
+
+- Landmarks: `header`, two labelled `aside` panes, `main` for the canvas; pane
+  titles are `h2`s.
+- The canvas wrapper is focusable (`role="application"`, described by a hidden
+  help text) and is where the keyboard lands; clicking the canvas focuses it.
+- The structure list is an ARIA tree and the colour swatches a listbox; both
+  move focus with the arrow keys (`FocusElement`) and select with Enter/Space.
+  Picking a colour recolours the selection, so the arrows never pick.
+- A polite live region (`Workspace.announce`) says what an action did: the
+  selection, undo/redo, deletions, nudges, tool and step changes.
+- Toggles carry `aria-pressed`; icon buttons carry a name, a tooltip with the
+  key and `aria-keyshortcuts` (`UI.Button.icon`). Focus is always visible
+  (`theme.css`).
 
 ## Draft and save
 
