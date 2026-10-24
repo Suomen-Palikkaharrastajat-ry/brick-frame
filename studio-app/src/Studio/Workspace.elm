@@ -183,6 +183,7 @@ type alias Model =
     , announcement : String
     , descriptions : Dict String String
     , treeFocus : Maybe String
+    , inspectorFocus : Maybe String
     }
 
 
@@ -274,6 +275,10 @@ type Msg
     | BOMCopyPlainText
     | BOMToggleDiff
     | ElementCatalogLoaded (Result Http.Error ElementCatalog)
+    | FocusInspectorField String
+    | BlurInspectorField
+    | CommitInspectorField String Msg
+    | CancelInspectorField String
     | FocusElement String
     | FocusSearch
     | CoarserGridStep
@@ -356,6 +361,7 @@ init flags =
             , announcement = ""
             , descriptions = Dict.empty
             , treeFocus = Nothing
+            , inspectorFocus = Nothing
             }
 
         ( opened, openCmd ) =
@@ -1471,6 +1477,17 @@ updatePage msg model =
                                 current =
                                     Vec3.toRecord center
 
+                                currentAxis =
+                                    case axis of
+                                        AxisX ->
+                                            current.x
+
+                                        AxisY ->
+                                            current.y
+
+                                        AxisZ ->
+                                            current.z
+
                                 delta =
                                     case axis of
                                         AxisX ->
@@ -1482,7 +1499,11 @@ updatePage msg model =
                                         AxisZ ->
                                             Vec3.vec3 0 0 (value - current.z)
                             in
-                            commit (Translate ids delta) m
+                            if abs (value - currentAxis) < 0.001 then
+                                ( m, Cmd.none )
+
+                            else
+                                commit (Translate ids delta) m
 
                         Nothing ->
                             ( m, Cmd.none )
@@ -1496,6 +1517,17 @@ updatePage msg model =
                         current =
                             Transform.eulerDegrees placement.matrix
 
+                        currentDeg =
+                            case axis of
+                                AxisX ->
+                                    current.x
+
+                                AxisY ->
+                                    current.y
+
+                                AxisZ ->
+                                    current.z
+
                         next =
                             case axis of
                                 AxisX ->
@@ -1507,7 +1539,11 @@ updatePage msg model =
                                 AxisZ ->
                                     { current | z = degrees }
                     in
-                    commit (SetMatrix [ ( placement.id, Transform.withEuler next placement.matrix ) ]) model
+                    if abs (degrees - currentDeg) < 0.001 then
+                        ( model, Cmd.none )
+
+                    else
+                        commit (SetMatrix [ ( placement.id, Transform.withEuler next placement.matrix ) ]) model
 
                 _ ->
                     ( model, Cmd.none )
@@ -1721,6 +1757,29 @@ updatePage msg model =
               else
                 model
             , Task.attempt (\_ -> NoOp) (Browser.Dom.focus id)
+            )
+
+        FocusInspectorField fieldId ->
+            ( { model | inspectorFocus = Just fieldId }, Cmd.none )
+
+        BlurInspectorField ->
+            ( { model | inspectorFocus = Nothing }, Cmd.none )
+
+        CommitInspectorField fieldId actionMsg ->
+            let
+                ( nextModel, cmd ) =
+                    update actionMsg { model | inspectorFocus = Nothing }
+            in
+            ( nextModel
+            , Cmd.batch
+                [ cmd
+                , Task.attempt (\_ -> NoOp) (Browser.Dom.blur fieldId)
+                ]
+            )
+
+        CancelInspectorField fieldId ->
+            ( { model | inspectorFocus = Nothing }
+            , Task.attempt (\_ -> NoOp) (Browser.Dom.blur fieldId)
             )
 
         NoOp ->
@@ -4169,6 +4228,11 @@ viewInspector model =
         , onRotation = SetRotation
         , onDuplicate = DuplicateSelection
         , onDelete = DeleteSelection
+        , focusedField = model.inspectorFocus
+        , onFocus = FocusInspectorField
+        , onBlur = BlurInspectorField
+        , onCommit = CommitInspectorField
+        , onCancel = CancelInspectorField
         }
         model.document
         model.selection

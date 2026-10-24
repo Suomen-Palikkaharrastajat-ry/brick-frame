@@ -208,7 +208,6 @@ nudgeFor context event =
             || ViewportShortcuts.isWidgetKey event
             || event.ctrl
             || event.meta
-            || event.alt
             || not context.hasSelection
             || context.walking
             || context.helpVisible
@@ -222,16 +221,32 @@ nudgeFor context event =
         in
         case event.key of
             "ArrowLeft" ->
-                nudge Left
+                if event.alt then
+                    Nothing
+
+                else
+                    nudge Left
 
             "ArrowRight" ->
-                nudge Right
+                if event.alt then
+                    Nothing
+
+                else
+                    nudge Right
 
             "ArrowUp" ->
-                nudge Away
+                if event.alt then
+                    nudge Up
+
+                else
+                    nudge Away
 
             "ArrowDown" ->
-                nudge Toward
+                if event.alt then
+                    nudge Down
+
+                else
+                    nudge Toward
 
             "PageUp" ->
                 nudge Up
@@ -263,6 +278,7 @@ helpRows =
         , ( "Drag a part (M)", "Slide it over the ground, on the move step" )
         , ( "Arrows", "Nudge the selection by the move step" )
         , ( "Shift Arrows", "Nudge by 1 LDU" )
+        , ( "Alt Arrows", "Raise / lower the selection (axis modifier)" )
         , ( "PageUp PageDown", "Raise / lower the selection" )
         , ( "X Y Z", "Turn the selection (Shift: the other way)" )
         , ( "Delete", "Remove the selection" )

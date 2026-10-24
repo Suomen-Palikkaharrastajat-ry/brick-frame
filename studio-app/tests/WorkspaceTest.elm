@@ -723,6 +723,17 @@ editingSuite =
                 \_ ->
                     shortcut { key = "Delete", ctrl = False, shift = False, target = "INPUT" }
                         |> Expect.equal Nothing
+            , test "typing in an input or textarea ignores Ctrl chords so browser text editing works" <|
+                \_ ->
+                    Expect.all
+                        [ \_ -> Expect.equal Nothing (shortcut { key = "a", ctrl = True, shift = False, target = "INPUT" })
+                        , \_ -> Expect.equal Nothing (shortcut { key = "z", ctrl = True, shift = False, target = "INPUT" })
+                        , \_ -> Expect.equal Nothing (shortcut { key = "y", ctrl = True, shift = False, target = "INPUT" })
+                        , \_ -> Expect.equal Nothing (shortcut { key = "d", ctrl = True, shift = False, target = "INPUT" })
+                        , \_ -> Expect.equal Nothing (shortcut { key = "a", ctrl = True, shift = False, target = "TEXTAREA" })
+                        , \_ -> Expect.equal Nothing (shortcut { key = "z", ctrl = True, shift = False, target = "TEXTAREA" })
+                        ]
+                        ()
             , test "browser chords stay with the browser" <|
                 \_ ->
                     shortcut { key = "w", ctrl = True, shift = False, target = "BODY" }
@@ -824,6 +835,31 @@ editingSuite =
                     in
                     ( heightOf raised, heightOf (step Undo raised) )
                         |> Expect.equal ( Just -8, Just 0 )
+            , test "Alt modifier switches ArrowUp and ArrowDown to vertical axis (Up/Down)" <|
+                \_ ->
+                    let
+                        nudgeWithAlt key shift =
+                            Shortcuts.nudgeFor { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False, menuOpen = False }
+                                { key = key
+                                , shift = shift
+                                , ctrl = False
+                                , meta = False
+                                , alt = True
+                                , repeat = False
+                                , targetTag = "DIV"
+                                , targetEditable = False
+                                , targetRole = "application"
+                                }
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal (Just (Shortcuts.Nudge { direction = Shortcuts.Up, fine = False })) (nudgeWithAlt "ArrowUp" False)
+                        , \_ -> Expect.equal (Just (Shortcuts.Nudge { direction = Shortcuts.Down, fine = False })) (nudgeWithAlt "ArrowDown" False)
+                        , \_ -> Expect.equal (Just (Shortcuts.Nudge { direction = Shortcuts.Up, fine = True })) (nudgeWithAlt "ArrowUp" True)
+                        , \_ -> Expect.equal (Just (Shortcuts.Nudge { direction = Shortcuts.Down, fine = True })) (nudgeWithAlt "ArrowDown" True)
+                        , \_ -> Expect.equal Nothing (nudgeWithAlt "ArrowLeft" False)
+                        , \_ -> Expect.equal Nothing (nudgeWithAlt "ArrowRight" False)
+                        ]
+                        ()
             , test "the viewport keys are not taken" <|
                 \_ ->
                     [ "w", "a", "s", "d", "f", "g", "1", "+", "?" ]
@@ -1576,6 +1612,67 @@ panelSuite =
                         |> .history
                         |> Edit.canUndo
                         |> Expect.equal False
+            , test "focusing and blurring inspector fields manages inspectorFocus" <|
+                \_ ->
+                    let
+                        focused =
+                            loaded |> step (FocusInspectorField "position-x")
+
+                        blurred =
+                            focused |> step BlurInspectorField
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal (Just "position-x") focused.inspectorFocus
+                        , \_ -> Expect.equal Nothing blurred.inspectorFocus
+                        ]
+                        ()
+            , test "committing an inspector field applies the change and clears focus" <|
+                \_ ->
+                    let
+                        modelWithFocus =
+                            loaded
+                                |> click (screenOf 0 loaded)
+                                |> step (FocusInspectorField "position-x")
+
+                        committed =
+                            modelWithFocus
+                                |> step (CommitInspectorField "position-x" (SetPosition AxisX 60))
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal (Just 60) (positionOf 0 committed)
+                        , \_ -> Expect.equal Nothing committed.inspectorFocus
+                        ]
+                        ()
+            , test "canceling an inspector field clears focus without altering position" <|
+                \_ ->
+                    let
+                        modelWithFocus =
+                            loaded
+                                |> click (screenOf 0 loaded)
+                                |> step (FocusInspectorField "position-x")
+
+                        canceled =
+                            modelWithFocus
+                                |> step (CancelInspectorField "position-x")
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal (Just 0) (positionOf 0 canceled)
+                        , \_ -> Expect.equal Nothing canceled.inspectorFocus
+                        ]
+                        ()
+            , test "setting position to current value avoids duplicate history entry" <|
+                \_ ->
+                    let
+                        m =
+                            loaded |> click (screenOf 0 loaded)
+
+                        historyLenBefore =
+                            List.length m.history.undo
+
+                        afterSame =
+                            m |> step (SetPosition AxisX 0)
+                    in
+                    Expect.equal historyLenBefore (List.length afterSame.history.undo)
             ]
         , describe "tree"
             [ test "choosing a row selects that part; Shift adds to the selection" <|

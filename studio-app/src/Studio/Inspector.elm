@@ -1,4 +1,13 @@
-module Studio.Inspector exposing (Config, Fields, fields, fieldsWithCollisions, view, viewWithCollisions)
+module Studio.Inspector exposing
+    ( Config
+    , Fields
+    , fields
+    , fieldsWithCollisions
+    , formatNumber
+    , parseNumber
+    , view
+    , viewWithCollisions
+    )
 
 {-| The inspector: the selection's position, rotation and colour as editable
 fields.
@@ -16,6 +25,7 @@ import Html exposing (Html, button, div, input, span, text)
 import Html.Attributes as Attr
 import Html.Events
 import Json.Decode as Decode
+import Json.Encode as Encode
 import LDraw.Document as Document exposing (Document, Placement)
 import Math.Vector3 as Vec3
 import Set exposing (Set)
@@ -34,6 +44,11 @@ type alias Config msg =
     , onRotation : Axis -> Float -> msg
     , onDuplicate : msg
     , onDelete : msg
+    , focusedField : Maybe String
+    , onFocus : String -> msg
+    , onBlur : msg
+    , onCommit : String -> msg -> msg
+    , onCancel : String -> msg
     }
 
 
@@ -131,17 +146,17 @@ viewWithCollisions collidingIds config document selection =
                 , colourLine f
                 , group "Position"
                     "LDU"
-                    [ numberField "Position" "X" f.position.x (config.onPosition AxisX)
-                    , numberField "Position" "Y" f.position.y (config.onPosition AxisY)
-                    , numberField "Position" "Z" f.position.z (config.onPosition AxisZ)
+                    [ numberField config "Position" "X" f.position.x (config.onPosition AxisX)
+                    , numberField config "Position" "Y" f.position.y (config.onPosition AxisY)
+                    , numberField config "Position" "Z" f.position.z (config.onPosition AxisZ)
                     ]
                 , case f.rotation of
                     Just e ->
                         group "Rotation"
                             "degrees"
-                            [ numberField "Rotation" "X" e.x (config.onRotation AxisX)
-                            , numberField "Rotation" "Y" e.y (config.onRotation AxisY)
-                            , numberField "Rotation" "Z" e.z (config.onRotation AxisZ)
+                            [ numberField config "Rotation" "X" e.x (config.onRotation AxisX)
+                            , numberField config "Rotation" "Y" e.y (config.onRotation AxisY)
+                            , numberField config "Rotation" "Z" e.z (config.onRotation AxisZ)
                             ]
 
                     Nothing ->
@@ -255,9 +270,17 @@ group title unit children =
 
 
 {-| One axis value. Typing and leaving the field, or pressing Enter, sends it.
+Pressing Escape cancels and reverts to the current value.
 -}
-numberField : String -> String -> Float -> (Float -> msg) -> Html msg
-numberField quantity axis value toMsg =
+numberField : Config msg -> String -> String -> Float -> (Float -> msg) -> Html msg
+numberField config quantity axis value toMsg =
+    let
+        fieldId =
+            String.toLower quantity ++ "-" ++ String.toLower axis
+
+        isFocused =
+            config.focusedField == Just fieldId
+    in
     Html.label
         [ Attr.style "display" "flex"
         , Attr.style "align-items" "center"
@@ -269,11 +292,24 @@ numberField quantity axis value toMsg =
         ]
         [ span [ Attr.attribute "aria-hidden" "true", Attr.style "color" Theme.textMuted, Attr.style "font-size" "12px", Attr.style "font-weight" "600" ] [ text axis ]
         , input
-            [ Attr.type_ "number"
-            , Attr.step "any"
+            [ Attr.id fieldId
+            , Attr.type_ "text"
+            , Attr.attribute "inputmode" "decimal"
             , Attr.attribute "aria-label" (quantity ++ " " ++ axis)
-            , Attr.value (formatNumber value)
+            , if isFocused then
+                Attr.property "defaultValue" (Encode.string (formatNumber value))
+
+              else
+                Attr.value (formatNumber value)
+            , Html.Events.onFocus (config.onFocus fieldId)
+            , Html.Events.onBlur config.onBlur
             , Html.Events.on "change" (changeDecoder toMsg)
+            , Html.Events.custom "keydown"
+                (inputKeyDownDecoder
+                    toMsg
+                    (config.onCommit fieldId)
+                    (config.onCancel fieldId)
+                )
             , Attr.style "flex" "1"
             , Attr.style "width" "100%"
             , Attr.style "min-width" "0"
@@ -291,6 +327,48 @@ numberField quantity axis value toMsg =
         ]
 
 
+{-| Intercept Enter to commit and Escape to cancel while letting other keys type naturally.
+-}
+inputKeyDownDecoder :
+    (Float -> msg)
+    -> (msg -> msg)
+    -> msg
+    -> Decode.Decoder { message : msg, stopPropagation : Bool, preventDefault : Bool }
+inputKeyDownDecoder toMsg onCommit cancelMsg =
+    Decode.field "key" Decode.string
+        |> Decode.andThen
+            (\key ->
+                case key of
+                    "Enter" ->
+                        Decode.at [ "target", "value" ] Decode.string
+                            |> Decode.map
+                                (\raw ->
+                                    case parseNumber raw of
+                                        Just val ->
+                                            { message = onCommit (toMsg val)
+                                            , stopPropagation = False
+                                            , preventDefault = True
+                                            }
+
+                                        Nothing ->
+                                            { message = cancelMsg
+                                            , stopPropagation = False
+                                            , preventDefault = True
+                                            }
+                                )
+
+                    "Escape" ->
+                        Decode.succeed
+                            { message = cancelMsg
+                            , stopPropagation = True
+                            , preventDefault = True
+                            }
+
+                    _ ->
+                        Decode.fail "not handled"
+            )
+
+
 {-| A `change` event whose field holds a number; anything else is ignored.
 -}
 changeDecoder : (Float -> msg) -> Decode.Decoder msg
@@ -298,13 +376,55 @@ changeDecoder toMsg =
     Decode.at [ "target", "value" ] Decode.string
         |> Decode.andThen
             (\raw ->
-                case String.toFloat (String.trim raw) of
+                case parseNumber raw of
                     Just value ->
                         Decode.succeed (toMsg value)
 
                     Nothing ->
                         Decode.fail "not a number"
             )
+
+
+{-| Parse a string as a number, allowing negative numbers, decimals with or without
+leading/trailing zeros, and comma as decimal separator.
+-}
+parseNumber : String -> Maybe Float
+parseNumber raw =
+    let
+        trimmed =
+            raw
+                |> String.trim
+                |> String.replace "," "."
+    in
+    if List.member trimmed [ "", "-", "+", ".", "-.", "+." ] then
+        Nothing
+
+    else
+        let
+            normalized =
+                if String.startsWith "." trimmed then
+                    "0" ++ trimmed
+
+                else if String.startsWith "-." trimmed then
+                    "-0." ++ String.dropLeft 2 trimmed
+
+                else if String.startsWith "+." trimmed then
+                    "0." ++ String.dropLeft 2 trimmed
+
+                else if String.startsWith "+" trimmed then
+                    String.dropLeft 1 trimmed
+
+                else
+                    trimmed
+
+            clean =
+                if String.endsWith "." normalized then
+                    String.dropRight 1 normalized
+
+                else
+                    normalized
+        in
+        String.toFloat clean
 
 
 {-| Two decimals at most, without trailing zeros.

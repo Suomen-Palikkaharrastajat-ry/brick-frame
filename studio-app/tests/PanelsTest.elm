@@ -228,6 +228,54 @@ suite =
                         Nothing ->
                             Expect.fail "expected fields"
             ]
+        , describe "Inspector.parseNumber"
+            [ test "parses integers and floats with optional signs" <|
+                \_ ->
+                    Expect.all
+                        [ \_ -> Expect.equal (Just 42) (Inspector.parseNumber "42")
+                        , \_ -> Expect.equal (Just -42) (Inspector.parseNumber "-42")
+                        , \_ -> Expect.equal (Just 42.5) (Inspector.parseNumber "42.5")
+                        , \_ -> Expect.equal (Just -42.5) (Inspector.parseNumber "-42.5")
+                        , \_ -> Expect.equal (Just 10) (Inspector.parseNumber "+10")
+                        ]
+                        ()
+            , test "parses decimals with leading or trailing dot" <|
+                \_ ->
+                    Expect.all
+                        [ \_ -> Expect.equal (Just 0.5) (Inspector.parseNumber ".5")
+                        , \_ -> Expect.equal (Just -0.5) (Inspector.parseNumber "-.5")
+                        , \_ -> Expect.equal (Just 5) (Inspector.parseNumber "5.")
+                        , \_ -> Expect.equal (Just -5) (Inspector.parseNumber "-5.")
+                        ]
+                        ()
+            , test "supports comma as decimal separator and whitespace" <|
+                \_ ->
+                    Expect.all
+                        [ \_ -> Expect.equal (Just 12.5) (Inspector.parseNumber "12,5")
+                        , \_ -> Expect.equal (Just -12.5) (Inspector.parseNumber "-12,5")
+                        , \_ -> Expect.equal (Just -3.14) (Inspector.parseNumber "  -3.14  ")
+                        ]
+                        ()
+            , test "returns Nothing for incomplete or invalid numbers" <|
+                \_ ->
+                    Expect.all
+                        [ \_ -> Expect.equal Nothing (Inspector.parseNumber "")
+                        , \_ -> Expect.equal Nothing (Inspector.parseNumber "-")
+                        , \_ -> Expect.equal Nothing (Inspector.parseNumber "-.")
+                        , \_ -> Expect.equal Nothing (Inspector.parseNumber "abc")
+                        ]
+                        ()
+            ]
+        , describe "Inspector.formatNumber"
+            [ test "formats numbers rounding to at most two decimals without trailing zeros" <|
+                \_ ->
+                    Expect.all
+                        [ \_ -> Expect.equal "42" (Inspector.formatNumber 42)
+                        , \_ -> Expect.equal "-42.5" (Inspector.formatNumber -42.5)
+                        , \_ -> Expect.equal "0.12" (Inspector.formatNumber 0.1234)
+                        ]
+                        ()
+            ]
         ]
 
 

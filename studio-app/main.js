@@ -219,6 +219,17 @@ openThumbnailDb().then((db) => {
 
 // Browser shortcuts that clash with the studio (save, duplicate, select all, undo/redo).
 window.addEventListener('keydown', (event) => {
+  const target = event.target
+  const isInput =
+    target &&
+    (target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      Boolean(target.isContentEditable))
+
+  if (isInput) {
+    return
+  }
+
   if ((event.ctrlKey || event.metaKey) && !event.altKey) {
     const key = event.key.toLowerCase()
     if (key === 's') {
