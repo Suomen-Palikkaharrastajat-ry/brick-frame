@@ -15,6 +15,7 @@ module Viewport exposing
     , init
     , loadDocument
     , needsAnimationFrame
+    , pickPoint
     , pickSource
     , setActivePath
     , setActiveSources
@@ -1836,6 +1837,15 @@ so a local `t` is also the world distance along the (unit) world ray.
 -}
 pickSource : Float -> Float -> Model -> Maybe Int
 pickSource x y model =
+    pickPoint x y model |> Maybe.map .source
+
+
+{-| `pickSource` with where the ray met the part: the world-space (render, Y up)
+point under the pointer. A host dragging a part by its surface keeps that point
+under the cursor.
+-}
+pickPoint : Float -> Float -> Model -> Maybe { source : Int, point : Vec3.Vec3 }
+pickPoint x y model =
     case ( model.instancedScene, Pick.screenRay model.camera model.width model.height x y ) of
         ( Just scene, Just ( origin, direction ) ) ->
             let
@@ -1905,7 +1915,7 @@ pickSource x y model =
                 |> List.filterMap boxCandidate
                 |> List.sortBy .boxT
                 |> List.foldl closer Nothing
-                |> Maybe.map (Tuple.second >> .source)
+                |> Maybe.map (\( t, p ) -> { source = p.source, point = Vec3.add origin (Vec3.scale t direction) })
 
         _ ->
             Nothing

@@ -295,6 +295,8 @@ records which placements an edit touched (`Document.touched`); call
 `Document.clearTouched` after applying. `Viewport.pickSource x y viewport` returns
 the id of the document placement under a point: the nearest surface the ray
 actually hits (part triangles, not bounding boxes), or `Nothing` over empty space.
+`Viewport.pickPoint` also returns where the ray met it (render space), for
+dragging a part by the spot that was grabbed.
 
 Event coordinates are canvas pixels only if the viewport knows where the canvas
 sits. A host that places it anywhere but the window's top-left corner (beside a
@@ -388,7 +390,7 @@ document-wide keydowns hijacking a host page's form fields.
 | `Gear.Physics` | Rotation propagation | `propagate`, `angleAt` |
 | `Gear.Animate` | Motor + animation state | `MotorState`, `defaultMotor`, `gearAngles` |
 | `Gear.Components` | Axle/beam detection | `extractComponents`, `ComponentInstance` |
-| `Viewport` | The viewport component | `init`, `update`, `view`, `subscriptions`, `loadDocument`, `applyDocument`, `pickSource`, `setCanvasOrigin`, `captureDrag`, `beginFlatten` |
+| `Viewport` | The viewport component | `init`, `update`, `view`, `subscriptions`, `loadDocument`, `applyDocument`, `pickSource`, `pickPoint`, `setCanvasOrigin`, `captureDrag`, `beginFlatten` |
 | `Viewport.Shortcuts` | Pure keyboard mapping and its typing guard | `actionFor`, `movementFor`, `lookFor`, `helpRows` |
 | `Viewport.Hash` | Camera ↔ URL hash | `decode`, `encodeCamera` |
 | `Viewport.Framing` | Model bounds, auto-fit, zoom range, view presets | `cameraForBounds`, `applyZoomRange`, `ViewPreset` |

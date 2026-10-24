@@ -240,6 +240,21 @@ positionOf id model =
         |> Maybe.map (\p -> Vec3.getX (Mat4.transform p.matrix (vec3 0 0 0)))
 
 
+{-| A placement's position on the ground plane (document X and Z).
+-}
+groundOf : Int -> Workspace.Model -> Maybe ( Float, Float )
+groundOf id model =
+    Document.getPlacement id model.document
+        |> Maybe.map (\p -> Mat4.transform p.matrix (vec3 0 0 0))
+        |> Maybe.map (\v -> ( Vec3.getX v, Vec3.getZ v ))
+
+
+elevationOf : Int -> Workspace.Model -> Maybe Float
+elevationOf id model =
+    Document.getPlacement id model.document
+        |> Maybe.map (\p -> Vec3.getY (Mat4.transform p.matrix (vec3 0 0 0)))
+
+
 selected : Workspace.Model -> List Int
 selected model =
     Set.toList model.selection
@@ -518,6 +533,75 @@ editingSuite =
 
                         Nothing ->
                             Expect.fail "no X handle"
+            , test "grabbing an unselected part selects it and slides it over the ground" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded |> step (UseTool MoveTool)
+
+                        ( x, y ) =
+                            screenOf 0 ready
+
+                        moved =
+                            ready
+                                |> mouseDown x y False
+                                |> mouseMove (x + 60) (y + 20)
+                                |> mouseUp (x + 60) (y + 20)
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal [ 0 ] (selected m)
+                        , \m -> Expect.notEqual (groundOf 0 ready) (groundOf 0 m)
+                        , \m -> Expect.within (Expect.Absolute 1.0e-6) (Maybe.withDefault 0 (elevationOf 0 ready)) (Maybe.withDefault 1 (elevationOf 0 m))
+                        , \m -> Expect.within (Expect.Absolute 1.0e-9) ready.viewport.camera.azimuth m.viewport.camera.azimuth
+                        ]
+                        moved
+            , test "a part dragged by its body lands on the move grid, and undoes in one step" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded |> step (UseTool MoveTool)
+
+                        ( x, y ) =
+                            screenOf 0 ready
+
+                        moved =
+                            ready
+                                |> mouseDown x y False
+                                |> mouseMove (x + 37) (y + 11)
+                                |> mouseMove (x + 73) (y + 23)
+                                |> mouseUp (x + 73) (y + 23)
+
+                        onGrid v =
+                            toFloat (round (v / 20)) * 20 == v
+                    in
+                    Expect.all
+                        [ \m ->
+                            groundOf 0 m
+                                |> Maybe.map (\( gx, gz ) -> onGrid gx && onGrid gz)
+                                |> Expect.equal (Just True)
+                        , \m -> Expect.equal (groundOf 0 ready) (groundOf 0 (step Undo m))
+                        ]
+                        moved
+            , test "shift-dragging a part pans the camera instead of moving the part" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded |> step (UseTool MoveTool)
+
+                        ( x, y ) =
+                            screenOf 0 ready
+
+                        panned =
+                            ready
+                                |> mouseDown x y True
+                                |> mouseMove (x + 60) (y + 20)
+                                |> mouseUp (x + 60) (y + 20)
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal (groundOf 0 ready) (groundOf 0 m)
+                        , \m -> Expect.notEqual ready.viewport.camera.target m.viewport.camera.target
+                        ]
+                        panned
             , test "pressing away from the handles still orbits the camera" <|
                 \_ ->
                     let

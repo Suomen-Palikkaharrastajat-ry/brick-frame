@@ -65,7 +65,11 @@ apply.
 
 Clicking picks a placement (`Viewport.pickSource`); shift-click extends the
 selection. The gizmo captures the drag (`Viewport.captureDrag`), so the camera
-holds still. Translation snaps to a grid of 20/8/4/1 LDU; rotation is in 90° or
+holds still. With the move tool, a part can also be dragged by its body
+(`Viewport.pickPoint`): it slides over the horizontal plane through the grabbed
+point, the whole selection if the part is in it, snapping to the move step and
+to studs like a handle drag, one undo step per drag. Empty space and Shift-drag
+still move the camera. Translation snaps to a grid of 20/8/4/1 LDU; rotation is in 90° or
 15° steps; the inspector accepts exact position and Euler angles. Selected parts
 get outlines from `Studio.Overlay`, and at rest nothing else is outlined: gear
 hints (meshed / cannot turn) appear only in the status summary, and red

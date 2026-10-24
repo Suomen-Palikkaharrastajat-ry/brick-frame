@@ -21,7 +21,9 @@ viewport with `Viewport.applyDocument`, which updates the scene in place.
 Input is split by who owns it. The camera keeps orbit, pan, pinch and walk; the
 tools are explicit modes. A click selects. In the move tool, pressing on a
 gizmo handle takes that gesture away from the camera (`Viewport.captureDrag`)
-and turns it into a move along one axis, snapped to the grid.
+and turns it into a move along one axis, snapped to the grid; pressing on a part
+itself grabs it and slides it over the horizontal plane at the grabbed height.
+Empty space and Shift-drag stay with the camera.
 
 -}
 
@@ -60,6 +62,7 @@ import Math.Vector3 as Vec3 exposing (vec3)
 import Ports
 import Process
 import Render.Camera as Camera
+import Render.Pick as Pick
 import Render.Style as Style
 import Set exposing (Set)
 import Studio.BOM as StudioBOM
@@ -509,7 +512,7 @@ announce msg before after =
                     "Select tool"
 
                 MoveTool ->
-                    "Move tool"
+                    "Move tool: drag a part to slide it, or an arrow for one axis"
 
                 RotateTool ->
                     "Rotate tool"
@@ -2261,7 +2264,8 @@ handleEvent event ( model, cmds ) =
         Viewport.PressStarted x y ->
             case startDrag ( x, y ) model of
                 Just drag ->
-                    ( { model | viewport = Viewport.captureDrag model.viewport, drag = Just drag }, cmds )
+                    -- Grabbing a part by its body makes it the selection.
+                    ( { model | viewport = Viewport.captureDrag model.viewport, drag = Just drag, selection = Set.fromList drag.ids }, cmds )
 
                 Nothing ->
                     ( model, cmds )
@@ -2465,6 +2469,9 @@ currentArcHandles model =
                     LinearDrag _ ->
                         []
 
+                    PlaneDrag _ ->
+                        []
+
             Nothing ->
                 let
                     activePlacements =
@@ -2558,9 +2565,9 @@ grabRadius =
 startDrag : ( Float, Float ) -> Model -> Maybe Drag
 startDrag point model =
     if model.tool == MoveTool then
-        Gizmo.hit grabRadius point (currentHandles model)
-            |> Maybe.map
-                (\handle ->
+        case Gizmo.hit grabRadius point (currentHandles model) of
+            Just handle ->
+                Just
                     { kind = LinearDrag handle
                     , ids = Set.toList model.selection
                     , start = point
@@ -2568,7 +2575,9 @@ startDrag point model =
                     , original = model.document
                     , amount = 0
                     }
-                )
+
+            Nothing ->
+                grabPart point model
 
     else if model.tool == RotateTool then
         Gizmo.hitArc grabRadius point (currentArcHandles model)
@@ -2587,6 +2596,34 @@ startDrag point model =
         Nothing
 
 
+{-| Pressing a part's body with the move tool grabs it: the whole selection if
+the part is in it, else the part alone (which becomes the selection). A press on
+empty space, or with Shift (which pans), leaves the camera to it.
+-}
+grabPart : ( Float, Float ) -> Model -> Maybe Drag
+grabPart ( x, y ) model =
+    if model.viewport.mousePanDragging then
+        Nothing
+
+    else
+        Viewport.pickPoint x y model.viewport
+            |> Maybe.map
+                (\hit ->
+                    { kind = PlaneDrag hit.point
+                    , ids =
+                        if Set.member hit.source model.selection then
+                            Set.toList model.selection
+
+                        else
+                            [ hit.source ]
+                    , start = ( x, y )
+                    , lastPoint = ( x, y )
+                    , original = model.document
+                    , amount = 0
+                    }
+                )
+
+
 {-| Follow the pointer: the document is the drag's original with the snapped
 move or rotation applied, shown live but not yet recorded for undo.
 -}
@@ -2595,6 +2632,9 @@ moveDrag drag point model =
     case drag.kind of
         LinearDrag handle ->
             moveLinearDrag drag handle point model
+
+        PlaneDrag grab ->
+            movePlaneDrag drag grab point model
 
         ArcDrag arcHandle ->
             let
@@ -2671,10 +2711,65 @@ moveLinearDrag drag handle point model =
     let
         amount =
             Gizmo.dragAmount (toFloat model.gridStep) handle drag.start point
+    in
+    applyDragDelta drag amount point (Vec3.scale amount (Edit.axisVector handle.axis)) model
 
-        delta =
-            Vec3.scale amount (Edit.axisVector handle.axis)
 
+{-| Slide a grabbed part over the horizontal plane through the grab point, so
+the spot first pressed stays under the pointer, snapped to the move step. A ray
+nearly parallel to the plane (a view from the horizon) holds the part still
+rather than flinging it to the horizon.
+-}
+movePlaneDrag : Drag -> Vec3.Vec3 -> ( Float, Float ) -> Model -> ( Model, Cmd Msg )
+movePlaneDrag drag grab ( x, y ) model =
+    let
+        planeHit =
+            Pick.screenRay model.viewport.camera model.viewport.width model.viewport.height x y
+                |> Maybe.andThen
+                    (\( origin, direction ) ->
+                        let
+                            dy =
+                                Vec3.getY direction
+
+                            t =
+                                (Vec3.getY grab - Vec3.getY origin) / dy
+                        in
+                        if abs dy < 0.05 || t <= 0 then
+                            Nothing
+
+                        else
+                            Just (Vec3.add origin (Vec3.scale t direction))
+                    )
+
+        snapped value =
+            let
+                step =
+                    toFloat (max 1 model.gridStep)
+            in
+            toFloat (round (value / step)) * step
+    in
+    case planeHit of
+        Just hit ->
+            let
+                moved =
+                    Vec3.sub hit grab
+
+                -- Render space is LDraw with Y negated; the plane keeps Y fixed.
+                delta =
+                    vec3 (snapped (Vec3.getX moved)) 0 (snapped (Vec3.getZ moved))
+            in
+            applyDragDelta drag 0 ( x, y ) delta model
+
+        Nothing ->
+            ( model, Cmd.none )
+
+
+{-| Move the dragged parts by `delta` (document space) from where the drag
+began, then snap to studs and check collisions as every move drag does.
+-}
+applyDragDelta : Drag -> Float -> ( Float, Float ) -> Vec3.Vec3 -> Model -> ( Model, Cmd Msg )
+applyDragDelta drag amount point delta model =
+    let
         effectiveDelta =
             if model.context.coordinateFrame == WorldFrame && not (List.isEmpty model.context.path) then
                 case List.reverse model.context.path of

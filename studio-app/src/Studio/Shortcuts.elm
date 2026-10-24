@@ -260,6 +260,7 @@ helpRows =
       , [ ( "Click", "Select (Shift: add or remove)" )
         , ( "V M R", "Select / move / rotate tool" )
         , ( "Drag a handle", "Move along that axis" )
+        , ( "Drag a part (M)", "Slide it over the ground, on the move step" )
         , ( "Arrows", "Nudge the selection by the move step" )
         , ( "Shift Arrows", "Nudge by 1 LDU" )
         , ( "PageUp PageDown", "Raise / lower the selection" )

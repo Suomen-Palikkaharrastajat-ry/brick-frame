@@ -58,10 +58,15 @@ type alias ArcHandle =
 
 
 {-| Union of drag handle types supported by the gizmo system.
+
+`PlaneDrag` is a part grabbed by its body rather than a handle: it slides over
+the horizontal plane through `grab`, the render-space point first pressed.
+
 -}
 type DragHandle
     = LinearDrag Handle
     | ArcDrag ArcHandle
+    | PlaneDrag Vec3
 
 
 {-| LDraw (Y down) to render space (Y up), the conversion every mesh gets.
