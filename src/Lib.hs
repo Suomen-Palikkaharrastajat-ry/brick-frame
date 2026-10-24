@@ -199,7 +199,7 @@ generateColorDataModule = do
     ldrawColors <- parseLdConfig ldConfigPath
     pure $
         Text.unlines
-            [ "module LDraw.ColorData exposing (colorTable)"
+            [ "module LDraw.ColorData exposing (colorNames, colorTable)"
             , ""
             , "{-| LDraw colour code → RGBA, generated from " <> Text.pack ldConfigPath <> "."
             , ""
@@ -217,7 +217,21 @@ generateColorDataModule = do
             , "    Dict.fromList"
             , "        [ " <> Text.intercalate "\n        , " (map colorEntry ldrawColors)
             , "        ]"
+            , ""
+            , ""
+            , "{-| Every official LDraw colour's name, as LDConfig spells it with the"
+            , "underscores turned into spaces (\"Light Bluish Grey\")."
+            , "-}"
+            , "colorNames : Dict Int String"
+            , "colorNames ="
+            , "    Dict.fromList"
+            , "        [ " <> Text.intercalate "\n        , " (map colorNameEntry ldrawColors)
+            , "        ]"
             ]
+
+colorNameEntry :: LDrawColor -> Text
+colorNameEntry c =
+    "( " <> Text.pack (show (colorCode c)) <> ", " <> elmString (Text.replace "_" " " (colorName c)) <> " )"
 
 colorEntry :: LDrawColor -> Text
 colorEntry c =

@@ -34,6 +34,7 @@ This module provides lookups from LDraw part numbers and color codes to:
 
 import Dict exposing (Dict)
 import Json.Decode as Decode exposing (Decoder)
+import LDraw.ColorData as ColorData
 
 
 {-| Information about a specific LEGO element (part + color).
@@ -418,7 +419,9 @@ colorName code =
             "Very Light Gray"
 
         _ ->
-            "Color " ++ String.fromInt code
+            -- Codes BrickLink has no name for keep LDraw's own.
+            Dict.get code ColorData.colorNames
+                |> Maybe.withDefault ("Color " ++ String.fromInt code)
 
 
 {-| Map an LDraw color ID to a BrickLink color ID.
