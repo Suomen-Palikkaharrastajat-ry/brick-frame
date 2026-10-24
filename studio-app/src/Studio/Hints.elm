@@ -1,6 +1,7 @@
 module Studio.Hints exposing (Hints, analyse, empty, summary)
 
-{-| Live gear hints while editing: which gears mesh, and which cannot turn.
+{-| Live gear hints while editing: which gears cannot turn. Which gears mesh
+is no longer tracked separately.
 
 Only gear parts placed directly in the main model are considered — gears inside a
 submodel are found by the full analysis the preview runs. The check is a pass over
@@ -18,19 +19,18 @@ import LDraw.Types exposing (LDrawLine(..))
 import Set exposing (Set)
 
 
-{-| Placements (by document id) that are gears, split by whether anything drives
-or is driven by them.
+{-| Placements (by document id) that are gears, tracking isolated gears that
+cannot turn. Which gears mesh is no longer tracked separately.
 -}
 type alias Hints =
     { gears : Int
-    , meshed : Set Int
     , isolated : Set Int
     }
 
 
 empty : Hints
 empty =
-    { gears = 0, meshed = Set.empty, isolated = Set.empty }
+    { gears = 0, isolated = Set.empty }
 
 
 {-| How many gears are looked at, at most. A model with more is not a puzzle
@@ -41,7 +41,8 @@ maxGears =
     300
 
 
-{-| Find the gears in a document and which of them are connected.
+{-| Find the gears in a document and which of them cannot turn. Which gears mesh
+is no longer tracked separately.
 -}
 analyse : List GearSpec -> Document -> Hints
 analyse specs document =
@@ -77,12 +78,15 @@ analyse specs document =
                 |> Maybe.map (not << List.isEmpty)
                 |> Maybe.withDefault False
 
-        classified =
-            List.indexedMap (\index ( source, _ ) -> ( source, connected index )) sourced
+        isolated =
+            sourced
+                |> List.indexedMap (\index ( source, _ ) -> ( source, connected index ))
+                |> List.filter (not << Tuple.second)
+                |> List.map Tuple.first
+                |> Set.fromList
     in
     { gears = List.length sourced
-    , meshed = classified |> List.filter Tuple.second |> List.map Tuple.first |> Set.fromList
-    , isolated = classified |> List.filter (not << Tuple.second) |> List.map Tuple.first |> Set.fromList
+    , isolated = isolated
     }
 
 

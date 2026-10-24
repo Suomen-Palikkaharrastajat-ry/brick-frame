@@ -66,6 +66,7 @@ import Render.Pick as Pick
 import Render.Style as Style
 import Set exposing (Set)
 import Studio.BOM as StudioBOM
+import Studio.BuildGroups as BuildGroups
 import Studio.Colours as Colours
 import Studio.Edit as Edit exposing (Axis(..), Command(..), History)
 import Studio.Gizmo as Gizmo exposing (ArcHandle, DragHandle(..), Handle)
@@ -235,6 +236,7 @@ type Msg
     | PartIndexLoaded (Result Http.Error PartIndex.PartIndex)
     | PaletteQuery String
     | PaletteGroup (Maybe String)
+    | PaletteGroupAndFocus (Maybe String) String
     | PaletteCategory (Maybe String)
     | PaletteToggleFavorite String
     | PaletteSelectShelf Palette.Shelf
@@ -1116,7 +1118,9 @@ updatePage msg model =
 
                 loaded =
                     { model
-                        | palette = { palette | index = Palette.Loaded index }
+                        | palette =
+                            Palette.refreshFiltered model.activeColour
+                                { palette | index = Palette.Loaded index }
                         , descriptions =
                             index.parts
                                 |> List.map (\part -> ( partKey part.file, part.description ))
@@ -1137,8 +1141,22 @@ updatePage msg model =
                 palette =
                     model.palette
 
+                newGroup =
+                    if palette.query == "" && query /= "" then
+                        Nothing
+
+                    else if query == "" && palette.group == Nothing then
+                        Just BuildGroups.defaultGroup
+
+                    else
+                        palette.group
+
+                updatedPalette =
+                    Palette.refreshFiltered model.activeColour
+                        { palette | query = query, group = newGroup }
+
                 updated =
-                    { model | palette = { palette | query = query } }
+                    { model | palette = updatedPalette }
             in
             ( updated, requestVisibleThumbnails updated )
 
@@ -1149,8 +1167,8 @@ updatePage msg model =
 
                 -- A group and an LDraw category are two ways to narrow the
                 -- shelf; the category picker only shows under "Everything".
-                -- Picking a group means browsing it: leave any search, and the
-                -- personal shelves, which ignore groups.
+                -- Picking a group narrows the current search to that group
+                -- (or browses it if no search), and leaves personal shelves.
                 shelf =
                     if palette.shelf == Palette.FavoritesShelf || palette.shelf == Palette.RecentShelf then
                         Palette.AllShelf
@@ -1158,18 +1176,52 @@ updatePage msg model =
                     else
                         palette.shelf
 
+                updatedPalette =
+                    Palette.refreshFiltered model.activeColour
+                        { palette | group = group, category = Nothing, shelf = shelf }
+
                 updated =
-                    { model | palette = { palette | group = group, category = Nothing, query = "", shelf = shelf } }
+                    { model | palette = updatedPalette }
             in
             ( updated, requestVisibleThumbnails updated )
+
+        PaletteGroupAndFocus group domId ->
+            let
+                palette =
+                    model.palette
+
+                shelf =
+                    if palette.shelf == Palette.FavoritesShelf || palette.shelf == Palette.RecentShelf then
+                        Palette.AllShelf
+
+                    else
+                        palette.shelf
+
+                updatedPalette =
+                    Palette.refreshFiltered model.activeColour
+                        { palette | group = group, category = Nothing, shelf = shelf }
+
+                updated =
+                    { model | palette = updatedPalette }
+            in
+            ( updated
+            , Cmd.batch
+                [ requestVisibleThumbnails updated
+                , Task.attempt (\_ -> NoOp) (Browser.Dom.focus domId)
+                ]
+            )
 
         PaletteCategory category ->
             let
                 palette =
                     model.palette
 
+                updatedPalette =
+                    Palette.refreshFiltered model.activeColour
+                        { palette | category = category }
+
                 updated =
-                    { model | palette = { palette | category = category } }
+                    { model | palette = updatedPalette }
             in
             ( updated, requestVisibleThumbnails updated )
 
@@ -1185,8 +1237,12 @@ updatePage msg model =
                     else
                         Set.insert file palette.favorites
 
+                updatedPalette =
+                    Palette.refreshFiltered model.activeColour
+                        { palette | favorites = newFavorites }
+
                 updated =
-                    { model | palette = { palette | favorites = newFavorites } }
+                    { model | palette = updatedPalette }
             in
             ( updated
             , Cmd.batch
@@ -1200,8 +1256,12 @@ updatePage msg model =
                 palette =
                     model.palette
 
+                updatedPalette =
+                    Palette.refreshFiltered model.activeColour
+                        { palette | shelf = shelf }
+
                 updated =
-                    { model | palette = { palette | shelf = shelf } }
+                    { model | palette = updatedPalette }
             in
             ( updated, requestVisibleThumbnails updated )
 
@@ -1218,8 +1278,12 @@ updatePage msg model =
                         Palette.OfficialOnly ->
                             Palette.ShowAllColors
 
+                updatedPalette =
+                    Palette.refreshFiltered model.activeColour
+                        { palette | colorFilterMode = newMode }
+
                 updated =
-                    { model | palette = { palette | colorFilterMode = newMode } }
+                    { model | palette = updatedPalette }
             in
             ( updated, requestVisibleThumbnails updated )
 
@@ -1305,7 +1369,11 @@ updatePage msg model =
             else
                 let
                     picked =
-                        { model | activeColour = code, thumbnails = Dict.empty }
+                        { model
+                            | activeColour = code
+                            , palette = Palette.refreshFiltered code model.palette
+                            , thumbnails = Dict.empty
+                        }
 
                     ( recoloured, recolourCmd ) =
                         whenSelected (\ids -> commit (Recolor (List.map (\id -> ( id, code )) ids))) picked
@@ -1704,7 +1772,9 @@ addPart file model =
                         | document = document
                         , history = history
                         , selection = Set.singleton newId
-                        , palette = { palette | recentParts = newRecents }
+                        , palette =
+                            Palette.refreshFiltered model.activeColour
+                                { palette | recentParts = newRecents }
                     }
         in
         ( synced, Cmd.batch [ syncCmd, Ports.saveRecents newRecents ] )
@@ -1715,10 +1785,10 @@ addPart file model =
 requestVisibleThumbnails : Model -> Cmd Msg
 requestVisibleThumbnails model =
     case model.palette.index of
-        Palette.Loaded index ->
+        Palette.Loaded _ ->
             let
                 missing =
-                    Palette.filterParts Palette.resultLimit model.palette model.activeColour index
+                    model.palette.filteredParts
                         |> List.filter (\p -> not (Dict.member p.file model.thumbnails))
 
                 -- The renderer has no colour table of its own; send the one the
@@ -2829,7 +2899,7 @@ applyDragDelta drag amount point delta model =
                 Connectivity.checkCollisions 0.5 draggedBoxes sceneBoxes
 
             collidingIds =
-                Set.fromList (List.concatMap (\( a, b ) -> [ a, b ]) collidingPairs)
+                Set.fromList (List.map Tuple.first collidingPairs)
 
             ( next, cmd ) =
                 syncDocumentLive
@@ -2908,7 +2978,7 @@ applyDragDelta drag amount point delta model =
                                 not (List.isEmpty collidingPairs)
 
                             collidingIds =
-                                Set.fromList (List.concatMap (\( a, b ) -> [ a, b ]) collidingPairs)
+                                Set.fromList (List.map Tuple.first collidingPairs)
 
                             guideWithCol =
                                 Connectivity.setGuideColliding isColliding snap.guide
@@ -2938,7 +3008,7 @@ applyDragDelta drag amount point delta model =
                                 Connectivity.checkCollisions 0.5 draggedBoxes sceneBoxes
 
                             collidingIds =
-                                Set.fromList (List.concatMap (\( a, b ) -> [ a, b ]) collidingPairs)
+                                Set.fromList (List.map Tuple.first collidingPairs)
 
                             ( next, cmd ) =
                                 syncDocumentLive
@@ -3470,6 +3540,7 @@ viewPalette model =
     Palette.view
         { onQuery = PaletteQuery
         , onGroup = PaletteGroup
+        , onGroupAndFocus = PaletteGroupAndFocus
         , onCategory = PaletteCategory
         , onArm = ArmPart
         , onAdd = AddArmedPart
@@ -3481,6 +3552,7 @@ viewPalette model =
         , onInspect = PaletteInspect
         , onRotateTurntable = PaletteRotateTurntable
         , activeColour = model.activeColour
+        , layoutMode = model.layout.mode
         , thumbnails = model.thumbnails
         , preview = viewPreview model
         }

@@ -142,3 +142,24 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 ```
 
 Types: `feat`, `fix`, `refactor`, `style`, `docs`, `test`, `chore`, `build`, `ci`
+
+## Sandbox Network Policy
+
+Configuration for `agent-sandbox` (proxied sessions). Only hosts needed to build, test and fetch LDraw assets are allowed.
+
+```toml agent-sandbox
+[ports]
+dev = 8180
+
+[network]
+allowed_hosts = [
+  "*.cachix.org:443",              # git over HTTPS, GitHub API, submodules, codeload
+  "*.github.com:443",              # git over HTTPS, GitHub API, submodules, codeload
+  "*.githubusercontent.com:443",   # raw.githubusercontent.com (LDraw CDN), release assets
+  "package.elm-lang.org:443",      # Elm package registry
+  "hackage.haskell.org:443",       # Cabal packages
+  "registry.npmjs.org:443",        # npm packages (Vite, elm-tailwind-classes, ...)
+  "cache.nixos.org:443",           # Nix binary cache (devenv/nix)
+  "library.ldraw.org:443",         # `make sync-ldraw` source archive
+]
+```

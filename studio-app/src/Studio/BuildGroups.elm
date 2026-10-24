@@ -116,6 +116,22 @@ all =
       , categories = [ "Wheel", "Tyre" ]
       , essentials = [ "4600", "4488", "4624", "3641", "30027b", "6015", "55981", "56891" ]
       }
+    , { id = "vehicles"
+      , label = "Vehicles"
+      , categories = [ "Train", "Vehicle", "Car", "Boat", "Plane", "Tipper", "Trailer" ]
+      , essentials =
+            [ "3829c01", "1846", "2513", "2441", "24326" ]
+                ++ [ "4022", "3488", "18626", "243c01", "280" ]
+                ++ [ "2512", "30184", "125c01", "185c01", "4868a", "30248", "30358" ]
+      }
+    , { id = "accessories"
+      , label = "Accessories"
+      , categories = [ "Roadsign", "Flag", "Container" ]
+      , essentials =
+            [ "2489", "4738a", "4739a", "2821", "12884", "2439" ]
+                ++ [ "2335", "11055", "2525", "30292a" ]
+                ++ [ "30258", "30259a", "30260", "30261", "2038", "3350", "3349" ]
+      }
     , { id = "nature"
       , label = "Nature"
       , categories = [ "Plant", "Animal", "Rock" ]

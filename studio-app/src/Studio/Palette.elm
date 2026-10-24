@@ -7,6 +7,8 @@ module Studio.Palette exposing
     , filterParts
     , init
     , initWith
+    , isSearchingEveryPart
+    , refreshFiltered
     , resultLimit
     , view
     )
@@ -26,6 +28,7 @@ view. Colour availability comes from `LDraw.ColorAvailability`.
 
 -}
 
+import Array exposing (Array)
 import Dict exposing (Dict)
 import Html exposing (Html, button, div, img, input, option, select, span, text)
 import Html.Attributes as Attr
@@ -34,6 +37,7 @@ import Json.Decode as Decode
 import LDraw.ColorAvailability as ColorAvailability exposing (ColorAvailability(..))
 import Set exposing (Set)
 import Studio.BuildGroups as BuildGroups exposing (Tier(..))
+import Studio.Layout as Layout
 import Studio.PartIndex as PartIndex exposing (Part, PartIndex)
 import UI.Theme as Theme
 
@@ -64,7 +68,8 @@ type ColorFilterMode
 
 {-| What the palette remembers between renders: the catalogue, search query,
 build group (`Nothing` is "Everything"), LDraw category, shelves, favorite
-parts, recently used parts, armed part, and inspect widget state.
+parts, recently used parts, armed part, inspect widget state, and cached
+filtered parts.
 -}
 type alias State =
     { index : Index
@@ -79,6 +84,7 @@ type alias State =
     , colorFilterMode : ColorFilterMode
     , inspectingPart : Maybe Part
     , turntableAngle : Float
+    , filteredParts : List Part
     }
 
 
@@ -87,6 +93,7 @@ type alias State =
 type alias Config msg =
     { onQuery : String -> msg
     , onGroup : Maybe String -> msg
+    , onGroupAndFocus : Maybe String -> String -> msg
     , onCategory : Maybe String -> msg
     , onArm : Part -> msg
     , onAdd : msg
@@ -98,6 +105,7 @@ type alias Config msg =
     , onInspect : Maybe Part -> msg
     , onRotateTurntable : Float -> msg
     , activeColour : Int
+    , layoutMode : Layout.Mode
     , thumbnails : Dict String String
     , preview : Html msg
     }
@@ -119,6 +127,7 @@ init =
     , colorFilterMode = ShowAllColors
     , inspectingPart = Nothing
     , turntableAngle = 35.0
+    , filteredParts = []
     }
 
 
@@ -138,7 +147,20 @@ initWith persisted =
     , colorFilterMode = ShowAllColors
     , inspectingPart = Nothing
     , turntableAngle = 35.0
+    , filteredParts = []
     }
+
+
+{-| Recompute and cache the filtered and sorted parts for the current state.
+-}
+refreshFiltered : Int -> State -> State
+refreshFiltered activeColour state =
+    case state.index of
+        Loaded index ->
+            { state | filteredParts = filterParts resultLimit state activeColour index }
+
+        _ ->
+            { state | filteredParts = [] }
 
 
 {-| Maximum results displayed in the visual grid at once.
@@ -188,8 +210,8 @@ filterParts limit state activeColour index =
         words =
             searchTerms whole
 
-        browsedGroup =
-            if whole == "" && (state.shelf == AllShelf || state.shelf == ColorMatchedShelf) then
+        activeGroup =
+            if state.shelf == AllShelf || state.shelf == ColorMatchedShelf then
                 state.group
 
             else
@@ -197,7 +219,7 @@ filterParts limit state activeColour index =
 
         matchesQuery part =
             (state.category == Nothing || state.category == Just part.category)
-                && (case browsedGroup of
+                && (case activeGroup of
                         Just id ->
                             List.member id part.shelving.groups
 
@@ -246,8 +268,8 @@ filterParts limit state activeColour index =
     if state.shelf == RecentShelf && whole == "" then
         List.take limit filtered
 
-    else
-        case browsedGroup of
+    else if whole == "" then
+        case activeGroup of
             Just id ->
                 filtered
                     |> sortedBy (\part -> ( classicPosition id part, part.size, ( String.length part.description, part.file ) ))
@@ -257,18 +279,118 @@ filterParts limit state activeColour index =
                 filtered
                     |> sortedBy
                         (\part ->
-                            ( rank part
-                            , -- Browsing "Everything" keeps building parts first; a
-                              -- search lets its classics lead.
-                              if whole == "" then
-                                0
-
-                              else
-                                classicFirst part
+                            ( 0
+                            , 0
                             , ( tierOrder part.shelving.tier, part.shelving.classicOrder, ( String.length part.description, part.file ) )
                             )
                         )
                     |> List.take limit
+
+    else
+        filtered
+            |> sortedBy
+                (\part ->
+                    ( rank part
+                    , classicFirst part
+                    , ( footprintOrder words part, tierOrder part.shelving.tier, ( part.shelving.classicOrder, ( String.length part.description, part.file ) ) )
+                    )
+                )
+            |> List.take limit
+
+
+{-| Footprint matches rank ahead of 3D extended sizes when a 2D footprint is queried.
+-}
+footprintOrder : List String -> Part -> Int
+footprintOrder words part =
+    let
+        twoPartSizes =
+            List.filter isTwoPartSize words
+    in
+    if List.isEmpty twoPartSizes then
+        0
+
+    else if List.all (\size -> hasExactFootprint size part.descriptionLower) twoPartSizes then
+        0
+
+    else
+        1
+
+
+{-| Whether a word represents a 2D footprint size like "1 x 2" or "2 x 4".
+-}
+isTwoPartSize : String -> Bool
+isTwoPartSize word =
+    case String.split " x " word of
+        [ a, b ] ->
+            String.toFloat a /= Nothing && String.toFloat b /= Nothing
+
+        _ ->
+            False
+
+
+{-| Whether an occurrence of a 2D size in a description is an exact footprint match,
+rather than being preceded or followed by another dimension (e.g. "1 x 2 x 3").
+-}
+hasExactFootprint : String -> String -> Bool
+hasExactFootprint size text =
+    String.indexes size text
+        |> List.any
+            (\i ->
+                let
+                    before =
+                        String.slice 0 i text
+
+                    after =
+                        String.dropLeft (i + String.length size) text
+
+                    beforeValid =
+                        not (isDigitAt (i - 1) text) && not (endsInDimension before)
+
+                    afterValid =
+                        not (isDigitAt 0 after) && not (startsInDimension after)
+                in
+                beforeValid && afterValid
+            )
+
+
+{-| Whether a string ends with a dimension marker like " 2 x ".
+-}
+endsInDimension : String -> Bool
+endsInDimension s =
+    if String.endsWith " x " s then
+        let
+            before =
+                String.dropRight 3 s
+        in
+        case String.uncons (String.right 1 before) of
+            Just ( c, _ ) ->
+                Char.isDigit c || c == '.'
+
+            Nothing ->
+                False
+
+    else
+        False
+
+
+{-| Whether a string starts with an extended dimension like " x 3" or " x 0.667".
+-}
+startsInDimension : String -> Bool
+startsInDimension s =
+    if String.startsWith " x " s then
+        let
+            remainder =
+                String.dropLeft 3 s
+        in
+        case String.uncons remainder of
+            Just ( c, _ ) ->
+                Char.isDigit c || c == '.'
+
+            Nothing ->
+                False
+
+    else
+        False
 
 
 {-| A part's place among a group's classics, after every classic when it is
@@ -507,44 +629,145 @@ shelfButton config state targetShelf label =
     chip (config.onSelectShelf targetShelf) (state.shelf == targetShelf) label
 
 
-{-| The build groups as a row of chips, Technic last and "Everything" after it.
+{-| Whether the palette is searching across every part (query present on All or
+Official colours shelf, no category and no group chosen).
+-}
+isSearchingEveryPart : State -> Bool
+isSearchingEveryPart state =
+    String.trim state.query
+        /= ""
+        && (state.shelf == AllShelf || state.shelf == ColorMatchedShelf)
+        && state.category
+        == Nothing
+        && state.group
+        == Nothing
 
-A chip shows as chosen only where the group applies: not during a search (which
-looks through every part, as the note says) and not on Favourites or Recent.
 
+{-| DOM element id for a build group chip.
+-}
+chipDomId : Maybe String -> String
+chipDomId maybeId =
+    "palette-group-" ++ Maybe.withDefault "everything" maybeId
+
+
+{-| The build groups as a radiogroup of chips, Technic last and "Everything" after it.
 -}
 groupChips : Config msg -> State -> Html msg
 groupChips config state =
     let
-        searching =
-            String.trim state.query /= ""
-
         groupShelf =
             state.shelf == AllShelf || state.shelf == ColorMatchedShelf
 
-        groupChip id label =
-            compactChip (config.onGroup id) (groupShelf && not searching && state.group == id) label
-    in
-    div [ Attr.style "display" "flex", Attr.style "flex-direction" "column", Attr.style "gap" "4px" ]
-        (div
-            [ Attr.attribute "role" "group"
+        groupsList =
+            List.map (\group -> ( Just group.id, group.label )) BuildGroups.all
+                ++ [ ( Nothing, "Everything" ) ]
+
+        groupsArray =
+            Array.fromList groupsList
+
+        hasActive =
+            groupShelf && List.any (\( id, _ ) -> id == state.group) groupsList
+
+        renderChip index ( id, label ) =
+            let
+                isActive =
+                    groupShelf && state.group == id
+
+                isTabStop =
+                    if hasActive then
+                        isActive
+
+                    else
+                        index == 0
+            in
+            compactChip
+                (chipDomId id)
+                (config.onGroup id)
+                (groupChipDecoder config groupsArray index)
+                isActive
+                isTabStop
+                label
+
+        containerAttrs =
+            [ Attr.attribute "role" "radiogroup"
             , Attr.attribute "aria-label" "Build group"
             , Attr.style "display" "flex"
-            , Attr.style "flex-wrap" "wrap"
             , Attr.style "gap" "4px"
             ]
-            (List.map (\group -> groupChip (Just group.id) group.label) BuildGroups.all
-                ++ [ groupChip Nothing "Everything" ]
-            )
-            :: [ div [ Attr.attribute "aria-live" "polite" ]
-                    (if searching && groupShelf && state.category == Nothing then
-                        [ note "Searching every part. Pick a group to browse it." ]
+                ++ (case config.layoutMode of
+                        Layout.Narrow ->
+                            [ Attr.style "flex-wrap" "nowrap"
+                            , Attr.style "overflow-x" "auto"
+                            , Attr.style "-webkit-overflow-scrolling" "touch"
+                            , Attr.style "padding-bottom" "4px"
+                            , Attr.style "scrollbar-width" "none"
+                            ]
 
-                     else
-                        []
-                    )
-               ]
-        )
+                        Layout.Wide ->
+                            [ Attr.style "flex-wrap" "wrap"
+                            ]
+                   )
+    in
+    div [ Attr.style "display" "flex", Attr.style "flex-direction" "column", Attr.style "gap" "4px" ]
+        [ div
+            containerAttrs
+            (List.indexedMap renderChip groupsList)
+        , div [ Attr.attribute "aria-live" "polite" ]
+            (if isSearchingEveryPart state then
+                [ note "Searching every part. Pick a group to narrow it." ]
+
+             else
+                []
+            )
+        ]
+
+
+{-| Decodes arrow keys, Home and End on a group chip to navigate to the adjacent chip.
+-}
+groupChipDecoder : Config msg -> Array ( Maybe String, String ) -> Int -> Decode.Decoder ( msg, Bool )
+groupChipDecoder config arr index =
+    Decode.field "key" Decode.string
+        |> Decode.andThen
+            (\key ->
+                let
+                    total =
+                        Array.length arr
+
+                    targetIndex =
+                        case key of
+                            "ArrowRight" ->
+                                Just (modBy total (index + 1))
+
+                            "ArrowDown" ->
+                                Just (modBy total (index + 1))
+
+                            "ArrowLeft" ->
+                                Just (modBy total (index - 1 + total))
+
+                            "ArrowUp" ->
+                                Just (modBy total (index - 1 + total))
+
+                            "Home" ->
+                                Just 0
+
+                            "End" ->
+                                Just (total - 1)
+
+                            _ ->
+                                Nothing
+                in
+                case targetIndex of
+                    Just target ->
+                        case Array.get target arr of
+                            Just ( targetId, _ ) ->
+                                Decode.succeed ( config.onGroupAndFocus targetId (chipDomId targetId), True )
+
+                            Nothing ->
+                                Decode.fail "invalid target index"
+
+                    Nothing ->
+                        Decode.fail ("unhandled key " ++ key)
+            )
 
 
 chip : msg -> Bool -> String -> Html msg
@@ -552,11 +775,60 @@ chip =
     chipSized "4px 10px" "12px"
 
 
-{-| Fifteen group chips have to share a 300 px pane with the results grid.
+{-| Seventeen group chips have to share a 300 px pane with the results grid.
 -}
-compactChip : msg -> Bool -> String -> Html msg
-compactChip =
-    chipSized "3px 8px" "11px"
+compactChip : String -> msg -> Decode.Decoder ( msg, Bool ) -> Bool -> Bool -> String -> Html msg
+compactChip domId onPress onKeyDown isActive isTabStop label =
+    button
+        [ Html.Events.onClick onPress
+        , Html.Events.preventDefaultOn "keydown" onKeyDown
+        , Attr.id domId
+        , Attr.class "palette-item"
+        , Attr.attribute "role" "radio"
+        , Attr.attribute "aria-checked"
+            (if isActive then
+                "true"
+
+             else
+                "false"
+            )
+        , Attr.tabindex
+            (if isTabStop then
+                0
+
+             else
+                -1
+            )
+        , Attr.style "flex-shrink" "0"
+        , Attr.style "padding" "3px 8px"
+        , Attr.style "font-size" "11px"
+        , Attr.style "font-family" "inherit"
+        , Attr.style "border-radius" "12px"
+        , Attr.style "cursor" "pointer"
+        , Attr.style "white-space" "nowrap"
+        , Attr.style "border"
+            (if isActive then
+                "1px solid " ++ Theme.brand
+
+             else
+                "1px solid " ++ Theme.borderDefault
+            )
+        , Attr.style "background"
+            (if isActive then
+                Theme.brandYellow
+
+             else
+                Theme.panelSubtleBackground
+            )
+        , Attr.style "color"
+            (if isActive then
+                Theme.brand
+
+             else
+                Theme.textPrimary
+            )
+        ]
+        [ text label ]
 
 
 chipSized : String -> String -> msg -> Bool -> String -> Html msg
@@ -641,10 +913,10 @@ addButton config state =
 
 
 resultsGrid : Config msg -> State -> PartIndex -> Html msg
-resultsGrid config state index =
+resultsGrid config state _ =
     let
         found =
-            filterParts resultLimit state config.activeColour index
+            state.filteredParts
     in
     div
         [ Attr.style "flex" "1"

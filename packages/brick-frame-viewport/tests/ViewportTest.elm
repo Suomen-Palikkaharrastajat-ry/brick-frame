@@ -12,7 +12,7 @@ import LDraw.Parser as Parser
 import LDraw.Resolve as Resolve exposing (PartStatus(..))
 import LDraw.Types exposing (LDrawLine(..))
 import Math.Matrix4 as Mat4
-import Math.Vector3 exposing (vec3)
+import Math.Vector3 as Vec3 exposing (vec3)
 import Math.Vector4
 import Render.Camera as Camera
 import Render.Style as Style
@@ -125,6 +125,78 @@ suite =
                         |> update (MouseUp 310 76)
                         |> Tuple.second
                         |> Expect.equal [ Clicked 10 20 False ]
+            , test "TouchStart / TouchEnd reports Tapped in canvas pixels with setCanvasOrigin" <|
+                \_ ->
+                    let
+                        touchConfig =
+                            { config | supportsPointerEvents = False }
+
+                        touchModel =
+                            Viewport.init touchConfig
+                                |> Tuple.first
+                                |> Viewport.setCanvasOrigin 200 40
+                    in
+                    touchModel
+                        |> update (TouchStart [ { id = 1, x = 215, y = 65 } ])
+                        |> Tuple.first
+                        |> update (TouchEnd [])
+                        |> Tuple.second
+                        |> Expect.equal [ Tapped 15 25, CameraSettled ]
+            , test "multi-touch TouchMove translates points by setCanvasOrigin" <|
+                \_ ->
+                    let
+                        touchConfig =
+                            { config | supportsPointerEvents = False }
+
+                        touchModel =
+                            Viewport.init touchConfig
+                                |> Tuple.first
+                                |> Viewport.setCanvasOrigin 100 50
+
+                        ( started, _ ) =
+                            update (TouchStart [ { id = 1, x = 110, y = 70 }, { id = 2, x = 150, y = 90 } ]) touchModel
+
+                        ( moved, _ ) =
+                            update (TouchMove [ { id = 1, x = 120, y = 70 }, { id = 2, x = 160, y = 90 } ]) started
+
+                        ( _, events ) =
+                            update (TouchEnd []) moved
+                    in
+                    Expect.equal [ CameraSettled ] events
+            , test "PointerTouchStart / PointerTouchEnd reports Tapped in canvas pixels with setCanvasOrigin" <|
+                \_ ->
+                    Viewport.setCanvasOrigin 300 56 idle
+                        |> update (PointerTouchStart { id = 1, x = 310, y = 76 })
+                        |> Tuple.first
+                        |> update (PointerTouchEnd 1)
+                        |> Tuple.second
+                        |> Expect.equal [ Tapped 10 20, CameraSettled ]
+            , test "PointerTouchStart / PointerTouchMove settles camera after moving with setCanvasOrigin" <|
+                \_ ->
+                    Viewport.setCanvasOrigin 100 50 idle
+                        |> update (PointerTouchStart { id = 1, x = 110, y = 60 })
+                        |> Tuple.first
+                        |> update (PointerTouchMove { id = 1, x = 210, y = 60 })
+                        |> Tuple.first
+                        |> update (PointerTouchEnd 1)
+                        |> Tuple.second
+                        |> Expect.equal [ CameraSettled ]
+            , test "CanvasPressed dynamically updates canvasOrigin from event" <|
+                \_ ->
+                    idle
+                        |> update (CanvasPressed ( 250, 80 ) (MouseDown 260 100 False))
+                        |> Tuple.first
+                        |> update (MouseUp 260 100)
+                        |> Tuple.second
+                        |> Expect.equal [ Clicked 10 20 False ]
+            , test "CanvasPressed with PointerTouchStart dynamically updates canvasOrigin" <|
+                \_ ->
+                    idle
+                        |> update (CanvasPressed ( 150, 60 ) (PointerTouchStart { id = 1, x = 165, y = 85 }))
+                        |> Tuple.first
+                        |> update (PointerTouchEnd 1)
+                        |> Tuple.second
+                        |> Expect.equal [ Tapped 15 25, CameraSettled ]
             , test "press, drag and release settles the camera instead" <|
                 \_ ->
                     idle
@@ -546,7 +618,7 @@ documentSuite =
                             (loaded (bricks 1))
                 in
                 after.instancedScene
-                    |> Maybe.map (\scene -> List.map (.center >> Math.Vector3.getX) scene.placements)
+                    |> Maybe.map (\scene -> List.map (.center >> Vec3.getX) scene.placements)
                     |> Maybe.withDefault []
                     |> List.map (\x -> x > 400)
                     |> Expect.equal [ True ]
@@ -635,6 +707,178 @@ documentSuite =
                         Viewport.loadDocument doc { studio | partCache = customCache, width = 800, height = 600 }
                 in
                 Expect.equal (Just 1) (Viewport.pickSource 400 300 model)
+        , test "pickSource prefers smaller part on coplanar surface regardless of insertion order" <|
+            \_ ->
+                let
+                    doc =
+                        Document.empty
+                            |> Document.addPlacement "" { part = "brick.dat", color = 4, matrix = Mat4.identity }
+                            |> (\( d, _ ) -> Document.addPlacement "" { part = "base.dat", color = 2, matrix = Mat4.identity } d)
+                            |> Tuple.first
+
+                    baseGeometry =
+                        "3 16 -100 0 -100 100 0 -100 100 0 100\n3 16 -100 0 -100 100 0 100 -100 0 100"
+
+                    brickGeometry =
+                        "3 16 -5 0 -5 5 0 -5 5 0 5"
+
+                    customCache =
+                        Dict.fromList
+                            [ ( "base.dat", Loaded (Parser.parseFile baseGeometry) )
+                            , ( "brick.dat", Loaded (Parser.parseFile brickGeometry) )
+                            ]
+
+                    ( model, _, _ ) =
+                        Viewport.loadDocument doc { studio | partCache = customCache, width = 800, height = 600 }
+                in
+                Expect.equal (Just 0) (Viewport.pickSource 400 300 model)
+        , test "a ray inside a part's box that misses its triangles returns Nothing" <|
+            \_ ->
+                let
+                    hollowGeometry =
+                        "3 16 50 0 50 60 0 50 60 0 60\n2 16 -50 0 -50 60 0 60"
+
+                    customCache =
+                        Dict.fromList [ ( "hollow.dat", Loaded (Parser.parseFile hollowGeometry) ) ]
+
+                    doc =
+                        Document.empty
+                            |> Document.addPlacement "" { part = "hollow.dat", color = 4, matrix = Mat4.identity }
+                            |> Tuple.first
+
+                    ( model, _, _ ) =
+                        Viewport.loadDocument doc { studio | partCache = customCache, width = 800, height = 600 }
+                in
+                Expect.equal Nothing (Viewport.pickSource 400 300 model)
+        , test "part seen through empty corner of nearer part's box is picked" <|
+            \_ ->
+                let
+                    hollowGeometry =
+                        "3 16 30 0 30 40 0 30 40 0 40\n2 16 -50 -50 -50 50 50 50"
+
+                    solidGeometry =
+                        "3 16 -20 0 -20 20 0 -20 0 0 20"
+
+                    customCache =
+                        Dict.fromList
+                            [ ( "hollow.dat", Loaded (Parser.parseFile hollowGeometry) )
+                            , ( "solid.dat", Loaded (Parser.parseFile solidGeometry) )
+                            ]
+
+                    doc =
+                        Document.empty
+                            |> Document.addPlacement "" { part = "hollow.dat", color = 1, matrix = Mat4.identity }
+                            |> (\( d, _ ) -> Document.addPlacement "" { part = "solid.dat", color = 4, matrix = Mat4.identity } d)
+                            |> Tuple.first
+
+                    ( model, _, _ ) =
+                        Viewport.loadDocument doc { studio | partCache = customCache, width = 800, height = 600 }
+                in
+                Expect.equal (Just 1) (Viewport.pickSource 400 300 model)
+        , test "mirrored or scaled placement matrix picks at the right depth" <|
+            \_ ->
+                let
+                    triangleGeom =
+                        "3 16 -10 0 -10 10 0 -10 0 0 10"
+
+                    customCache =
+                        Dict.fromList [ ( "tri.dat", Loaded (Parser.parseFile triangleGeom) ) ]
+
+                    scaleMatrix =
+                        Mat4.mul (Mat4.makeScale3 -2 2 2) (Mat4.makeTranslate3 0 0 -50)
+
+                    doc =
+                        Document.empty
+                            |> Document.addPlacement "" { part = "tri.dat", color = 4, matrix = scaleMatrix }
+                            |> Tuple.first
+
+                    ( model, _, _ ) =
+                        Viewport.loadDocument doc { studio | partCache = customCache, width = 800, height = 600 }
+                in
+                case Viewport.pickPoint 400 300 model of
+                    Just hit ->
+                        Expect.all
+                            [ \_ -> Expect.equal 0 hit.source
+                            , \_ -> Expect.within (Expect.Absolute 1.0) 100.0 (Vec3.getZ hit.point)
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "expected hit on scaled part"
+        , test "eye inside a part's box ignores hits in front of the near plane" <|
+            \_ ->
+                let
+                    boxGeom =
+                        "3 16 -10 -10 0.05 10 -10 0.05 0 10 0.05\n2 16 -20 -20 -20 20 20 20"
+
+                    customCache =
+                        Dict.fromList [ ( "box.dat", Loaded (Parser.parseFile boxGeom) ) ]
+
+                    doc =
+                        Document.empty
+                            |> Document.addPlacement "" { part = "box.dat", color = 4, matrix = Mat4.identity }
+                            |> Tuple.first
+
+                    ( loadedModel, _, _ ) =
+                        Viewport.loadDocument doc { studio | partCache = customCache, width = 800, height = 600 }
+
+                    insideCam =
+                        let
+                            c =
+                                loadedModel.camera
+                        in
+                        { c | azimuth = 0, elevation = 0, distance = 400, target = vec3 0 0 -400 }
+
+                    modelWithEyeInside =
+                        { loadedModel | camera = insideCam }
+                in
+                Expect.equal Nothing (Viewport.pickSource 400 300 modelWithEyeInside)
+        , test "picking matches LOD proxy boxes when placement is at Far LOD" <|
+            \_ ->
+                let
+                    cornerGeom =
+                        "3 16 0 0 0 1 0 0 0 1 0\n2 16 -5 -5 -5 5 5 5"
+
+                    customCache =
+                        Dict.fromList [ ( "small.dat", Loaded (Parser.parseFile cornerGeom) ) ]
+
+                    doc =
+                        Document.empty
+                            |> Document.addPlacement "" { part = "small.dat", color = 4, matrix = Mat4.identity }
+                            |> Tuple.first
+
+                    ( loadedModel, _, _ ) =
+                        Viewport.loadDocument doc { studio | partCache = customCache, width = 800, height = 600 }
+
+                    farCam =
+                        let
+                            c =
+                                loadedModel.camera
+                        in
+                        { c | distance = 10000.0 }
+
+                    farModel =
+                        { loadedModel | camera = farCam }
+                in
+                Expect.equal (Just 0) (Viewport.pickSource 400 300 farModel)
+        , test "parts with edge lines only fall back to box entry so they remain pickable" <|
+            \_ ->
+                let
+                    linesOnlyGeom =
+                        "2 16 -10 0 0 10 0 0\n2 16 0 -10 0 0 10 0"
+
+                    customCache =
+                        Dict.fromList [ ( "cross.dat", Loaded (Parser.parseFile linesOnlyGeom) ) ]
+
+                    doc =
+                        Document.empty
+                            |> Document.addPlacement "" { part = "cross.dat", color = 4, matrix = Mat4.identity }
+                            |> Tuple.first
+
+                    ( model, _, _ ) =
+                        Viewport.loadDocument doc { studio | partCache = customCache, width = 800, height = 600 }
+                in
+                Expect.equal (Just 0) (Viewport.pickSource 400 300 model)
         , test "a part added while loading is fetched and appears when resolved" <|
             \_ ->
                 let

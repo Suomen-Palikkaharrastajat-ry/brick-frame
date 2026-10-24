@@ -80,6 +80,17 @@ boundaryIndex =
     { parts = parts, categories = PartIndex.categories parts }
 
 
+variantIndex : PartIndex
+variantIndex =
+    let
+        parts =
+            [ PartIndex.makePart "3001b.dat" "Brick 2 x 4 with Solid Studs" "Brick" ""
+            , PartIndex.makePart "3001.dat" "Brick 2 x 4" "Brick" ""
+            ]
+    in
+    { parts = parts, categories = PartIndex.categories parts }
+
+
 files : List PartIndex.Part -> List String
 files =
     List.map .file
@@ -150,36 +161,48 @@ suite =
                     Palette.filterParts 10 { baseState | group = Just "plates" } 4 groupIndex
                         |> files
                         |> Expect.equal [ "3023b.dat" ]
-            , test "a search ignores the group and ranks building parts before the rest" <|
+            , test "a search under Everything ranks building parts before the rest, exact footprints ahead of 3D sizes" <|
                 \_ ->
-                    Palette.filterParts 10 { baseState | query = "1 x 2" } 4 groupIndex
+                    Palette.filterParts 10 { baseState | query = "1 x 2", group = Nothing } 4 groupIndex
                         |> files
-                        |> Expect.equal [ "3004.dat", "3245c.dat", "3023b.dat", "3023bp00.dat" ]
+                        |> Expect.equal [ "3004.dat", "3023b.dat", "3245c.dat", "3023bp00.dat" ]
+            , test "selecting a group during a search narrows results to that group" <|
+                \_ ->
+                    ( Palette.filterParts 10 { baseState | query = "1 x 2", group = Just "plates" } 4 groupIndex |> files
+                    , Palette.filterParts 10 { baseState | query = "2x4", group = Just "plates" } 4 crossIndex |> files
+                    , Palette.filterParts 10 { baseState | query = "2x4", group = Just "bricks" } 4 crossIndex |> files
+                    )
+                        |> Expect.equal ( [ "3023b.dat" ], [ "3020.dat" ], [ "3001.dat" ] )
+            , test "exact-id ranking when an id has variants" <|
+                \_ ->
+                    Palette.filterParts 10 { baseState | query = "3001", group = Nothing } 4 variantIndex
+                        |> files
+                        |> Expect.equal [ "3001.dat", "3001b.dat" ]
             , test "a search ties across groups in group order: brick before plate" <|
                 \_ ->
-                    Palette.filterParts 10 { baseState | query = "2x4" } 4 crossIndex
+                    Palette.filterParts 10 { baseState | query = "2x4", group = Nothing } 4 crossIndex
                         |> files
                         |> Expect.equal [ "3001.dat", "3020.dat", "51739.dat" ]
             , test "a classic leads its search, then description matches, then keyword-only ones" <|
                 \_ ->
-                    Palette.filterParts 10 { baseState | query = "gear" } 4 crossIndex
+                    Palette.filterParts 10 { baseState | query = "gear", group = Nothing } 4 crossIndex
                         |> files
                         |> Expect.equal [ "3647.dat", "35442.dat", "4593.dat" ]
             , test "an exact part number leads, typed in any case" <|
                 \_ ->
-                    Palette.filterParts 10 { baseState | query = "3023B.DAT" } 4 groupIndex
+                    Palette.filterParts 10 { baseState | query = "3023B.DAT", group = Nothing } 4 groupIndex
                         |> files
                         |> List.head
                         |> Expect.equal (Just "3023b.dat")
             , test "a size does not match inside a larger number" <|
                 \_ ->
-                    Palette.filterParts 10 { baseState | query = "2 x 4" } 4 boundaryIndex
+                    Palette.filterParts 10 { baseState | query = "2 x 4", group = Nothing } 4 boundaryIndex
                         |> files
                         |> Expect.equal [ "3001.dat" ]
             , test "half-spaced sizes are read whole" <|
                 \_ ->
-                    ( Palette.filterParts 10 { baseState | query = "brick 2 x4" } 4 boundaryIndex |> files
-                    , Palette.filterParts 10 { baseState | query = "brick 2x 4" } 4 boundaryIndex |> files
+                    ( Palette.filterParts 10 { baseState | query = "brick 2 x4", group = Nothing } 4 boundaryIndex |> files
+                    , Palette.filterParts 10 { baseState | query = "brick 2x 4", group = Nothing } 4 boundaryIndex |> files
                     )
                         |> Expect.equal ( [ "3001.dat" ], [ "3001.dat" ] )
             , test "Favourites ignore the build group" <|
@@ -189,9 +212,67 @@ suite =
                         |> Expect.equal [ "3647.dat" ]
             , test "sizes typed as 2x4 match LDraw's 2 x 4" <|
                 \_ ->
-                    Palette.filterParts 10 { baseState | query = "brick 2x4" } 4 groupIndex
+                    Palette.filterParts 10 { baseState | query = "brick 2x4", group = Nothing } 4 groupIndex
                         |> files
                         |> Expect.equal [ "3001.dat", "3011.dat" ]
+            ]
+        , describe "Searching every part note visibility"
+            [ test "shows on All shelf with search query, no group, no category" <|
+                \_ ->
+                    Palette.isSearchingEveryPart { baseState | query = "2x4", group = Nothing }
+                        |> Expect.equal True
+            , test "hidden when a group is selected" <|
+                \_ ->
+                    Palette.isSearchingEveryPart { baseState | query = "2x4", group = Just "plates" }
+                        |> Expect.equal False
+            , test "hidden when a category is selected" <|
+                \_ ->
+                    Palette.isSearchingEveryPart { baseState | query = "2x4", group = Nothing, category = Just "Plate" }
+                        |> Expect.equal False
+            , test "hidden on Favourites shelf" <|
+                \_ ->
+                    Palette.isSearchingEveryPart { baseState | query = "2x4", group = Nothing, shelf = FavoritesShelf }
+                        |> Expect.equal False
+            , test "hidden on Recent shelf" <|
+                \_ ->
+                    Palette.isSearchingEveryPart { baseState | query = "2x4", group = Nothing, shelf = RecentShelf }
+                        |> Expect.equal False
+            , test "hidden when query is empty" <|
+                \_ ->
+                    Palette.isSearchingEveryPart { baseState | query = "", group = Nothing }
+                        |> Expect.equal False
+            ]
+        , describe "Vehicles and Accessories build groups"
+            [ test "Vehicles group shelves train, car, boat parts" <|
+                \_ ->
+                    let
+                        parts =
+                            [ PartIndex.makePart "1846.dat" "Car Mudguard 4 x 3 x 1.667" "Car" ""
+                            , PartIndex.makePart "4022.dat" "Train Buffer Beam" "Train" ""
+                            , PartIndex.makePart "125c01.dat" "Boat Hull" "Boat" ""
+                            ]
+
+                        idx =
+                            { parts = parts, categories = PartIndex.categories parts }
+                    in
+                    Palette.filterParts 10 { baseState | group = Just "vehicles" } 4 idx
+                        |> files
+                        |> Expect.equal [ "1846.dat", "4022.dat", "125c01.dat" ]
+            , test "Accessories group shelves roadsigns, flags, containers" <|
+                \_ ->
+                    let
+                        parts =
+                            [ PartIndex.makePart "2489.dat" "Barrel 2 x 2 x 1.667" "Container" ""
+                            , PartIndex.makePart "2335.dat" "Flag 2 x 2" "Flag" ""
+                            , PartIndex.makePart "30258.dat" "Roadsign Clip-on 2 x 2 Square" "Roadsign" ""
+                            ]
+
+                        idx =
+                            { parts = parts, categories = PartIndex.categories parts }
+                    in
+                    Palette.filterParts 10 { baseState | group = Just "accessories" } 4 idx
+                        |> files
+                        |> Expect.equal [ "2489.dat", "2335.dat", "30258.dat" ]
             ]
         , describe "ColorFilterMode"
             [ test "OfficialOnly hides parts that are unofficial in the active colour" <|

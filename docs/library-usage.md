@@ -298,11 +298,14 @@ actually hits (part triangles, not bounding boxes), or `Nothing` over empty spac
 `Viewport.pickPoint` also returns where the ray met it (render space), for
 dragging a part by the spot that was grabbed.
 
-Event coordinates are canvas pixels only if the viewport knows where the canvas
-sits. A host that places it anywhere but the window's top-left corner (beside a
-panel, under a header) must call `Viewport.setCanvasOrigin left top` whenever its
-layout changes, or every pick lands offset from the pointer. The studio does this
-from `Studio.Layout`.
+Event coordinates are converted to canvas pixels dynamically: on every canvas
+`mousedown` and `pointerdown` (or `touchstart`), the canvas origin is extracted
+from `clientX - offsetX` and `clientY - offsetY` when the event target is the
+canvas, automatically refreshing `canvasOrigin`. For embedded viewers and web
+components that sit anywhere on a scrollable page, picking and gestures work
+out of the box without layout arithmetic. Explicitly setting `Viewport.setCanvasOrigin left top`
+remains supported as an optimisation or override (e.g. before any interaction occurs).
+The studio also calls it from `Studio.Layout`.
 
 ---
 

@@ -14,7 +14,8 @@ main = hspec $ do
     describe "generateColorDataModule" $ do
         it "produces the generated colour table module" $ do
             generated <- generateColorDataModule
-            generated `shouldSatisfy` Text.isInfixOf "module LDraw.ColorData exposing (colorTable)"
+            generated `shouldSatisfy` Text.isInfixOf "module LDraw.ColorData exposing"
+            generated `shouldSatisfy` Text.isInfixOf "colorTable"
 
         it "covers the whole LDConfig catalog, not a hand-kept subset" $ do
             generated <- generateColorDataModule

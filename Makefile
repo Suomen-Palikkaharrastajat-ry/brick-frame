@@ -10,6 +10,7 @@ VITE ?= vite --configLoader native
 LDRAW_SYNC_URL ?= https://library.ldraw.org/library/updates/complete.zip
 LDRAW_SYNC_DIR ?= viewer-app/public/ldraw
 LDRAW_SYNC_LOCK ?= ldraw-sync.lock.json
+WATCH_PORT ?= 5173
 
 .PHONY: help
 help: ## Show available targets
@@ -75,11 +76,13 @@ packages/brick-frame-data/src/.data-nix-stamp:
 
 .PHONY: elm-dev
 elm-dev: packages/brick-frame-data/src/Data.elm ## Start Elm + Vite dev server (hot reload)
-	cd viewer-app && $(VITE)
+	cd viewer-app && $(VITE) --host 0.0.0.0 --port $(WATCH_PORT)
+
 
 .PHONY: studio-dev
 studio-dev: packages/brick-frame-data/src/Data.elm studio-app/.elm-tailwind/.stamp ## Start the studio's Vite dev server (http://localhost:5174)
-	cd studio-app && $(VITE)
+	cd studio-app && $(VITE) --host 0.0.0.0 --port $(WATCH_PORT)
+
 
 .PHONY: elm-tailwind-gen
 elm-tailwind-gen: viewer-app/.elm-tailwind/.stamp studio-app/.elm-tailwind/.stamp ## Generate typed Tailwind Elm modules into viewer-app/.elm-tailwind/ and studio-app/.elm-tailwind/
@@ -167,16 +170,16 @@ build: elm-build wc-build studio-build ## Generate data + production build of th
 dist-ci: build/.elm-stamp-ci build/.wc-stamp-ci build/.studio-stamp-ci ## CI build: generator (Nix binary) + viewer + web components + studio → build/
 
 .PHONY: watch
-watch: ## Watch Haskell sources and run Vite dev server
+watch: ## Watch Haskell sources and run Vite dev server (WATCH_PORT, default 5173)
 	make generate
 	find src generator brick-frame.cabal -name "*.hs" -o -name "*.cabal" | entr -s 'make generate' &
-	cd viewer-app && elm-tailwind-classes gen && $(VITE)
+	cd viewer-app && elm-tailwind-classes gen && $(VITE) --host 0.0.0.0 --port $(WATCH_PORT)
 
 .PHONY: watch-docs
-watch-docs: ## Start Vite for web-components docs playground watch mode
+watch-docs: ## Start Vite for web-components docs playground watch mode (WATCH_PORT, default 5173)
 	$(MAKE) generate
-	@echo "Open http://localhost:5173/docs/index.watch.html"
-	cd viewer-app && $(VITE)
+	@echo "Open http://localhost:$(WATCH_PORT)/docs/index.watch.html"
+	cd viewer-app && $(VITE) --port $(WATCH_PORT)
 
 .PHONY: sync-ldraw
 sync-ldraw: ## Sync official LDraw library into local assets + write manifest

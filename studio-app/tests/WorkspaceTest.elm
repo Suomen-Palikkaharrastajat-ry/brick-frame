@@ -1329,6 +1329,56 @@ panelSuite =
                         |> .palette
                         |> (\p -> ( p.query, p.category ))
                         |> Expect.equal ( "brick", Just "Brick" )
+            , test "selecting a group during search retains query and narrows filtered results" <|
+                \_ ->
+                    let
+                        cat =
+                            { parts =
+                                [ PartIndex.makePart "3001.dat" "Brick 2 x 4" "Brick" ""
+                                , PartIndex.makePart "3020.dat" "Plate 2 x 4" "Plate" ""
+                                ]
+                            , categories = [ ( "Brick", 1 ), ( "Plate", 1 ) ]
+                            }
+
+                        withCross =
+                            start |> step (PartIndexLoaded (Ok cat))
+
+                        searched =
+                            withCross |> step (PaletteQuery "2 x 4")
+
+                        narrowed =
+                            searched |> step (PaletteGroup (Just "plates"))
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal "2 x 4" m.palette.query
+                        , \m -> Expect.equal (Just "plates") m.palette.group
+                        , \m -> Expect.equal [ "3020.dat" ] (List.map .file m.palette.filteredParts)
+                        ]
+                        narrowed
+            , test "PaletteGroup moves Favourites and Recent shelves to All shelf" <|
+                \_ ->
+                    let
+                        onFavs =
+                            withCatalogue |> step (PaletteSelectShelf Palette.FavoritesShelf)
+
+                        switched =
+                            onFavs |> step (PaletteGroup (Just "plates"))
+                    in
+                    Expect.equal Palette.AllShelf switched.palette.shelf
+            , test "PaletteGroupAndFocus updates group and retains query" <|
+                \_ ->
+                    let
+                        searched =
+                            withCatalogue |> step (PaletteQuery "brick")
+
+                        focused =
+                            searched |> step (PaletteGroupAndFocus (Just "bricks") "palette-group-bricks")
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal "brick" m.palette.query
+                        , \m -> Expect.equal (Just "bricks") m.palette.group
+                        ]
+                        focused
             , test "picking a part previews it" <|
                 \_ ->
                     let
@@ -1977,4 +2027,47 @@ snappingSuite =
                     , \_ -> Expect.equal False mAltReleased.altHeld
                     ]
                     ()
+        , test "dragging a part into collision outlines only the dragged part" <|
+            \_ ->
+                let
+                    ( docWithTwo, _ ) =
+                        Edit.apply
+                            (Edit.Add
+                                [ { part = "3001.dat", color = 4, matrix = Mat4.identity }
+                                , { part = "3001.dat", color = 14, matrix = Mat4.identity }
+                                ]
+                            )
+                            start.document
+
+                    vp =
+                        start.viewport
+
+                    modelDuringDrag =
+                        { start
+                            | viewport = { vp | captured = True, mousePressed = True }
+                            , document = docWithTwo
+                            , drag =
+                                Just
+                                    { kind =
+                                        Gizmo.LinearDrag
+                                            { axis = AxisX
+                                            , origin = vec3 0 0 0
+                                            , tip = vec3 0 0 0
+                                            , length = 50
+                                            , screenStart = ( 100, 100 )
+                                            , screenEnd = ( 150, 100 )
+                                            }
+                                    , ids = [ 0 ]
+                                    , start = ( 100, 100 )
+                                    , lastPoint = ( 100, 100 )
+                                    , original = docWithTwo
+                                    , amount = 0
+                                    }
+                            , altHeld = True
+                        }
+
+                    moved =
+                        mouseMove 100 100 modelDuringDrag
+                in
+                Expect.equal (Set.fromList [ 0 ]) moved.collidingPlacements
         ]

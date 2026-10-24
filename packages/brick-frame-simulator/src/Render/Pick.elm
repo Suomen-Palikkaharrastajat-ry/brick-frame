@@ -1,4 +1,14 @@
-module Render.Pick exposing (isSphereVisible, nearestTriangleHit, nearestTriangleHitBy, rayAabbHit, raySphereHit, rayTriangleHit, screenRay)
+module Render.Pick exposing
+    ( isSphereVisible
+    , nearestTriangleHit
+    , nearestTriangleHitBy
+    , nearestTriangleHitByFrom
+    , rayAabbHit
+    , rayAabbHitFrom
+    , raySphereHit
+    , rayTriangleHit
+    , screenRay
+    )
 
 {-| Camera-space tests shared by the viewport and the simulation: is a bounding
 sphere on screen, and which world-space ray does a screen point look along.
@@ -234,10 +244,18 @@ raySphereHit rayOrigin rayDir center radius =
 
 
 {-| Intersection of a ray (origin, direction) with an axis-aligned bounding box (min, max).
-Returns the distance `t` along the ray to the entry point, or `Nothing` if no hit.
+Returns the distance `t` along the ray to the entry point (at least 0), or `Nothing` if no hit.
 -}
 rayAabbHit : Vec3.Vec3 -> Vec3.Vec3 -> Vec3.Vec3 -> Vec3.Vec3 -> Maybe Float
-rayAabbHit rayOrigin rayDir boxMin boxMax =
+rayAabbHit =
+    rayAabbHitFrom 0
+
+
+{-| `rayAabbHit` starting from a minimum distance `tMin` along the ray (e.g. Near plane).
+Returns the earliest entry `t >= tMin` or `Nothing`.
+-}
+rayAabbHitFrom : Float -> Vec3.Vec3 -> Vec3.Vec3 -> Vec3.Vec3 -> Vec3.Vec3 -> Maybe Float
+rayAabbHitFrom tMin rayOrigin rayDir boxMin boxMax =
     let
         ox =
             Vec3.getX rayOrigin
@@ -305,12 +323,12 @@ rayAabbHit rayOrigin rayDir boxMin boxMax =
                 tExit =
                     min (min tFarX tFarY) tFarZ
             in
-            if tEnter <= tExit && tExit >= 0 then
-                if tEnter >= 0 then
+            if tEnter <= tExit && tExit >= tMin then
+                if tEnter >= tMin then
                     Just tEnter
 
                 else
-                    Just 0
+                    Just tMin
 
             else
                 Nothing
@@ -388,18 +406,165 @@ nearestTriangleHit =
 Lets a caller test a mesh's own vertex list without copying out positions.
 -}
 nearestTriangleHitBy : (v -> Vec3.Vec3) -> Vec3.Vec3 -> Vec3.Vec3 -> List ( v, v, v ) -> Maybe Float
-nearestTriangleHitBy position rayOrigin rayDir triangles =
+nearestTriangleHitBy =
+    nearestTriangleHitByFrom 0
+
+
+{-| `nearestTriangleHitBy` starting from a minimum distance `tMin` along the ray (e.g. Near plane).
+Avoids vector allocations in the inner loop and cuts off testing when a hit is farther than
+the best hit so far.
+-}
+nearestTriangleHitByFrom : Float -> (v -> Vec3.Vec3) -> Vec3.Vec3 -> Vec3.Vec3 -> List ( v, v, v ) -> Maybe Float
+nearestTriangleHitByFrom tMin position rayOrigin rayDir triangles =
+    let
+        minT =
+            max 1.0e-6 tMin
+
+        ox =
+            Vec3.getX rayOrigin
+
+        oy =
+            Vec3.getY rayOrigin
+
+        oz =
+            Vec3.getZ rayOrigin
+
+        dx =
+            Vec3.getX rayDir
+
+        dy =
+            Vec3.getY rayDir
+
+        dz =
+            Vec3.getZ rayDir
+    in
     List.foldl
-        (\( a, b, c ) best ->
-            case ( rayTriangleHit rayOrigin rayDir ( position a, position b, position c ), best ) of
-                ( Just t, Just nearest ) ->
-                    Just (min t nearest)
+        (\( va, vb, vc ) best ->
+            let
+                maxT =
+                    case best of
+                        Just nearest ->
+                            nearest
 
-                ( Just t, Nothing ) ->
-                    Just t
+                        Nothing ->
+                            1.0e30
 
-                ( Nothing, _ ) ->
+                a =
+                    position va
+
+                b =
+                    position vb
+
+                c =
+                    position vc
+
+                ax =
+                    Vec3.getX a
+
+                ay =
+                    Vec3.getY a
+
+                az =
+                    Vec3.getZ a
+
+                bx =
+                    Vec3.getX b
+
+                by =
+                    Vec3.getY b
+
+                bz =
+                    Vec3.getZ b
+
+                cx =
+                    Vec3.getX c
+
+                cy =
+                    Vec3.getY c
+
+                cz =
+                    Vec3.getZ c
+
+                e1x =
+                    bx - ax
+
+                e1y =
+                    by - ay
+
+                e1z =
+                    bz - az
+
+                e2x =
+                    cx - ax
+
+                e2y =
+                    cy - ay
+
+                e2z =
+                    cz - az
+
+                pvx =
+                    dy * e2z - dz * e2y
+
+                pvy =
+                    dz * e2x - dx * e2z
+
+                pvz =
+                    dx * e2y - dy * e2x
+
+                det =
+                    e1x * pvx + e1y * pvy + e1z * pvz
+            in
+            if abs det < 1.0e-12 then
+                best
+
+            else
+                let
+                    invDet =
+                        1 / det
+
+                    tvx =
+                        ox - ax
+
+                    tvy =
+                        oy - ay
+
+                    tvz =
+                        oz - az
+
+                    u =
+                        (tvx * pvx + tvy * pvy + tvz * pvz) * invDet
+                in
+                if u < 0 || u > 1 then
                     best
+
+                else
+                    let
+                        qvx =
+                            tvy * e1z - tvz * e1y
+
+                        qvy =
+                            tvz * e1x - tvx * e1z
+
+                        qvz =
+                            tvx * e1y - tvy * e1x
+
+                        v =
+                            (dx * qvx + dy * qvy + dz * qvz) * invDet
+                    in
+                    if v < 0 || u + v > 1 then
+                        best
+
+                    else
+                        let
+                            t =
+                                (e2x * qvx + e2y * qvy + e2z * qvz) * invDet
+                        in
+                        if t >= minT && t < maxT then
+                            Just t
+
+                        else
+                            best
         )
         Nothing
         triangles

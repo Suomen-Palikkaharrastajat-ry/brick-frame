@@ -90,23 +90,29 @@ the index is missing.
 
 Browsing is by **build group** (`Studio.BuildGroups`), LEGO Creator style:
 Bricks, Plates, Tiles, Slopes, Round, Arches, Windows & doors, Walls & fences,
-Brackets & hinges, Wedges & wings, Wheels, Nature, Baseplates, then Technic.
-The palette opens on Bricks. Each group maps a few LDraw categories and lists a
-curated set of classic part numbers first (1 x 1, 1 x 2 … 2 x 4), then the rest
-by size. Prints, stickers, Duplo and other systems are never shelved; a search
-still finds them, last. "Everything" drops the group and shows LDraw's own
-category picker. A search ignores the group: exact part number, part-number
-prefix, description prefix, description match, then keyword-only matches; within
-each, curated classics first, then everyday building parts before Technic, ties
-in group order. Sizes are matched whole, never inside a larger number ("2 x 4"
-does not match "12 x 4"), and "2x4", "2 x4" and "2x 4" are read as "2 x 4".
-Picking a group clears the search and leaves Favourites or Recent for All.
-Train, vehicle, boat and similar parts are on no shelf; find them under
-Everything or by search. Group membership is computed once per part when the
-index is decoded (`PartIndex.makePart`), because the palette filters the whole
-catalogue on every render. When curating, check part numbers against
-`parts-index.json`: many classics carry a suffix there (`3023b`, `3040b`,
-`3665b`).
+Brackets & hinges, Wedges & wings, Wheels, Vehicles, Accessories, Nature,
+Baseplates, then Technic. The palette opens on Bricks. Each group maps a few
+LDraw categories and lists a curated set of classic part numbers first (1 x 1,
+1 x 2 … 2 x 4), then the rest by size. Prints, stickers, Duplo and other
+systems are never shelved; a search still finds them, last. "Everything" drops
+the group and shows LDraw's own category picker. A search starts across every
+part: exact part number, part-number prefix, description prefix, description
+match, then keyword-only matches; within each, curated classics first, then
+everyday building parts before Technic, ties in group order. Two-part footprint
+queries ("1 x 2", "2 x 4") rank exact 2D footprint matches ahead of 3D extended
+sizes ("1 x 2 x 3"). Sizes are matched whole, never inside a larger number
+("2 x 4" does not match "12 x 4"), and "2x4", "2 x4" and "2x 4" are read as
+"2 x 4". Picking a group during a search retains the search query and narrows
+results to that group; leaving personal shelves (Favourites or Recent) resets to
+All. Vehicles (Train, Car, Boat, Plane, Tipper, Trailer) and Accessories
+(Container, Flag, Roadsign) are shelved in their respective build groups with
+curated classics. Group chips use `role="radiogroup"` and `role="radio"` with
+`aria-checked` and arrow-key navigation guarded by `isWidgetKey`; in narrow
+viewport mode they render in a single horizontally scrolling row. Filtered
+search and group results are cached in state during updates, avoiding duplicate
+work during rendering and thumbnail fetching. When curating, check part numbers
+against `parts-index.json`: many classics carry a suffix there (`3023b`,
+`3040b`, `3665b`), which is checked by `scripts/check-curated-parts.test.mjs`.
 
 ## Layout
 

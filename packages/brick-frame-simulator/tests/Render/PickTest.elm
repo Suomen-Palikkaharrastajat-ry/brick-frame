@@ -107,6 +107,45 @@ suite =
 
                         _ ->
                             Expect.fail "expected both to hit"
+            , test "rayAabbHitFrom ignores box ending before tMin" <|
+                \_ ->
+                    let
+                        origin =
+                            vec3 0 0 10
+
+                        dir =
+                            vec3 0 0 -1
+
+                        boxMin =
+                            vec3 -1 -1 6
+
+                        boxMax =
+                            vec3 1 1 8
+                    in
+                    -- Box spans t from 2 to 4. For tMin = 5, box is in front of tMin.
+                    Expect.equal Nothing (Pick.rayAabbHitFrom 5 origin dir boxMin boxMax)
+            , test "rayAabbHitFrom clamps hit to tMin when box spans across tMin" <|
+                \_ ->
+                    let
+                        origin =
+                            vec3 0 0 10
+
+                        dir =
+                            vec3 0 0 -1
+
+                        boxMin =
+                            vec3 -1 -1 0
+
+                        boxMax =
+                            vec3 1 1 8
+                    in
+                    -- Box spans t from 2 to 10. For tMin = 5, earliest visible point is 5.
+                    case Pick.rayAabbHitFrom 5 origin dir boxMin boxMax of
+                        Just t ->
+                            Expect.within (Expect.Absolute 1.0e-5) 5.0 t
+
+                        Nothing ->
+                            Expect.fail "expected hit at t=5"
             ]
         , describe "rayTriangleHit"
             [ test "hits a triangle facing the ray" <|
@@ -131,5 +170,24 @@ suite =
                         ]
                         |> Maybe.map (Expect.within (Expect.Absolute 1.0e-5) 7)
                         |> Maybe.withDefault (Expect.fail "expected hit at t=7")
+            , test "nearestTriangleHitByFrom ignores triangles closer than tMin" <|
+                \_ ->
+                    Pick.nearestTriangleHitByFrom 8
+                        identity
+                        (vec3 0 0 10)
+                        (vec3 0 0 -1)
+                        [ ( vec3 -1 -1 3, vec3 1 -1 3, vec3 0 1 3 )
+                        , ( vec3 -1 -1 -5, vec3 1 -1 -5, vec3 0 1 -5 )
+                        ]
+                        |> Maybe.map (Expect.within (Expect.Absolute 1.0e-5) 15)
+                        |> Maybe.withDefault (Expect.fail "expected hit at t=15 beyond tMin")
+            , test "nearestTriangleHitByFrom ignores triangles behind ray origin" <|
+                \_ ->
+                    Pick.nearestTriangleHitByFrom 0
+                        identity
+                        (vec3 0 0 0)
+                        (vec3 0 0 -1)
+                        [ ( vec3 -1 -1 5, vec3 1 -1 5, vec3 0 1 5 ) ]
+                        |> Expect.equal Nothing
             ]
         ]

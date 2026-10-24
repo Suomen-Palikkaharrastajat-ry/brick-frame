@@ -1,5 +1,6 @@
 module Viewport.Decode exposing
     ( TouchPoint
+    , canvasOriginDecoder
     , coordinateDecoder
     , keyEventDecoder
     , pointerTouchIdDecoder
@@ -193,3 +194,35 @@ coordinateDecoder keys =
     keys
         |> List.map (\key -> Decode.field key floatLikeDecoder)
         |> Decode.oneOf
+
+
+{-| Dynamically extract the canvas's top-left corner in window (client) coordinates
+from a mouse or pointer press.
+
+When the event fired on the canvas element itself, `clientX - offsetX` and
+`clientY - offsetY` yield the canvas origin without querying the DOM. If `target`
+is not the canvas or offset coordinates are absent (as in synthetic test events),
+returns `Nothing`.
+
+-}
+canvasOriginDecoder : Decode.Decoder (Maybe ( Float, Float ))
+canvasOriginDecoder =
+    Decode.oneOf
+        [ Decode.at [ "target", "tagName" ] Decode.string
+            |> Decode.andThen
+                (\tagName ->
+                    if String.toUpper tagName == "CANVAS" then
+                        Decode.map4
+                            (\clientX offsetX clientY offsetY ->
+                                Just ( clientX - offsetX, clientY - offsetY )
+                            )
+                            (Decode.field "clientX" floatLikeDecoder)
+                            (Decode.field "offsetX" floatLikeDecoder)
+                            (Decode.field "clientY" floatLikeDecoder)
+                            (Decode.field "offsetY" floatLikeDecoder)
+
+                    else
+                        Decode.succeed Nothing
+                )
+        , Decode.succeed Nothing
+        ]

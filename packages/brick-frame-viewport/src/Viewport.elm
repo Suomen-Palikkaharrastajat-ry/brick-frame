@@ -344,6 +344,7 @@ Pointer messages carry window (client) coordinates, as the DOM reports them;
 -}
 type Msg
     = WindowResize Int Int
+    | CanvasPressed ( Float, Float ) Msg
     | MouseDown Float Float Bool
     | MouseMove Float Float
     | MouseUp Float Float
@@ -472,16 +473,25 @@ partsProgressPct loaded total =
 -}
 update : Msg -> Model -> ( Model, Cmd Msg, List Event )
 update msg model =
-    let
-        ( newModel, cmd, events ) =
-            updateInner (toCanvasPixels model.canvasOrigin msg) model
-    in
-    -- The instanced renderer's settle countdown is maintained at this single
-    -- choke point, so no camera-mutating branch has to thread it through.
-    ( { newModel | refineFrames = nextRefineFrames msg model newModel }
-    , cmd
-    , events
-    )
+    case msg of
+        CanvasPressed ( left, top ) innerMsg ->
+            let
+                newModel =
+                    { model | canvasOrigin = ( left, top ) }
+            in
+            update innerMsg newModel
+
+        _ ->
+            let
+                ( newModel, cmd, events ) =
+                    updateInner (toCanvasPixels model.canvasOrigin msg) model
+            in
+            -- The instanced renderer's settle countdown is maintained at this single
+            -- choke point, so no camera-mutating branch has to thread it through.
+            ( { newModel | refineFrames = nextRefineFrames msg model newModel }
+            , cmd
+            , events
+            )
 
 
 {-| Pointer input arrives in window (client) coordinates; everything downstream
@@ -496,6 +506,9 @@ toCanvasPixels ( left, top ) msg =
             { p | x = p.x - left, y = p.y - top }
     in
     case msg of
+        CanvasPressed origin innerMsg ->
+            CanvasPressed origin (toCanvasPixels ( left, top ) innerMsg)
+
         MouseDown x y shift ->
             MouseDown (x - left) (y - top) shift
 
@@ -563,6 +576,9 @@ coarseFrameCount =
 updateInner : Msg -> Model -> ( Model, Cmd Msg, List Event )
 updateInner msg model =
     case msg of
+        CanvasPressed ( left, top ) innerMsg ->
+            updateInner innerMsg { model | canvasOrigin = ( left, top ) }
+
         WindowResize w h ->
             ( { model
                 | width = w
@@ -1819,6 +1835,16 @@ finishLoadingDocument document model =
     ( frameEditedScene reconciled, cmd, [ ModelReady ] )
 
 
+type CandidateKind
+    = MeshCandidate
+        { mesh : Instanced.PartMesh
+        , localOrigin : Vec3.Vec3
+        , localDir : Vec3.Vec3
+        , isFar : Bool
+        }
+    | FallbackCandidate
+
+
 {-| The document placement under a screen point, nearest first.
 
 Placements are culled by bounding sphere, then by ray-AABB in each part's local
@@ -1849,6 +1875,12 @@ pickPoint x y model =
     case ( model.instancedScene, Pick.screenRay model.camera model.width model.height x y ) of
         ( Just scene, Just ( origin, direction ) ) ->
             let
+                nearPlane =
+                    Camera.nearPlane model.camera
+
+                eye =
+                    Camera.position model.camera
+
                 isPickable p =
                     p.source
                         >= 0
@@ -1864,26 +1896,77 @@ pickPoint x y model =
                 -- click is what makes picking slow on a city-scale model.
                 boxCandidate p =
                     Pick.raySphereHit origin direction p.center p.radius
-                        |> Maybe.andThen (\_ -> Dict.get p.part scene.parts)
                         |> Maybe.andThen
-                            (\mesh ->
-                                Mat4.inverse p.matrix
-                                    |> Maybe.andThen
-                                        (\inv ->
-                                            let
-                                                localOrigin =
-                                                    Mat4.transform inv origin
+                            (\_ ->
+                                case ( Dict.get p.part scene.parts, Mat4.inverse p.matrix ) of
+                                    ( Just mesh, Just inv ) ->
+                                        let
+                                            localOrigin =
+                                                Mat4.transform inv origin
 
-                                                localDir =
-                                                    Vec3.sub (Mat4.transform inv (Vec3.add origin direction)) localOrigin
-                                            in
-                                            Pick.rayAabbHit localOrigin localDir mesh.boundsMin mesh.boundsMax
-                                                |> Maybe.map (\boxT -> { boxT = boxT, placement = p, mesh = mesh, localOrigin = localOrigin, localDir = localDir })
-                                        )
+                                            localDir =
+                                                Vec3.sub (Mat4.transform inv (Vec3.add origin direction)) localOrigin
+                                        in
+                                        Pick.rayAabbHitFrom nearPlane localOrigin localDir mesh.boundsMin mesh.boundsMax
+                                            |> Maybe.map
+                                                (\boxT ->
+                                                    let
+                                                        diameter =
+                                                            2
+                                                                * Instanced.projectedRadiusPx (toFloat model.height)
+                                                                    (Vec3.distance eye p.center)
+                                                                    p.radius
+
+                                                        isFar =
+                                                            Instanced.detailFor diameter == Instanced.Far
+                                                    in
+                                                    { boxT = boxT
+                                                    , placement = p
+                                                    , kind =
+                                                        MeshCandidate
+                                                            { mesh = mesh
+                                                            , localOrigin = localOrigin
+                                                            , localDir = localDir
+                                                            , isFar = isFar
+                                                            }
+                                                    }
+                                                )
+
+                                    _ ->
+                                        let
+                                            rVec =
+                                                Vec3.vec3 p.radius p.radius p.radius
+
+                                            boxMin =
+                                                Vec3.sub p.center rVec
+
+                                            boxMax =
+                                                Vec3.add p.center rVec
+                                        in
+                                        Pick.rayAabbHitFrom nearPlane origin direction boxMin boxMax
+                                            |> Maybe.map
+                                                (\boxT ->
+                                                    { boxT = boxT
+                                                    , placement = p
+                                                    , kind = FallbackCandidate
+                                                    }
+                                                )
                             )
 
                 surfaceHit c =
-                    Pick.nearestTriangleHitBy .position c.localOrigin c.localDir c.mesh.surface
+                    case c.kind of
+                        FallbackCandidate ->
+                            Just c.boxT
+
+                        MeshCandidate m ->
+                            if m.isFar then
+                                Just c.boxT
+
+                            else if List.isEmpty m.mesh.surface then
+                                Just c.boxT
+
+                            else
+                                Pick.nearestTriangleHitByFrom nearPlane .position m.localOrigin m.localDir m.mesh.surface
 
                 closer c best =
                     case best of
@@ -1894,10 +1977,10 @@ pickPoint x y model =
                             else
                                 case surfaceHit c of
                                     Just t ->
-                                        if t < bestT - pickDepthTolerance then
+                                        if t >= nearPlane && t < bestT - pickDepthTolerance then
                                             Just ( t, c.placement )
 
-                                        else if t <= bestT + pickDepthTolerance && c.placement.radius < bestPlacement.radius then
+                                        else if t >= nearPlane && t <= bestT + pickDepthTolerance && c.placement.radius < bestPlacement.radius then
                                             Just ( t, c.placement )
 
                                         else
@@ -1907,8 +1990,16 @@ pickPoint x y model =
                                         best
 
                         Nothing ->
-                            surfaceHit c
-                                |> Maybe.map (\t -> ( t, c.placement ))
+                            case surfaceHit c of
+                                Just t ->
+                                    if t >= nearPlane then
+                                        Just ( t, c.placement )
+
+                                    else
+                                        Nothing
+
+                                Nothing ->
+                                    Nothing
             in
             scene.placements
                 |> List.filter isPickable
@@ -2226,9 +2317,10 @@ setActiveSources sources model =
 
 {-| Where the canvas's top-left corner sits in the window, in CSS pixels.
 
-Hosts that place the canvas anywhere but the window origin (beside a side
-panel, under a header) must set this, or picks land offset from the pointer.
-Like the canvas size, it is the host's layout arithmetic, not a DOM measurement.
+Canvas `mousedown` and `pointerdown` events dynamically detect the canvas
+origin via `clientX - offsetX` and `clientY - offsetY` on every press.
+Explicitly setting `canvasOrigin` via `setCanvasOrigin` remains available as
+an optimisation or override (e.g. before the first press).
 
 -}
 setCanvasOrigin : Float -> Float -> Model -> Model
@@ -2326,7 +2418,20 @@ view config model =
          , Attr.style "height" "100%"
          , Attr.style "touch-action" "none"
          , Html.Events.on "mousedown"
-            (Decode.map3 MouseDown
+            (Decode.map4
+                (\origin clientX clientY shift ->
+                    let
+                        down =
+                            MouseDown clientX clientY shift
+                    in
+                    case origin of
+                        Just o ->
+                            CanvasPressed o down
+
+                        Nothing ->
+                            down
+                )
+                ViewportDecode.canvasOriginDecoder
                 (Decode.field "clientX" Decode.float)
                 (Decode.field "clientY" Decode.float)
                 (Decode.field "shiftKey" Decode.bool)
@@ -2355,7 +2460,25 @@ touchListeners : Model -> List (Html.Attribute Msg)
 touchListeners model =
     if model.supportsPointerEvents then
         [ Html.Events.preventDefaultOn "pointerdown"
-            (Decode.map (\touch -> ( PointerTouchStart touch, True )) pointerTouchPointDecoder)
+            (Decode.map2
+                (\origin touch ->
+                    let
+                        down =
+                            PointerTouchStart touch
+
+                        msg =
+                            case origin of
+                                Just o ->
+                                    CanvasPressed o down
+
+                                Nothing ->
+                                    down
+                    in
+                    ( msg, True )
+                )
+                ViewportDecode.canvasOriginDecoder
+                pointerTouchPointDecoder
+            )
         , Html.Events.preventDefaultOn "pointermove"
             (Decode.map (\touch -> ( PointerTouchMove touch, True )) pointerTouchPointDecoder)
         , Html.Events.preventDefaultOn "pointerup"
@@ -2366,7 +2489,25 @@ touchListeners model =
 
     else
         [ Html.Events.preventDefaultOn "touchstart"
-            (Decode.map (\touches -> ( TouchStart touches, True )) touchesDecoder)
+            (Decode.map2
+                (\origin touches ->
+                    let
+                        down =
+                            TouchStart touches
+
+                        msg =
+                            case origin of
+                                Just o ->
+                                    CanvasPressed o down
+
+                                Nothing ->
+                                    down
+                    in
+                    ( msg, True )
+                )
+                ViewportDecode.canvasOriginDecoder
+                touchesDecoder
+            )
         , Html.Events.preventDefaultOn "touchmove"
             (Decode.map (\touches -> ( TouchMove touches, True )) touchesDecoder)
         , Html.Events.preventDefaultOn "touchend"
