@@ -3,9 +3,10 @@ module Render.Instanced exposing
     , Detail(..)
     , build, extractPlacements, chunkKeyFor
     , buildFrom, replaceSource, removeSource
-    , render, renderWithGhost, visiblePlacements, detailFor
+    , render, visiblePlacements, detailFor
     , Frustum, frustumFromMatrix, sphereInFrustum, projectedRadiusPx
     , triangleBudgetExceeded
+    , renderWithGhost
     )
 
 {-| Instanced rendering of large LDraw models.
@@ -917,7 +918,8 @@ coarsenBy active detail =
     render { camera, style, width, height, coarsen } scene
 
 Returns one entity per visible placement per active pass. `Far` placements
-produce nothing here — they belong to the merged proxy pass.
+belong to the merged proxy pass, except in a cell that also holds a resolved
+placement, where they draw their surfaces only.
 
 -}
 render :
@@ -1050,22 +1052,39 @@ renderWithGhost config scene =
 
         proxyGhost =
             config.activeSources /= Nothing
+
+        -- Cells holding a placement big enough to draw for real. Their merged
+        -- boxes would swallow it — a wheel or a slope sits inside its own
+        -- bounding box — so these cells draw their small members one by one.
+        resolvedCells =
+            List.foldl
+                (\( placement, detail ) cells ->
+                    if detail == Far then
+                        cells
+
+                    else
+                        Set.insert (chunkKeyFor scene.chunkCell placement.center) cells
+                )
+                Set.empty
+                visible
     in
-    proxyEntities frustum (triangleUniforms Mat4.identity Shader.noInstanceColor proxyGhost) proxyGhost scene
-        ++ List.concatMap (placementEntities isGhost scene triangleUniforms edgeUniforms conditionalUniforms) visible
+    proxyEntities frustum resolvedCells (triangleUniforms Mat4.identity Shader.noInstanceColor proxyGhost) proxyGhost scene
+        ++ List.concatMap (placementEntities isGhost resolvedCells scene triangleUniforms edgeUniforms conditionalUniforms) visible
 
 
 {-| Draw the merged proxy chunks that stand in for `Far` placements.
 
-Chunks are drawn whenever they are in view rather than being matched to the
-placements that were actually demoted: a chunk that overlaps the close-up
-region is hidden behind the real geometry drawn over it, and the depth buffer
-sorts that out for free. Boxes are always wound outward by `boxTriangles`, so
-back-face culling is unconditional here.
+A chunk is drawn only while every placement of it in view is `Far`. Relying on
+the depth buffer to hide a box behind the real part only works for parts that
+are boxes: anything else — a wheel, a slope, a Technic beam with holes — sits
+inside its own bounding box and is covered by it, leaving a grey slab with the
+part's edge lines showing through. Cells in `resolvedCells` therefore draw their
+`Far` members individually instead (see `placementEntities`). Boxes are always
+wound outward by `boxTriangles`, so back-face culling is unconditional here.
 
 -}
-proxyEntities : Frustum -> Shader.Uniforms -> Bool -> InstancedScene -> List WebGL.Entity
-proxyEntities frustum uniforms isGhost scene =
+proxyEntities : Frustum -> Set ( Int, Int, Int ) -> Shader.Uniforms -> Bool -> InstancedScene -> List WebGL.Entity
+proxyEntities frustum resolvedCells uniforms isGhost scene =
     let
         settings =
             if isGhost then
@@ -1077,10 +1096,15 @@ proxyEntities frustum uniforms isGhost scene =
             else
                 [ DepthTest.default, WebGL.Settings.cullFace WebGL.Settings.back ]
     in
-    scene.proxyChunks
-        |> List.filter (\chunk -> sphereInFrustum frustum chunk.center chunk.radius)
+    scene.chunkIndex
+        |> Dict.toList
+        |> List.filter
+            (\( key, chunk ) ->
+                not (Set.member key resolvedCells)
+                    && sphereInFrustum frustum chunk.center chunk.radius
+            )
         |> List.map
-            (\chunk ->
+            (\( _, chunk ) ->
                 WebGL.entityWith
                     settings
                     Shader.vertexShader
@@ -1092,15 +1116,20 @@ proxyEntities frustum uniforms isGhost scene =
 
 placementEntities :
     (Placement -> Bool)
+    -> Set ( Int, Int, Int )
     -> InstancedScene
     -> (Mat4 -> Vec4 -> Bool -> Shader.Uniforms)
     -> (Mat4 -> EdgeShader.Uniforms)
     -> (Mat4 -> EdgeShader.ConditionalUniforms)
     -> ( Placement, Detail )
     -> List WebGL.Entity
-placementEntities isGhost scene triangleUniforms edgeUniforms conditionalUniforms ( placement, detail ) =
-    case ( detail, Dict.get placement.part scene.parts ) of
-        ( Far, _ ) ->
+placementEntities isGhost resolvedCells scene triangleUniforms edgeUniforms conditionalUniforms ( placement, detail ) =
+    let
+        drawnByProxy =
+            detail == Far && not (Set.member (chunkKeyFor scene.chunkCell placement.center) resolvedCells)
+    in
+    case ( drawnByProxy, Dict.get placement.part scene.parts ) of
+        ( True, _ ) ->
             []
 
         ( _, Nothing ) ->
@@ -1128,6 +1157,10 @@ placementEntities isGhost scene triangleUniforms edgeUniforms conditionalUniform
                         (edgeUniforms placement.matrix)
             in
             case detail of
+                Far ->
+                    -- In a cell whose proxy is off: surfaces only, too small for edges.
+                    [ triangleEntity ]
+
                 Near ->
                     [ triangleEntity
                     , lineEntity

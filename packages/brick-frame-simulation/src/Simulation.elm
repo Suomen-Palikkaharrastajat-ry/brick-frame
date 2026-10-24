@@ -49,6 +49,7 @@ import LDraw.Types exposing (LDrawLine(..))
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3
 import Render.Camera as Camera exposing (Camera)
+import Render.EdgeShader as EdgeShader exposing (EdgeVertex)
 import Render.GuideShader as GuideShader
 import Render.Pick as Pick
 import Render.Shader as Shader
@@ -61,6 +62,7 @@ import Simulation.Meshes as Meshes
         )
 import Time
 import WebGL
+import WebGL.Settings.Blend as Blend
 import WebGL.Settings.DepthTest as DepthTest
 
 
@@ -803,19 +805,30 @@ gearEntities camera styleInput aspect model =
                                             , u_ghostMode = 0.0
                                             , u_ghostAlpha = 1.0
                                             }
+
+                                        triangleEntity =
+                                            WebGL.entityWith
+                                                [ DepthTest.default ]
+                                                Shader.vertexShader
+                                                Shader.fragmentShader
+                                                meshForLod
+                                                uniforms
+
+                                        -- Edges are skipped on the simplified LOD to keep cost down.
+                                        edgeEntities =
+                                            case Dict.get inst.id model.gearLods of
+                                                Just Lod.Simplified ->
+                                                    []
+
+                                                _ ->
+                                                    [ edgeEntity modelMat viewMat projMat style aspect rendered.edges ]
                                     in
-                                    Just
-                                        (WebGL.entityWith
-                                            [ DepthTest.default ]
-                                            Shader.vertexShader
-                                            Shader.fragmentShader
-                                            meshForLod
-                                            uniforms
-                                        )
+                                    Just (triangleEntity :: edgeEntities)
 
                                 else
                                     Nothing
                     )
+                |> List.concat
 
 
 componentEntities : Camera -> Style.Style -> Float -> Model -> List WebGL.Entity
@@ -835,7 +848,7 @@ componentEntities camera styleInput aspect model =
     in
     model.componentMeshes
         |> List.filter (\c -> Pick.isSphereVisible camera aspect c.center 10.0)
-        |> List.map
+        |> List.concatMap
             (\component ->
                 let
                     angle =
@@ -869,13 +882,50 @@ componentEntities camera styleInput aspect model =
                         , u_ghostAlpha = 1.0
                         }
                 in
-                WebGL.entityWith
+                [ WebGL.entityWith
                     [ DepthTest.default ]
                     Shader.vertexShader
                     Shader.fragmentShader
                     component.mesh
                     uniforms
+                , edgeEntity modelMat viewMat projMat style aspect component.edges
+                ]
             )
+
+
+{-| Canvas height, in pixels, that edge widths are computed against.
+
+`Viewport.ViewConfig.extraEntities` passes only the aspect ratio, not the canvas
+size, so the edge shader's pixel-to-NDC scale uses this reference height. Moving
+part outlines therefore come out at `edgeWidth * canvasHeight / edgeReferenceHeight`
+pixels rather than exactly `edgeWidth`.
+
+-}
+edgeReferenceHeight : Float
+edgeReferenceHeight =
+    800.0
+
+
+{-| Edge-line pass for one moving part, drawn with the same model matrix as its
+triangle mesh. Mirrors the static scene's edge settings in `Render.Scene`.
+-}
+edgeEntity : Mat4.Mat4 -> Mat4.Mat4 -> Mat4.Mat4 -> Style.Style -> Float -> WebGL.Mesh EdgeVertex -> WebGL.Entity
+edgeEntity modelMat viewMat projMat style aspect mesh =
+    WebGL.entityWith
+        [ DepthTest.lessOrEqual { write = False, near = 0, far = 1 }
+        , Blend.add Blend.srcAlpha Blend.oneMinusSrcAlpha
+        ]
+        EdgeShader.vertexShader
+        EdgeShader.fragmentShader
+        mesh
+        { modelMatrix = modelMat
+        , viewMatrix = viewMat
+        , projectionMatrix = projMat
+        , edgeColor = style.edgeColor
+        , viewportWidth = aspect * edgeReferenceHeight
+        , viewportHeight = edgeReferenceHeight
+        , lineWidth = style.edgeWidth
+        }
 
 
 componentArrows : Camera -> Float -> Model -> List WebGL.Entity

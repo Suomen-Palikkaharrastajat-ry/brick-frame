@@ -20,6 +20,7 @@ import Math.Vector3 as Vec3 exposing (vec3)
 import Math.Vector4 as Vec4
 import Render.Camera as Camera
 import Render.Instanced as Instanced exposing (Detail(..))
+import Render.Style as Style
 import Set
 import Test exposing (Test, describe, test)
 
@@ -98,6 +99,70 @@ viewProjection =
 rawBrick : Int -> Mat4.Mat4 -> Instanced.RawPlacement
 rawBrick color matrix =
     { part = "3001.dat", color = color, matrix = matrix }
+
+
+{-| A small copy of the part: its projected radius is about 1/1000 of a full one,
+so it is always `Far`.
+-}
+tiny : Mat4.Mat4 -> Instanced.RawPlacement
+tiny matrix =
+    rawBrick 2 (Mat4.mul matrix (Mat4.makeScale3 0.001 0.001 0.001))
+
+
+{-| A camera at the origin looking down -Z from `distance` away, with a fixed
+800 x 1000 viewport.
+-}
+cameraAt : Float -> Vec3.Vec3 -> Camera.Camera
+cameraAt distance target =
+    let
+        base =
+            Camera.init
+    in
+    { base | azimuth = 0, elevation = 0, distance = distance, target = target }
+
+
+{-| The detail band of every visible placement, and how many entities
+`Instanced.render` emits for the same camera.
+-}
+renderSummary : Camera.Camera -> Instanced.InstancedScene -> ( List Detail, Int )
+renderSummary cam scene =
+    let
+        aspect =
+            800 / 1000
+
+        viewProjectionNow =
+            Mat4.mul
+                (Camera.projectionMatrix aspect (Camera.nearPlane cam) (Camera.farPlane cam))
+                (Camera.viewMatrix cam)
+
+        bands =
+            Instanced.visiblePlacements
+                { viewProjection = viewProjectionNow
+                , eye = Camera.position cam
+                , viewportHeight = 1000
+                , coarsen = False
+                }
+                scene
+                |> List.map Tuple.second
+
+        entities =
+            Instanced.render
+                { camera = cam
+                , style = Style.defaultStyle
+                , width = 800
+                , height = 1000
+                , coarsen = False
+                }
+                scene
+    in
+    ( bands, List.length entities )
+
+
+{-| The spatial cell a placement falls into.
+-}
+cellOf : Instanced.InstancedScene -> Instanced.Placement -> ( Int, Int, Int )
+cellOf scene placement =
+    Instanced.chunkKeyFor scene.chunkCell placement.center
 
 
 
@@ -372,5 +437,91 @@ suite =
                 \_ ->
                     Instanced.chunkKeyFor 100 (vec3 -10 0 0)
                         |> Expect.equal ( -1, 0, 0 )
+            ]
+        , describe "resolved cells versus proxy chunks"
+            [ test "a cell of only far placements draws one proxy box and no per-placement entities" <|
+                \_ ->
+                    -- Camera a long way off: every placement is Far, all sit in one cell.
+                    let
+                        scene =
+                            Instanced.build cache
+                                [ tiny Mat4.identity
+                                , tiny (Mat4.makeTranslate3 40 0 0)
+                                , tiny (Mat4.makeTranslate3 0 0 40)
+                                ]
+
+                        ( bands, count ) =
+                            renderSummary (cameraAt 100000 (vec3 0 0 0)) scene
+                    in
+                    Expect.equal ( [ Far, Far, Far ], Dict.size scene.chunkIndex ) ( bands, count )
+            , test "a resolved placement suppresses the proxy box of its own cell" <|
+                \_ ->
+                    -- REGRESSION. Before the fix the cell's merged box was drawn over
+                    -- the Near brick: a non-box part sits inside its own bounding box, so
+                    -- the grey box covered it and its edge lines showed through.
+                    --
+                    -- Two tiny Far members share the brick's cell, so the counts tell
+                    -- the two behaviours apart: the brick's 3 entities (triangles,
+                    -- edges, conditional lines) plus one triangle entity per Far
+                    -- member is 5; the old proxy path drew 3 + one merged box = 4.
+                    let
+                        scene =
+                            Instanced.build cache
+                                [ rawBrick 4 Mat4.identity
+                                , tiny Mat4.identity
+                                , tiny (Mat4.makeTranslate3 1 0 0)
+                                ]
+
+                        ( bands, count ) =
+                            renderSummary (cameraAt 30 (vec3 0 0 0)) scene
+
+                        cells =
+                            List.map (cellOf scene) scene.placements
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal 1 (Set.size (Set.fromList cells))
+                        , \_ -> Expect.equal 1 (Dict.size scene.chunkIndex)
+                        , \_ -> Expect.equal ( [ Near, Far, Far ], 5 ) ( bands, count )
+                        ]
+                        ()
+            , test "when every visible placement is Near no proxy box is drawn" <|
+                \_ ->
+                    -- Three Near bricks in one cell: 3 entities each and nothing else.
+                    -- Before the fix the cell's box added a fourth entity on top.
+                    let
+                        scene =
+                            Instanced.build cache
+                                [ rawBrick 4 Mat4.identity
+                                , rawBrick 1 (Mat4.makeTranslate3 2 0 0)
+                                , rawBrick 2 (Mat4.makeTranslate3 0 0 2)
+                                ]
+
+                        ( bands, count ) =
+                            renderSummary (cameraAt 30 (vec3 0 0 0)) scene
+                    in
+                    Expect.equal ( [ Near, Near, Near ], 9 ) ( bands, count )
+            , test "a resolved cell does not hide the proxy box of a neighbouring far cell" <|
+                \_ ->
+                    -- The Near brick is in cell 0; the tiny brick is at x = -4, which is
+                    -- cell -1. Only cell 0 is resolved, so cell -1 keeps its proxy box:
+                    -- 3 entities for the brick plus 1 for the box.
+                    let
+                        scene =
+                            Instanced.build cache
+                                [ rawBrick 4 Mat4.identity
+                                , tiny (Mat4.makeTranslate3 -4 0 0)
+                                ]
+
+                        ( bands, count ) =
+                            renderSummary (cameraAt 30 (vec3 0 0 0)) scene
+
+                        cells =
+                            List.map (cellOf scene) scene.placements
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal 2 (Set.size (Set.fromList cells))
+                        , \_ -> Expect.equal ( [ Near, Far ], 4 ) ( bands, count )
+                        ]
+                        ()
             ]
         ]

@@ -18,8 +18,10 @@ module Simulation.Meshes exposing
 Gears, axles and the parts that ride on them are drawn separately from the
 static scene so they can be rotated each frame about their own axis. This module
 builds those meshes once, when a model has loaded, together with the axis and
-centre each one turns about. All axes are canonicalised to the render space's
-Y-up convention.
+centre each one turns about. Each moving part carries a triangle mesh and an
+edge mesh (its LDraw edge lines as screen-aligned quads), so it is outlined like
+the static scene. All axes are canonicalised to the render space's Y-up
+convention.
 
 -}
 
@@ -41,6 +43,7 @@ import WebGL
 type alias GearRender =
     { mesh : WebGL.Mesh Vertex
     , lodMesh : WebGL.Mesh Vertex
+    , edges : WebGL.Mesh EdgeVertex
     , center : Vec3.Vec3
     , axis : Vec3.Vec3
     , pitchRadius : Float
@@ -61,6 +64,7 @@ type alias ComponentRender =
 -}
 type alias ComponentMeshRender =
     { mesh : WebGL.Mesh Vertex
+    , edges : WebGL.Mesh EdgeVertex
     , center : Vec3.Vec3
     , rotationCenter : Vec3.Vec3
     , axis : Vec3.Vec3
@@ -117,6 +121,7 @@ buildGearMeshes lodCache cache instances =
                             inst.id
                             { mesh = WebGL.triangles geom.triangles
                             , lodMesh = WebGL.triangles lodTriangles
+                            , edges = edgeMesh geom.lines
                             , center = center
                             , axis = axis
                             , pitchRadius = inst.spec.pitchRadius
@@ -235,6 +240,7 @@ buildComponentMeshRenders cache components gears =
                         in
                         Just
                             { mesh = WebGL.triangles geom.triangles
+                            , edges = edgeMesh geom.lines
                             , center = toYUpPoint component.worldPosition
                             , rotationCenter = toYUpPoint component.worldPosition
                             , axis = inferComponentAxis cache component
@@ -305,6 +311,28 @@ componentArrowLines component axis =
     [ ( start, tip )
     , ( tip, headLeft )
     , ( tip, headRight )
+    ]
+
+
+{-| Expand flattened edge segments into screen-aligned quads for `Render.EdgeShader`.
+-}
+edgeMesh : List ( Vec3.Vec3, Vec3.Vec3 ) -> WebGL.Mesh EdgeVertex
+edgeMesh lines =
+    WebGL.triangles (List.concatMap lineToQuad lines)
+
+
+{-| Two triangles covering one segment. Mirrors `Render.Instanced`'s quad expansion
+(which is not exposed).
+-}
+lineToQuad : ( Vec3.Vec3, Vec3.Vec3 ) -> List ( EdgeVertex, EdgeVertex, EdgeVertex )
+lineToQuad ( p1, p2 ) =
+    let
+        v : Float -> Vec3.Vec3 -> Vec3.Vec3 -> EdgeVertex
+        v side pos other =
+            { position = pos, other = other, side = side }
+    in
+    [ ( v -1 p1 p2, v 1 p1 p2, v 1 p2 p1 )
+    , ( v -1 p1 p2, v 1 p2 p1, v -1 p2 p1 )
     ]
 
 
@@ -527,6 +555,7 @@ buildCoaxialMeshRenders cache gears parts =
                     in
                     Just
                         { mesh = WebGL.triangles geom.triangles
+                        , edges = edgeMesh geom.lines
                         , center = center
                         , rotationCenter = rotationCenter
                         , axis = axis
