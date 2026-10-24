@@ -362,6 +362,9 @@ handleViewportEvent event ( model, cmds ) =
         Viewport.DragEnded _ _ ->
             ( model, cmds )
 
+        Viewport.WheelScrolled _ ->
+            ( model, cmds )
+
         Viewport.LoadStarted ->
             ( { model | simulation = Simulation.reset model.simulation }, cmds )
 

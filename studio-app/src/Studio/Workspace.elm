@@ -198,6 +198,10 @@ type alias Drag =
     , lastPoint : ( Float, Float )
     , original : Document
     , amount : Float
+    , elevationOffset : Float
+    , axisLock : Maybe Axis
+    , modeAnchor : ( Float, Float )
+    , baseElevation : Float
     }
 
 
@@ -1045,7 +1049,11 @@ updatePage msg model =
                 in
                 case nextModel.drag of
                     Just d ->
-                        moveDrag d d.lastPoint nextModel
+                        let
+                            updatedDrag =
+                                { d | modeAnchor = d.lastPoint, baseElevation = d.elevationOffset }
+                        in
+                        moveDrag updatedDrag d.lastPoint { nextModel | drag = Just updatedDrag }
 
                     Nothing ->
                         ( nextModel, Cmd.none )
@@ -1391,6 +1399,10 @@ updatePage msg model =
                     , lastPoint = ( 0, 0 )
                     , original = armedModel.document
                     , amount = 0
+                    , elevationOffset = 0.0
+                    , axisLock = Nothing
+                    , modeAnchor = ( 0, 0 )
+                    , baseElevation = 0.0
                     }
 
                 ( synced, syncCmd ) =
@@ -2649,6 +2661,45 @@ handleEvent event ( model, cmds ) =
             in
             ( next, cmds ++ [ endCmd ] )
 
+        Viewport.WheelScrolled delta ->
+            case model.drag of
+                Just drag ->
+                    let
+                        stepSize =
+                            if model.shiftHeld then
+                                24.0
+
+                            else if model.altHeld then
+                                1.0
+
+                            else
+                                8.0
+
+                        direction =
+                            if delta < 0 then
+                                -1.0
+
+                            else
+                                1.0
+
+                        newOffset =
+                            drag.elevationOffset + (direction * stepSize)
+
+                        updatedDrag =
+                            { drag
+                                | elevationOffset = newOffset
+                                , baseElevation = newOffset
+                                , modeAnchor = drag.lastPoint
+                            }
+
+                        ( nextModel, cmd ) =
+                            moveDrag updatedDrag drag.lastPoint { model | drag = Just updatedDrag }
+                    in
+                    ( nextModel, cmds ++ [ cmd ] )
+
+                Nothing ->
+                    ( model, cmds )
+
         Viewport.KeyAccepted keyEvent ->
             let
                 withMods =
@@ -2681,13 +2732,79 @@ handleEvent event ( model, cmds ) =
             case withMods.drag of
                 Just d ->
                     let
+                        key =
+                            String.toLower keyEvent.key
+
                         isRotLeft =
                             keyEvent.key == "ArrowLeft" || keyEvent.key == "ArrowDown" || keyEvent.key == "["
 
                         isRotRight =
                             keyEvent.key == "ArrowRight" || keyEvent.key == "ArrowUp" || keyEvent.key == "r" || keyEvent.key == "R" || keyEvent.key == "]"
                     in
-                    if isRotLeft then
+                    if key == "x" then
+                        if not keyEvent.repeat then
+                            let
+                                nextLock =
+                                    if d.axisLock == Just AxisX then
+                                        Nothing
+
+                                    else
+                                        Just AxisX
+
+                                updatedDrag =
+                                    { d | axisLock = nextLock, modeAnchor = d.lastPoint, baseElevation = d.elevationOffset }
+
+                                ( next, cmd ) =
+                                    moveDrag updatedDrag d.lastPoint { withMods | drag = Just updatedDrag }
+                            in
+                            ( next, cmds ++ [ cmd ] )
+
+                        else
+                            ( withMods, cmds )
+
+                    else if key == "y" then
+                        if not keyEvent.repeat then
+                            let
+                                nextLock =
+                                    if d.axisLock == Just AxisY then
+                                        Nothing
+
+                                    else
+                                        Just AxisY
+
+                                updatedDrag =
+                                    { d | axisLock = nextLock, modeAnchor = d.lastPoint, baseElevation = d.elevationOffset }
+
+                                ( next, cmd ) =
+                                    moveDrag updatedDrag d.lastPoint { withMods | drag = Just updatedDrag }
+                            in
+                            ( next, cmds ++ [ cmd ] )
+
+                        else
+                            ( withMods, cmds )
+
+                    else if key == "z" then
+                        if not keyEvent.repeat then
+                            let
+                                nextLock =
+                                    if d.axisLock == Just AxisZ then
+                                        Nothing
+
+                                    else
+                                        Just AxisZ
+
+                                updatedDrag =
+                                    { d | axisLock = nextLock, modeAnchor = d.lastPoint, baseElevation = d.elevationOffset }
+
+                                ( next, cmd ) =
+                                    moveDrag updatedDrag d.lastPoint { withMods | drag = Just updatedDrag }
+                            in
+                            ( next, cmds ++ [ cmd ] )
+
+                        else
+                            ( withMods, cmds )
+
+                    else if isRotLeft then
                         let
                             updated =
                                 if withMods.activeSnap /= Nothing then
@@ -2715,7 +2832,17 @@ handleEvent event ( model, cmds ) =
                         in
                         ( next, cmds ++ [ cmd ] )
 
-                    else if keyEvent.key == "Alt" || keyEvent.key == "Shift" then
+                    else if keyEvent.key == "Shift" then
+                        let
+                            updatedDrag =
+                                { d | modeAnchor = d.lastPoint, baseElevation = d.elevationOffset }
+
+                            ( next, cmd ) =
+                                moveDrag updatedDrag d.lastPoint { withMods | drag = Just updatedDrag }
+                        in
+                        ( next, cmds ++ [ cmd ] )
+
+                    else if keyEvent.key == "Alt" then
                         let
                             ( next, cmd ) =
                                 moveDrag d d.lastPoint withMods
@@ -2925,6 +3052,10 @@ startDrag point model =
                     , lastPoint = point
                     , original = model.document
                     , amount = 0
+                    , elevationOffset = 0.0
+                    , axisLock = Nothing
+                    , modeAnchor = point
+                    , baseElevation = 0.0
                     }
 
             Nothing ->
@@ -2940,6 +3071,10 @@ startDrag point model =
                     , lastPoint = point
                     , original = model.document
                     , amount = 0
+                    , elevationOffset = 0.0
+                    , axisLock = Nothing
+                    , modeAnchor = point
+                    , baseElevation = 0.0
                     }
                 )
 
@@ -2971,6 +3106,10 @@ grabPart ( x, y ) model =
                     , lastPoint = ( x, y )
                     , original = model.document
                     , amount = 0
+                    , elevationOffset = 0.0
+                    , axisLock = Nothing
+                    , modeAnchor = ( x, y )
+                    , baseElevation = 0.0
                     }
                 )
 
@@ -3066,19 +3205,80 @@ moveLinearDrag drag handle point model =
     applyDragDelta drag amount point (Vec3.scale amount (Edit.axisVector handle.axis)) model
 
 
+projectedVerticalDelta : Camera.Camera -> Int -> Int -> Vec3.Vec3 -> ( Float, Float ) -> ( Float, Float ) -> Float
+projectedVerticalDelta camera width height leadPos ( anchorX, anchorY ) ( currentX, currentY ) =
+    let
+        p0 =
+            Gizmo.toRender leadPos
+
+        pUp =
+            Vec3.add p0 (vec3 0 100 0)
+
+        s0 =
+            Gizmo.project camera width height p0
+
+        sUp =
+            Gizmo.project camera width height pUp
+    in
+    case ( s0, sUp ) of
+        ( Just ( s0x, s0y ), Just ( sUpx, sUpy ) ) ->
+            let
+                dx =
+                    sUpx - s0x
+
+                dy =
+                    sUpy - s0y
+
+                lenSq =
+                    dx * dx + dy * dy
+            in
+            if lenSq < 1.0 then
+                currentY - anchorY
+
+            else
+                let
+                    deltaMx =
+                        currentX - anchorX
+
+                    deltaMy =
+                        currentY - anchorY
+
+                    t =
+                        ((deltaMx * dx + deltaMy * dy) / lenSq) * 100.0
+                in
+                -t
+
+        _ ->
+            currentY - anchorY
+
+
 {-| Slide a grabbed part over surfaces under the cursor: dynamically raycasts
 the scene excluding dragged parts, auto-elevating the part bottom onto the hit
 surface or ground plane Y = 0 (unless Shift is held to lock elevation).
 From this surface-aligned pose, magnetic snapping with hysteresis is evaluated.
 -}
 movePlaneDrag : Drag -> Vec3.Vec3 -> ( Float, Float ) -> Model -> ( Model, Cmd Msg )
-movePlaneDrag drag grab ( x, y ) model =
+movePlaneDrag initialDrag grab ( x, y ) model =
     let
+        drag =
+            if initialDrag.modeAnchor == ( 0, 0 ) && ( x, y ) /= ( 0, 0 ) then
+                { initialDrag | modeAnchor = ( x, y ) }
+
+            else
+                initialDrag
+
         draggedIds =
             Set.fromList drag.ids
 
+        raycastScreen =
+            if model.shiftHeld || drag.axisLock == Just AxisY then
+                drag.modeAnchor
+
+            else
+                ( x, y )
+
         surfaceHit =
-            Viewport.pickSurfaceExcluding draggedIds x y model.viewport
+            Viewport.pickSurfaceExcluding draggedIds (Tuple.first raycastScreen) (Tuple.second raycastScreen) model.viewport
 
         originalPlacements =
             drag.ids
@@ -3124,12 +3324,12 @@ movePlaneDrag drag grab ( x, y ) model =
                 origPos =
                     Transform.position leadP.matrix
 
-                targetY =
-                    if model.shiftHeld then
-                        Vec3.getY origPos
+                step =
+                    toFloat (max 1 model.gridStep)
 
-                    else
-                        hit.topY - bottomExtent
+                anchorHit =
+                    Viewport.pickSurfaceExcluding draggedIds (Tuple.first drag.modeAnchor) (Tuple.second drag.modeAnchor) model.viewport
+                        |> Maybe.withDefault hit
 
                 docHit =
                     Gizmo.toRender hit.point
@@ -3140,14 +3340,75 @@ movePlaneDrag drag grab ( x, y ) model =
                 docHitZ =
                     Vec3.getZ docHit
 
-                step =
-                    toFloat (max 1 model.gridStep)
+                docHitAnchor =
+                    Gizmo.toRender anchorHit.point
 
-                targetX =
+                anchorX =
+                    toFloat (round (Vec3.getX docHitAnchor / step)) * step
+
+                anchorZ =
+                    toFloat (round (Vec3.getZ docHitAnchor / step)) * step
+
+                anchorBaseY =
+                    anchorHit.topY - bottomExtent
+
+                cursorX =
                     toFloat (round (docHitX / step)) * step
 
-                targetZ =
+                cursorZ =
                     toFloat (round (docHitZ / step)) * step
+
+                cursorBaseY =
+                    hit.topY - bottomExtent
+
+                verticalDelta =
+                    projectedVerticalDelta
+                        model.viewport.camera
+                        model.viewport.width
+                        model.viewport.height
+                        origPos
+                        drag.modeAnchor
+                        ( x, y )
+
+                currentElevationOffset =
+                    if model.shiftHeld || drag.axisLock == Just AxisY then
+                        drag.baseElevation + verticalDelta
+
+                    else
+                        drag.elevationOffset
+
+                ( targetX, targetY, targetZ ) =
+                    case drag.axisLock of
+                        Just AxisX ->
+                            ( cursorX
+                            , anchorBaseY + drag.elevationOffset
+                            , anchorZ
+                            )
+
+                        Just AxisZ ->
+                            ( anchorX
+                            , anchorBaseY + drag.elevationOffset
+                            , cursorZ
+                            )
+
+                        Just AxisY ->
+                            ( anchorX
+                            , anchorBaseY + currentElevationOffset
+                            , anchorZ
+                            )
+
+                        Nothing ->
+                            if model.shiftHeld then
+                                ( anchorX
+                                , anchorBaseY + currentElevationOffset
+                                , anchorZ
+                                )
+
+                            else
+                                ( cursorX
+                                , cursorBaseY + currentElevationOffset
+                                , cursorZ
+                                )
 
                 targetPos =
                     vec3 targetX targetY targetZ
@@ -3230,7 +3491,7 @@ movePlaneDrag drag grab ( x, y ) model =
                         syncDocumentLive
                             { model
                                 | document = gizmoMovedDoc
-                                , drag = Just { drag | amount = 0, lastPoint = ( x, y ) }
+                                , drag = Just { drag | amount = 0, lastPoint = ( x, y ), elevationOffset = currentElevationOffset }
                                 , activeSnap = Nothing
                                 , collidingPlacements =
                                     if model.collisionMode == Connectivity.CollisionOff then
@@ -3307,7 +3568,7 @@ movePlaneDrag drag grab ( x, y ) model =
                         syncDocumentLive
                             { model
                                 | document = snappedDoc
-                                , drag = Just { drag | amount = 0, lastPoint = ( x, y ) }
+                                , drag = Just { drag | amount = 0, lastPoint = ( x, y ), elevationOffset = currentElevationOffset }
                                 , activeSnap = Just finalCandidate
                                 , collidingPlacements =
                                     if model.collisionMode == Connectivity.CollisionOff then
@@ -3332,7 +3593,7 @@ movePlaneDrag drag grab ( x, y ) model =
                                 syncDocumentLive
                                     { model
                                         | document = gizmoMovedDoc
-                                        , drag = Just { drag | amount = 0, lastPoint = ( x, y ) }
+                                        , drag = Just { drag | amount = 0, lastPoint = ( x, y ), elevationOffset = currentElevationOffset }
                                         , activeSnap = Nothing
                                         , collidingPlacements =
                                             if model.collisionMode == Connectivity.CollisionOff then
@@ -4073,6 +4334,37 @@ canvasView model =
         (Viewport.view
             { extraEntities =
                 \camera _ aspect ->
+                    let
+                        dragAxisGuide =
+                            case model.drag of
+                                Just drag ->
+                                    case drag.axisLock of
+                                        Just axis ->
+                                            case Edit.selectionCenter drag.ids model.document of
+                                                Just localCenter ->
+                                                    let
+                                                        accum =
+                                                            case List.reverse model.context.path of
+                                                                head :: _ ->
+                                                                    head.accumulatedTransform
+
+                                                                [] ->
+                                                                    Mat4.identity
+
+                                                        worldCenter =
+                                                            Mat4.transform accum localCenter
+                                                    in
+                                                    Just ( axis, worldCenter )
+
+                                                Nothing ->
+                                                    Nothing
+
+                                        Nothing ->
+                                            Nothing
+
+                                Nothing ->
+                                    Nothing
+                    in
                     Overlay.entities camera
                         aspect
                         model.viewport.instancedScene
@@ -4087,6 +4379,7 @@ canvasView model =
                             else
                                 model.collidingPlacements
                         , snapGuide = Maybe.map .guide model.activeSnap
+                        , axisGuide = dragAxisGuide
                         }
                         (currentHandles model)
                         (currentArcHandles model)

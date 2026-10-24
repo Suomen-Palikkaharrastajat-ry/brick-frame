@@ -266,6 +266,9 @@ handleEvent event ( model, cmds ) =
         Viewport.DragEnded _ _ ->
             ( model, cmds )
 
+        Viewport.WheelScrolled _ ->
+            ( model, cmds )
+
         Viewport.ModelReady ->
             ( model, cmds )
 

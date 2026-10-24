@@ -109,6 +109,20 @@ suite =
                         , \_ -> Expect.greaterThan idle.camera.distance after.camera.distance
                         ]
                         ()
+            , test "a wheel turn while captured emits WheelScrolled without zooming camera" <|
+                \_ ->
+                    let
+                        captured =
+                            Viewport.captureDrag idle
+
+                        ( after, events ) =
+                            update (Wheel 100) captured
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ WheelScrolled 100 ] events
+                        , \_ -> Expect.equal idle.camera.distance after.camera.distance
+                        ]
+                        ()
             , test "press and release without moving is a click" <|
                 \_ ->
                     idle

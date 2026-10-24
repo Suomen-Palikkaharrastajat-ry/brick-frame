@@ -25,7 +25,8 @@ import WebGL.Settings.DepthTest as DepthTest
 
 
 {-| Which placements to outline, and in which colour: the selection in yellow,
-collisions in red while a drag is under way, and active magnetic snap guides.
+collisions in red while a drag is under way, active magnetic snap guides, and an
+axis guide line when an axis is locked.
 
 Only the selection is outlined at rest. Gear hints (meshed / cannot turn) live
 in the status summary; boxes around every gear competed with the selection
@@ -36,6 +37,7 @@ type alias Highlights =
     { selection : Set Int
     , colliding : Set Int
     , snapGuide : Maybe SnapGuide
+    , axisGuide : Maybe ( Axis, Vec3 )
     }
 
 
@@ -74,8 +76,46 @@ entities camera aspect scene highlights handles arcHandles =
     outline highlights.colliding collidingColor
         ++ outline highlights.selection outlineColor
         ++ snapGuideEntities draw highlights.snapGuide
+        ++ axisGuideEntities draw highlights.axisGuide
         ++ List.map (\h -> draw (WebGL.triangles (handleTriangles camera h)) (axisColor h.axis)) handles
         ++ List.map (\ah -> draw (WebGL.lines (arcLines ah)) (arcColor ah)) arcHandles
+
+
+axisGuideEntities : (WebGL.Mesh Vertex -> Vec4 -> WebGL.Entity) -> Maybe ( Axis, Vec3 ) -> List WebGL.Entity
+axisGuideEntities draw maybeAxisGuide =
+    case maybeAxisGuide of
+        Just ( axis, center ) ->
+            let
+                rPos =
+                    Gizmo.toRender center
+
+                rAxis =
+                    case axis of
+                        AxisX ->
+                            vec3 1 0 0
+
+                        AxisY ->
+                            vec3 0 1 0
+
+                        AxisZ ->
+                            vec3 0 0 1
+
+                halfLen =
+                    2000.0
+
+                p1 =
+                    Vec3.add rPos (Vec3.scale -halfLen rAxis)
+
+                p2 =
+                    Vec3.add rPos (Vec3.scale halfLen rAxis)
+
+                line =
+                    [ ( { position = p1 }, { position = p2 } ) ]
+            in
+            [ draw (WebGL.lines line) (axisColor axis) ]
+
+        Nothing ->
+            []
 
 
 snapGuideEntities : (WebGL.Mesh Vertex -> Vec4 -> WebGL.Entity) -> Maybe SnapGuide -> List WebGL.Entity

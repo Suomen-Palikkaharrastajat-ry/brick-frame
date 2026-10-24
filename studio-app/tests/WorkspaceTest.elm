@@ -26,6 +26,7 @@ import Studio.Transform as Transform
 import Studio.Workspace as Workspace exposing (CoordinateFrame(..), Msg(..))
 import Test exposing (Test, describe, test)
 import Viewport
+import Viewport.Shortcuts as ViewportShortcuts
 
 
 flags : Workspace.Flags
@@ -70,6 +71,7 @@ suite =
         [ editingSuite
         , panelSuite
         , snappingSuite
+        , threeAxisMovementSuite
         , test "starts with an empty document that is ready to show" <|
             \_ ->
                 Expect.all
@@ -1960,6 +1962,10 @@ snappingSuite =
                                     , lastPoint = ( 100, 100 )
                                     , original = start.document
                                     , amount = 0
+                                    , elevationOffset = 0.0
+                                    , axisLock = Nothing
+                                    , modeAnchor = ( 100, 100 )
+                                    , baseElevation = 0.0
                                     }
                             , activeSnap = Just dummyCandidate
                             , snapRotationStep = 0
@@ -2010,6 +2016,10 @@ snappingSuite =
                                     , lastPoint = ( 150, 100 )
                                     , original = origDoc
                                     , amount = 50
+                                    , elevationOffset = 0.0
+                                    , axisLock = Nothing
+                                    , modeAnchor = ( 100, 100 )
+                                    , baseElevation = 0.0
                                     }
                         }
 
@@ -2064,6 +2074,10 @@ snappingSuite =
                                     , lastPoint = ( 150, 100 )
                                     , original = docWithTwo
                                     , amount = 10
+                                    , elevationOffset = 0.0
+                                    , axisLock = Nothing
+                                    , modeAnchor = ( 100, 100 )
+                                    , baseElevation = 0.0
                                     }
                         }
 
@@ -2109,6 +2123,10 @@ snappingSuite =
                                     , lastPoint = ( 120, 100 )
                                     , original = start.document
                                     , amount = 20
+                                    , elevationOffset = 0.0
+                                    , axisLock = Nothing
+                                    , modeAnchor = ( 100, 100 )
+                                    , baseElevation = 0.0
                                     }
                             , altHeld = False
                         }
@@ -2159,6 +2177,10 @@ snappingSuite =
                                     , lastPoint = ( 100, 100 )
                                     , original = docWithTwo
                                     , amount = 0
+                                    , elevationOffset = 0.0
+                                    , axisLock = Nothing
+                                    , modeAnchor = ( 100, 100 )
+                                    , baseElevation = 0.0
                                     }
                             , altHeld = True
                         }
@@ -2202,6 +2224,10 @@ snappingSuite =
                                     , lastPoint = ( 100, 100 )
                                     , original = docWithTwo
                                     , amount = 0
+                                    , elevationOffset = 0.0
+                                    , axisLock = Nothing
+                                    , modeAnchor = ( 100, 100 )
+                                    , baseElevation = 0.0
                                     }
                             , altHeld = False
                             , snapDistance = 15.0
@@ -2267,6 +2293,10 @@ snappingSuite =
                                     , lastPoint = ( 100, 100 )
                                     , original = start.document
                                     , amount = 0
+                                    , elevationOffset = 0.0
+                                    , axisLock = Nothing
+                                    , modeAnchor = ( 100, 100 )
+                                    , baseElevation = 0.0
                                     }
                             , activeSnap = Nothing
                             , inFlightRotationStep = 0
@@ -2366,4 +2396,298 @@ snappingSuite =
 
                     _ ->
                         Expect.fail "Failed to find placed parts in root or submodel"
+        ]
+
+
+testKey : String -> ViewportShortcuts.KeyEvent
+testKey key =
+    { key = key
+    , shift = False
+    , ctrl = False
+    , meta = False
+    , alt = False
+    , repeat = False
+    , targetTag = "BODY"
+    , targetEditable = False
+    , targetRole = ""
+    }
+
+
+threeAxisMovementSuite : Test
+threeAxisMovementSuite =
+    describe "Three-Axis Mouse Movement & Elevation Control"
+        [ describe "Wheel Elevation Stepping"
+            [ test "plain wheel up decreases elevationOffset by 8 LDU (1 plate up in LDraw)" <|
+                \_ ->
+                    let
+                        testPart =
+                            PartIndex.makePart "3001.dat" "Brick 2 x 4" "Brick" ""
+
+                        dragged =
+                            step (StartDragPart testPart) start
+
+                        -- Wheel Up (delta < 0)
+                        afterWheelUp =
+                            step (ViewportMsg (Viewport.Wheel -100)) dragged
+                    in
+                    case afterWheelUp.drag of
+                        Just d ->
+                            Expect.equal -8.0 d.elevationOffset
+
+                        Nothing ->
+                            Expect.fail "Expected active drag"
+            , test "plain wheel down increases elevationOffset by 8 LDU (1 plate down in LDraw)" <|
+                \_ ->
+                    let
+                        testPart =
+                            PartIndex.makePart "3001.dat" "Brick 2 x 4" "Brick" ""
+
+                        dragged =
+                            step (StartDragPart testPart) start
+
+                        -- Wheel Down (delta > 0)
+                        afterWheelDown =
+                            step (ViewportMsg (Viewport.Wheel 100)) dragged
+                    in
+                    case afterWheelDown.drag of
+                        Just d ->
+                            Expect.equal 8.0 d.elevationOffset
+
+                        Nothing ->
+                            Expect.fail "Expected active drag"
+            , test "Shift + wheel steps by 24 LDU (1 brick = 3 plates)" <|
+                \_ ->
+                    let
+                        testPart =
+                            PartIndex.makePart "3001.dat" "Brick 2 x 4" "Brick" ""
+
+                        dragged =
+                            step (StartDragPart testPart) start
+
+                        withShift =
+                            { dragged | shiftHeld = True }
+
+                        afterWheelUp =
+                            step (ViewportMsg (Viewport.Wheel -100)) withShift
+                    in
+                    case afterWheelUp.drag of
+                        Just d ->
+                            Expect.equal -24.0 d.elevationOffset
+
+                        Nothing ->
+                            Expect.fail "Expected active drag"
+            , test "Alt + wheel steps by 1 LDU (fine precision)" <|
+                \_ ->
+                    let
+                        testPart =
+                            PartIndex.makePart "3001.dat" "Brick 2 x 4" "Brick" ""
+
+                        dragged =
+                            step (StartDragPart testPart) start
+
+                        withAlt =
+                            { dragged | altHeld = True }
+
+                        afterWheelUp =
+                            step (ViewportMsg (Viewport.Wheel -100)) withAlt
+                    in
+                    case afterWheelUp.drag of
+                        Just d ->
+                            Expect.equal -1.0 d.elevationOffset
+
+                        Nothing ->
+                            Expect.fail "Expected active drag"
+            , test "wheel scroll while Shift is held properly steps elevation without jumping" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded |> step (UseTool MoveTool)
+
+                        ( sx, sy ) =
+                            screenOf 0 ready
+
+                        dragged =
+                            ready |> mouseDown sx sy False
+
+                        withShift =
+                            { dragged | shiftHeld = True }
+                                |> mouseMove sx (sy + 40)
+
+                        elevationBeforeWheel =
+                            case withShift.drag of
+                                Just d ->
+                                    d.elevationOffset
+
+                                Nothing ->
+                                    0.0
+
+                        afterWheel =
+                            step (ViewportMsg (Viewport.Wheel -100)) withShift
+                    in
+                    case afterWheel.drag of
+                        Just d ->
+                            Expect.all
+                                [ \drag -> Expect.within (Expect.Absolute 0.01) (elevationBeforeWheel - 24.0) drag.elevationOffset
+                                , \drag -> Expect.equal drag.lastPoint drag.modeAnchor
+                                , \drag -> Expect.within (Expect.Absolute 0.01) (elevationBeforeWheel - 24.0) drag.baseElevation
+                                ]
+                                d
+
+                        Nothing ->
+                            Expect.fail "Expected active drag"
+            ]
+        , describe "Axis Lock Keys"
+            [ test "tapping X locks to AxisX, tapping X again unlocks" <|
+                \_ ->
+                    let
+                        testPart =
+                            PartIndex.makePart "3001.dat" "Brick 2 x 4" "Brick" ""
+
+                        dragged =
+                            step (StartDragPart testPart) start
+
+                        keyX =
+                            testKey "x"
+
+                        lockedX =
+                            step (ViewportMsg (Viewport.KeyPressed keyX)) dragged
+
+                        unlockedX =
+                            step (ViewportMsg (Viewport.KeyPressed keyX)) lockedX
+                    in
+                    Expect.all
+                        [ \_ ->
+                            case lockedX.drag of
+                                Just d ->
+                                    Expect.equal (Just AxisX) d.axisLock
+
+                                Nothing ->
+                                    Expect.fail "Expected active drag after lock"
+                        , \_ ->
+                            case unlockedX.drag of
+                                Just d ->
+                                    Expect.equal Nothing d.axisLock
+
+                                Nothing ->
+                                    Expect.fail "Expected active drag after unlock"
+                        ]
+                        ()
+            , test "tapping Y locks to AxisY, tapping Z locks to AxisZ" <|
+                \_ ->
+                    let
+                        testPart =
+                            PartIndex.makePart "3001.dat" "Brick 2 x 4" "Brick" ""
+
+                        dragged =
+                            step (StartDragPart testPart) start
+
+                        lockedY =
+                            step (ViewportMsg (Viewport.KeyPressed (testKey "y"))) dragged
+
+                        lockedZ =
+                            step (ViewportMsg (Viewport.KeyPressed (testKey "z"))) lockedY
+                    in
+                    Expect.all
+                        [ \_ ->
+                            case lockedY.drag of
+                                Just d ->
+                                    Expect.equal (Just AxisY) d.axisLock
+
+                                Nothing ->
+                                    Expect.fail "Expected active drag after lock Y"
+                        , \_ ->
+                            case lockedZ.drag of
+                                Just d ->
+                                    Expect.equal (Just AxisZ) d.axisLock
+
+                                Nothing ->
+                                    Expect.fail "Expected active drag after lock Z"
+                        ]
+                        ()
+            , test "key autorepeat does not toggle axis lock" <|
+                \_ ->
+                    let
+                        testPart =
+                            PartIndex.makePart "3001.dat" "Brick 2 x 4" "Brick" ""
+
+                        dragged =
+                            step (StartDragPart testPart) start
+
+                        keyX =
+                            testKey "x"
+
+                        lockedX =
+                            step (ViewportMsg (Viewport.KeyPressed keyX)) dragged
+
+                        repeatedKeyX =
+                            { keyX | repeat = True }
+
+                        stillLockedX =
+                            step (ViewportMsg (Viewport.KeyPressed repeatedKeyX)) lockedX
+
+                        repeatedKeyY =
+                            { key = "y"
+                            , shift = False
+                            , ctrl = False
+                            , meta = False
+                            , alt = False
+                            , repeat = True
+                            , targetTag = "BODY"
+                            , targetEditable = False
+                            , targetRole = ""
+                            }
+
+                        stillLockedXAfterYRepeat =
+                            step (ViewportMsg (Viewport.KeyPressed repeatedKeyY)) lockedX
+                    in
+                    Expect.all
+                        [ \_ ->
+                            case lockedX.drag of
+                                Just d ->
+                                    Expect.equal (Just AxisX) d.axisLock
+
+                                Nothing ->
+                                    Expect.fail "Expected active drag after lock"
+                        , \_ ->
+                            case stillLockedX.drag of
+                                Just d ->
+                                    Expect.equal (Just AxisX) d.axisLock
+
+                                Nothing ->
+                                    Expect.fail "Expected active drag after repeat X"
+                        , \_ ->
+                            case stillLockedXAfterYRepeat.drag of
+                                Just d ->
+                                    Expect.equal (Just AxisX) d.axisLock
+
+                                Nothing ->
+                                    Expect.fail "Expected active drag after repeat Y"
+                        ]
+                        ()
+            ]
+        , describe "Single Undo Command on Drag Completion"
+            [ test "completing a drag with wheel elevation and axis moves records exactly 1 undo entry" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded |> step (UseTool MoveTool)
+
+                        ( sx, sy ) =
+                            screenOf 0 ready
+
+                        historyBefore =
+                            ready.history.undo
+
+                        dragged =
+                            ready
+                                |> mouseDown sx sy False
+                                |> step (ViewportMsg (Viewport.Wheel -100))
+                                |> mouseUp sx sy
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal (List.length historyBefore + 1) (List.length dragged.history.undo)
+                        , \_ -> Expect.equal Nothing dragged.drag
+                        ]
+                        ()
+            ]
         ]

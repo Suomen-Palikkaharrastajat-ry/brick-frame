@@ -391,6 +391,8 @@ type Msg
     for the host instead (to drag a handle, say).
   - `DragMoved` / `DragEnded` — while a gesture is captured, where it is now and
     where it ended. The camera does not move.
+  - `WheelScrolled` — the mouse wheel scrolled while a gesture was captured
+    (see `captureDrag`). The camera did not move.
   - `LoadStarted` — a new model replaces the old one; drop anything derived from
     the previous one.
   - `PartsReady` — all parts are loaded and the model is small enough to bake.
@@ -412,6 +414,7 @@ type Event
     | PressStarted Float Float
     | DragMoved Float Float
     | DragEnded Float Float
+    | WheelScrolled Float
     | LoadStarted
     | PartsReady
     | LargeModel Int
@@ -698,13 +701,17 @@ updateInner msg model =
             ( model, Cmd.none, [ DoubleClicked x y ] )
 
         Wheel delta ->
-            ( { model
-                | camera = Navigation.applyWheel delta model.camera
-                , cameraMode = CameraManual
-              }
-            , Cmd.none
-            , [ CameraSettled ]
-            )
+            if model.captured then
+                ( model, Cmd.none, [ WheelScrolled delta ] )
+
+            else
+                ( { model
+                    | camera = Navigation.applyWheel delta model.camera
+                    , cameraMode = CameraManual
+                  }
+                , Cmd.none
+                , [ CameraSettled ]
+                )
 
         TouchStart touches ->
             touchesDown (touchDictFromList touches) model
