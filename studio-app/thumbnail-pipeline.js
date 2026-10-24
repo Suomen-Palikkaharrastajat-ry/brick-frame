@@ -1,31 +1,48 @@
 /**
- * Client-side visual asset pipeline: on-demand isometric thumbnail rendering
- * and IndexedDB persistent cache (`brick-frame-thumbnails`).
+ * Client-side visual asset pipeline: on-demand thumbnail rendering of palette
+ * parts and an IndexedDB persistent cache (`brick-frame-thumbnails`).
+ *
+ * Parts are resolved through the whole LDraw sub-file tree (parts/, parts/s/,
+ * p/, p/48/ …) with BFC inverts honoured, and drawn with WebGL and a depth
+ * buffer from the same view direction as the studio's part preview, so a card
+ * shows the same part the preview does.
  */
 
 const DB_NAME = 'brick-frame-thumbnails'
 const DB_VERSION = 1
 const STORE_NAME = 'thumbnails'
 
-const COLOR_TABLE = {
-  0: [40, 40, 40],
-  1: [0, 85, 191],
-  2: [37, 122, 60],
-  4: [201, 26, 9],
-  7: [156, 156, 156],
-  8: [109, 110, 108],
-  14: [250, 200, 10],
-  15: [245, 245, 245],
-  19: [228, 205, 158],
-  25: [254, 138, 24],
-  27: [187, 233, 11],
-  28: [149, 138, 115],
-  70: [88, 42, 18],
-  71: [160, 165, 169],
-  72: [108, 110, 104],
-  320: [114, 0, 18],
-  321: [10, 52, 99],
-  322: [24, 70, 50],
+// Bump when the renderer's output changes, so images cached by an older
+// renderer are not served again.
+const RENDER_VERSION = 3
+
+// Output size in device pixels; cards show it at about 84 CSS px.
+const SIZE = 192
+
+// Mirrors the preview camera (`Render.Camera.init`): azimuth and elevation in
+// render space, where Y is up (LDraw Y negated).
+const AZIMUTH = 0.75
+const ELEVATION = 0.6
+
+// Hard-coded colours inside part files (glass, rubber, prints). The part's own
+// colour (16) comes from the caller, resolved from the full LDConfig table.
+const INNER_COLOURS = {
+  0: [0.106, 0.165, 0.204],
+  7: [0.627, 0.647, 0.663],
+  8: [0.388, 0.373, 0.384],
+  15: [1, 1, 1],
+  47: [0.988, 0.988, 0.988],
+  71: [0.627, 0.647, 0.663],
+  72: [0.388, 0.373, 0.384],
+}
+
+const EDGE_RGB = [0.13, 0.13, 0.13]
+
+// Deep enough for any official part; stops a malformed self-reference.
+const MAX_DEPTH = 16
+
+function cacheKey(file, color) {
+  return `v${RENDER_VERSION}:${file}:${color}`
 }
 
 /** Open or create the IndexedDB cache */
@@ -57,8 +74,7 @@ export function getCachedThumbnail(db, file, color) {
     try {
       const tx = db.transaction(STORE_NAME, 'readonly')
       const store = tx.objectStore(STORE_NAME)
-      const key = `${file}:${color}`
-      const req = store.get(key)
+      const req = store.get(cacheKey(file, color))
       req.onsuccess = () => {
         if (req.result && req.result.url) {
           resolve(req.result.url)
@@ -80,8 +96,7 @@ export function storeCachedThumbnail(db, file, color, url) {
     try {
       const tx = db.transaction(STORE_NAME, 'readwrite')
       const store = tx.objectStore(STORE_NAME)
-      const key = `${file}:${color}`
-      store.put({ key, file, color, url, timestamp: Date.now() })
+      store.put({ key: cacheKey(file, color), file, color, url, timestamp: Date.now() })
       tx.oncomplete = () => resolve()
       tx.onerror = () => resolve()
     } catch (_) {
@@ -90,50 +105,10 @@ export function storeCachedThumbnail(db, file, color, url) {
   })
 }
 
+// ── LDraw resolution ──────────────────────────────────────────────────────────
+
+// LDraw type-1 matrix layout: [x y z a b c d e f g h i].
 const IDENTITY_MATRIX = [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]
-
-const BUILTIN_PRIMITIVES = {
-  'box5.dat': [
-    '4 16 -1 -1 -1 -1 1 -1 1 1 -1 1 -1 -1',
-    '4 16 1 -1 1 1 1 1 -1 1 1 -1 -1 1',
-    '4 16 -1 -1 1 -1 1 1 -1 1 -1 -1 -1 -1',
-    '4 16 1 -1 -1 1 1 -1 1 1 1 1 -1 1',
-    '4 16 -1 -1 1 -1 -1 -1 1 -1 -1 1 -1 1',
-  ].join('\n'),
-  'box4.dat': [
-    '4 16 -1 -1 -1 -1 1 -1 1 1 -1 1 -1 -1',
-    '4 16 1 -1 1 1 1 1 -1 1 1 -1 -1 1',
-    '4 16 -1 -1 1 -1 1 1 -1 1 -1 -1 -1 -1',
-    '4 16 1 -1 -1 1 1 -1 1 1 1 1 -1 1',
-  ].join('\n'),
-  'box3u2p.dat': [
-    '4 16 1 -1 -1 1 1 -1 1 1 1 1 -1 1',
-    '4 16 -1 -1 1 -1 1 1 -1 1 -1 -1 -1 -1',
-    '4 16 -1 -1 -1 1 -1 -1 1 -1 1 -1 -1 1',
-  ].join('\n'),
-  'stud.dat': [
-    '4 16 -6 -4 -6 -6 -4 6 6 -4 6 6 -4 -6',
-    '4 16 -6 0 -6 -6 -4 -6 6 -4 -6 6 0 -6',
-    '4 16 6 0 6 6 -4 6 -6 -4 6 -6 0 6',
-    '4 16 -6 0 6 -6 -4 6 -6 -4 -6 -6 0 -6',
-    '4 16 6 0 -6 6 -4 -6 6 -4 6 6 0 6',
-  ].join('\n'),
-}
-
-const datTextCache = new Map()
-
-function normalizeVector([x, y, z]) {
-  const len = Math.sqrt(x * x + y * y + z * z) || 1
-  return [x / len, y / len, z / len]
-}
-
-function crossProduct([ax, ay, az], [bx, by, bz]) {
-  return [
-    ay * bz - az * by,
-    az * bx - ax * bz,
-    ax * by - ay * bx,
-  ]
-}
 
 function transformPoint([vx, vy, vz], m) {
   const [x, y, z, a, b, c, d, e, f, g, h, i] = m
@@ -163,113 +138,279 @@ function multiplyMatrices(m1, m2) {
   ]
 }
 
-/**
- * Parse direct triangles/quads and subfile references from LDraw text.
- */
-export function parseLDrawGeometry(datText, matrix = IDENTITY_MATRIX) {
-  const triangles = []
-  const subfiles = []
-  if (!datText) return { triangles, subfiles }
-
-  const lines = datText.split(/\r?\n/)
-  for (const line of lines) {
-    const tokens = line.trim().split(/\s+/)
-    if (tokens[0] === '1' && tokens.length >= 15) {
-      const subMatrix = [
-        parseFloat(tokens[2]), parseFloat(tokens[3]), parseFloat(tokens[4]),
-        parseFloat(tokens[5]), parseFloat(tokens[6]), parseFloat(tokens[7]),
-        parseFloat(tokens[8]), parseFloat(tokens[9]), parseFloat(tokens[10]),
-        parseFloat(tokens[11]), parseFloat(tokens[12]), parseFloat(tokens[13]),
-      ]
-      const subfile = tokens.slice(14).join(' ').toLowerCase().replace(/\\/g, '/')
-      subfiles.push({ file: subfile, matrix: multiplyMatrices(matrix, subMatrix) })
-    } else if (tokens[0] === '3' && tokens.length >= 11) {
-      const v0 = transformPoint([parseFloat(tokens[2]), parseFloat(tokens[3]), parseFloat(tokens[4])], matrix)
-      const v1 = transformPoint([parseFloat(tokens[5]), parseFloat(tokens[6]), parseFloat(tokens[7])], matrix)
-      const v2 = transformPoint([parseFloat(tokens[8]), parseFloat(tokens[9]), parseFloat(tokens[10])], matrix)
-      triangles.push([v0, v1, v2])
-    } else if (tokens[0] === '4' && tokens.length >= 14) {
-      const v0 = transformPoint([parseFloat(tokens[2]), parseFloat(tokens[3]), parseFloat(tokens[4])], matrix)
-      const v1 = transformPoint([parseFloat(tokens[5]), parseFloat(tokens[6]), parseFloat(tokens[7])], matrix)
-      const v2 = transformPoint([parseFloat(tokens[8]), parseFloat(tokens[9]), parseFloat(tokens[10])], matrix)
-      const v3 = transformPoint([parseFloat(tokens[11]), parseFloat(tokens[12]), parseFloat(tokens[13])], matrix)
-      triangles.push([v0, v1, v2])
-      triangles.push([v0, v2, v3])
-    }
-  }
-
-  return { triangles, subfiles }
+function determinant(m) {
+  const [, , , a, b, c, d, e, f, g, h, i] = m
+  return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
 }
+
+const datTextCache = new Map()
 
 async function fetchDatText(file, ldrawBase) {
   const normalized = file.toLowerCase().replace(/\\/g, '/')
-  if (BUILTIN_PRIMITIVES[normalized]) {
-    return BUILTIN_PRIMITIVES[normalized]
-  }
-  const cacheKey = `${ldrawBase}:${normalized}`
-  if (datTextCache.has(cacheKey)) {
-    return datTextCache.get(cacheKey)
-  }
+  const key = `${ldrawBase}:${normalized}`
+  if (datTextCache.has(key)) return datTextCache.get(key)
 
-  const base = ldrawBase.replace(/\/+$/, '')
-  const urls = [`${base}/parts/${normalized}`, `${base}/p/${normalized}`]
-  for (const url of urls) {
-    try {
-      const resp = await fetch(url)
-      if (resp.ok) {
+  const pending = (async () => {
+    const base = ldrawBase.replace(/\/+$/, '')
+    for (const url of [`${base}/parts/${normalized}`, `${base}/p/${normalized}`]) {
+      try {
+        const resp = await fetch(url)
+        if (!resp.ok) continue
+        // A dev server or SPA host answers a missing file with index.html and
+        // 200; taking that as the part loses every primitive under p/.
+        if ((resp.headers.get('content-type') ?? '').includes('text/html')) continue
         const text = await resp.text()
-        datTextCache.set(cacheKey, text)
-        return text
-      }
-    } catch (_) {}
-  }
-
-  datTextCache.set(cacheKey, null)
-  return null
-}
-
-async function collectPartTriangles(file, ldrawBase, matrix = IDENTITY_MATRIX, depth = 0) {
-  const datText = await fetchDatText(file, ldrawBase)
-  if (!datText) return []
-
-  const { triangles, subfiles } = parseLDrawGeometry(datText, matrix)
-  if (depth < 2) {
-    for (const sub of subfiles) {
-      if (BUILTIN_PRIMITIVES[sub.file] || sub.file.startsWith('s/')) {
-        const subTris = await collectPartTriangles(sub.file, ldrawBase, sub.matrix, depth + 1)
-        for (const tri of subTris) {
-          triangles.push(tri)
-        }
-      }
+        if (!text.trimStart().startsWith('<')) return text
+      } catch (_) {}
     }
-  }
-  return triangles
+    return null
+  })()
+  datTextCache.set(key, pending)
+  return pending
 }
 
 /**
- * Render a crisp 96x96 isometric thumbnail of a part in the given color.
+ * Flatten a part into triangles `{ v: [a, b, c], color }` and edge line
+ * endpoints (pairs in `lines`), in the part's own LDraw space.
+ *
+ * `load(file)` resolves a sub-file name to its text (or `null`). Colour 16
+ * stays 16 when nothing above overrides it, meaning "the part's colour".
  */
-export async function renderIsometricThumbnail(file, color, ldrawBase) {
-  const size = 96
+export async function flattenPart(file, load) {
+  const out = { triangles: [], lines: [] }
+  await flatten(file, load, IDENTITY_MATRIX, 16, false, 0, out)
+  return out
+}
+
+/**
+ * `color` is the colour code inherited from the parent; `inverted` tracks BFC
+ * INVERTNEXT and mirroring so the winding of each triangle is consistent.
+ */
+async function flatten(file, load, matrix, color, inverted, depth, out) {
+  if (depth > MAX_DEPTH) return
+  const text = await load(file)
+  if (!text) return
+
+  let invertNext = false
+  for (const raw of text.split(/\r?\n/)) {
+    const tokens = raw.trim().split(/\s+/)
+    const type = tokens[0]
+
+    if (type === '0') {
+      if (tokens[1] === 'BFC' && tokens.includes('INVERTNEXT')) invertNext = true
+      continue
+    }
+
+    const own = parseInt(tokens[1], 10)
+    const lineColor = own === 16 ? color : own
+
+    if (type === '1' && tokens.length >= 15) {
+      const n = tokens.slice(2, 14).map(parseFloat)
+      const child = multiplyMatrices(matrix, n)
+      const childInverted = inverted !== invertNext !== (determinant(n) < 0)
+      invertNext = false
+      const sub = tokens.slice(14).join(' ')
+      await flatten(sub, load, child, lineColor, childInverted, depth + 1, out)
+    } else if (type === '2' && tokens.length >= 8) {
+      const p = tokens.slice(2, 8).map(parseFloat)
+      out.lines.push(transformPoint(p.slice(0, 3), matrix), transformPoint(p.slice(3, 6), matrix))
+    } else if (type === '3' && tokens.length >= 11) {
+      const p = tokens.slice(2, 11).map(parseFloat)
+      const v = [p.slice(0, 3), p.slice(3, 6), p.slice(6, 9)].map((q) => transformPoint(q, matrix))
+      pushTriangle(out, v[0], v[1], v[2], lineColor, inverted)
+    } else if (type === '4' && tokens.length >= 14) {
+      const p = tokens.slice(2, 14).map(parseFloat)
+      const v = [p.slice(0, 3), p.slice(3, 6), p.slice(6, 9), p.slice(9, 12)].map((q) => transformPoint(q, matrix))
+      pushTriangle(out, v[0], v[1], v[2], lineColor, inverted)
+      pushTriangle(out, v[0], v[2], v[3], lineColor, inverted)
+    }
+    if (type !== '1') invertNext = false
+  }
+}
+
+function pushTriangle(out, a, b, c, color, inverted) {
+  if (inverted) out.triangles.push({ v: [a, c, b], color })
+  else out.triangles.push({ v: [a, b, c], color })
+}
+
+// ── WebGL rendering ───────────────────────────────────────────────────────────
+
+const VERTEX_SHADER = `
+attribute vec3 position;
+attribute vec3 color;
+uniform mat4 viewProjection;
+varying vec3 vColor;
+void main() {
+  vColor = color;
+  gl_Position = viewProjection * vec4(position, 1.0);
+}`
+
+const FRAGMENT_SHADER = `
+precision mediump float;
+varying vec3 vColor;
+void main() {
+  gl_FragColor = vec4(vColor, 1.0);
+}`
+
+let glContext = null
+
+function getGl() {
+  if (glContext) return glContext
   const canvas = typeof OffscreenCanvas !== 'undefined'
-    ? new OffscreenCanvas(size, size)
-    : document.createElement('canvas')
-  canvas.width = size
-  canvas.height = size
-  const ctx = canvas.getContext('2d')
+    ? new OffscreenCanvas(SIZE, SIZE)
+    : Object.assign(document.createElement('canvas'), { width: SIZE, height: SIZE })
+  const gl = canvas.getContext('webgl', { antialias: true, preserveDrawingBuffer: true, premultipliedAlpha: false })
+  if (!gl) return null
 
-  ctx.clearRect(0, 0, size, size)
+  const compile = (kind, source) => {
+    const shader = gl.createShader(kind)
+    gl.shaderSource(shader, source)
+    gl.compileShader(shader)
+    return shader
+  }
+  const program = gl.createProgram()
+  gl.attachShader(program, compile(gl.VERTEX_SHADER, VERTEX_SHADER))
+  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAGMENT_SHADER))
+  gl.linkProgram(program)
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return null
 
-  const rgb = COLOR_TABLE[color] || [160, 165, 169]
-  const triangles = await collectPartTriangles(file, ldrawBase)
+  glContext = {
+    canvas,
+    gl,
+    program,
+    position: gl.getAttribLocation(program, 'position'),
+    color: gl.getAttribLocation(program, 'color'),
+    viewProjection: gl.getUniformLocation(program, 'viewProjection'),
+    buffer: gl.createBuffer(),
+  }
+  return glContext
+}
 
-  // If part has insufficient triangles (e.g. missing subfiles), render synthetic 3D brick
-  if (triangles.length < 4) {
-    renderSyntheticBrick(ctx, rgb, size)
-  } else {
-    renderMesh(ctx, triangles, rgb, size)
+/** Camera basis for the preview's view direction, in LDraw space (Y down). */
+function cameraBasis() {
+  // Eye direction in render space (Y up), as `Camera.eyeOffset` computes it.
+  const eye = [
+    Math.sin(AZIMUTH) * Math.cos(ELEVATION),
+    Math.sin(ELEVATION),
+    Math.cos(AZIMUTH) * Math.cos(ELEVATION),
+  ]
+  const toLdraw = ([x, y, z]) => [x, -y, z]
+  const normalize = (v) => {
+    const l = Math.hypot(v[0], v[1], v[2]) || 1
+    return [v[0] / l, v[1] / l, v[2] / l]
+  }
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+  const back = eye // points from the target towards the eye
+  const right = normalize(cross([0, 1, 0], back))
+  const up = cross(back, right)
+  return { right: toLdraw(right), up: toLdraw(up), back: toLdraw(back) }
+}
+
+const BASIS = cameraBasis()
+const LIGHT = (() => {
+  const l = [0.35, -0.85, 0.4] // LDraw space: mostly from above
+  const n = Math.hypot(...l)
+  return l.map((c) => c / n)
+})()
+
+function dot(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+function shade(tri, base) {
+  const [a, b, c] = tri.v
+  const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]]
+  const e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]]
+  const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]
+  const len = Math.hypot(n[0], n[1], n[2]) || 1
+  // Uncertified winding is unreliable; light both faces alike.
+  const lambert = Math.abs(dot(n, LIGHT)) / len
+  const k = 0.45 + 0.55 * lambert
+  return [base[0] * k, base[1] * k, base[2] * k]
+}
+
+function colourFor(code, partRgb) {
+  if (code === 16) return partRgb
+  if (code === 24) return EDGE_RGB
+  return INNER_COLOURS[code] ?? partRgb
+}
+
+function draw(geometry, partRgb) {
+  const ctx = getGl()
+  if (!ctx) return null
+  const { gl, program, buffer } = ctx
+
+  // Project onto the camera basis to frame the part tightly.
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity
+  const grow = (p) => {
+    const x = dot(p, BASIS.right), y = dot(p, BASIS.up), z = dot(p, BASIS.back)
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+    if (z < minZ) minZ = z
+    if (z > maxZ) maxZ = z
+  }
+  for (const tri of geometry.triangles) tri.v.forEach(grow)
+  if (!Number.isFinite(minX)) return null
+
+  const span = Math.max(maxX - minX, maxY - minY, 1) * 1.08
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
+  const depth = Math.max(maxZ - minZ, 1)
+  // Orthographic: rows map LDraw points to clip space (column-major for GL).
+  const sx = 2 / span, sy = 2 / span, sz = -2 / (depth * 1.2)
+  const r = BASIS.right, u = BASIS.up, b = BASIS.back
+  const tz = -(minZ + maxZ) / 2
+  const viewProjection = new Float32Array([
+    r[0] * sx, u[0] * sy, b[0] * sz, 0,
+    r[1] * sx, u[1] * sy, b[1] * sz, 0,
+    r[2] * sx, u[2] * sy, b[2] * sz, 0,
+    -cx * sx, -cy * sy, tz * sz, 1,
+  ])
+
+  const triCount = geometry.triangles.length
+  const lineCount = geometry.lines.length / 2
+  const data = new Float32Array((triCount * 3 + lineCount * 2) * 6)
+  let o = 0
+  for (const tri of geometry.triangles) {
+    const rgb = shade(tri, colourFor(tri.color, partRgb))
+    for (const p of tri.v) {
+      data.set(p, o)
+      data.set(rgb, o + 3)
+      o += 6
+    }
+  }
+  for (const p of geometry.lines) {
+    // Nudge edges towards the eye so they win the depth test against their faces.
+    data.set([p[0] + b[0] * 0.3, p[1] + b[1] * 0.3, p[2] + b[2] * 0.3], o)
+    data.set(EDGE_RGB, o + 3)
+    o += 6
   }
 
+  gl.viewport(0, 0, SIZE, SIZE)
+  gl.clearColor(0, 0, 0, 0)
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+  gl.enable(gl.DEPTH_TEST)
+  gl.depthFunc(gl.LEQUAL)
+  gl.disable(gl.CULL_FACE)
+  gl.enable(gl.POLYGON_OFFSET_FILL)
+  gl.polygonOffset(1, 1)
+
+  gl.useProgram(program)
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer)
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STREAM_DRAW)
+  gl.enableVertexAttribArray(ctx.position)
+  gl.vertexAttribPointer(ctx.position, 3, gl.FLOAT, false, 24, 0)
+  gl.enableVertexAttribArray(ctx.color)
+  gl.vertexAttribPointer(ctx.color, 3, gl.FLOAT, false, 24, 12)
+  gl.uniformMatrix4fv(ctx.viewProjection, false, viewProjection)
+
+  gl.drawArrays(gl.TRIANGLES, 0, triCount * 3)
+  gl.drawArrays(gl.LINES, triCount * 3, lineCount * 2)
+  return ctx.canvas
+}
+
+async function canvasToDataUrl(canvas) {
   if (typeof canvas.convertToBlob === 'function') {
     const blob = await canvas.convertToBlob({ type: 'image/png' })
     return new Promise((resolve) => {
@@ -278,151 +419,20 @@ export async function renderIsometricThumbnail(file, color, ldrawBase) {
       reader.readAsDataURL(blob)
     })
   }
-
   return canvas.toDataURL('image/png')
 }
 
-function renderSyntheticBrick(ctx, [r, g, b], size) {
-  const cx = size / 2
-  const cy = size / 2 + 6
-  const s = 18
-
-  // Isometric 3D cube / brick preview
-  // Top face
-  ctx.fillStyle = `rgb(${Math.min(255, r * 1.15)}, ${Math.min(255, g * 1.15)}, ${Math.min(255, b * 1.15)})`
-  ctx.strokeStyle = `rgba(0,0,0,0.25)`
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(cx, cy - s)
-  ctx.lineTo(cx + s * 1.4, cy - s * 0.3)
-  ctx.lineTo(cx, cy + s * 0.4)
-  ctx.lineTo(cx - s * 1.4, cy - s * 0.3)
-  ctx.closePath()
-  ctx.fill()
-  ctx.stroke()
-
-  // Left face
-  ctx.fillStyle = `rgb(${r * 0.75}, ${g * 0.75}, ${b * 0.75})`
-  ctx.beginPath()
-  ctx.moveTo(cx - s * 1.4, cy - s * 0.3)
-  ctx.lineTo(cx, cy + s * 0.4)
-  ctx.lineTo(cx, cy + s * 1.4)
-  ctx.lineTo(cx - s * 1.4, cy + s * 0.7)
-  ctx.closePath()
-  ctx.fill()
-  ctx.stroke()
-
-  // Right face
-  ctx.fillStyle = `rgb(${r * 0.9}, ${g * 0.9}, ${b * 0.9})`
-  ctx.beginPath()
-  ctx.moveTo(cx, cy + s * 0.4)
-  ctx.lineTo(cx + s * 1.4, cy - s * 0.3)
-  ctx.lineTo(cx + s * 1.4, cy + s * 0.7)
-  ctx.lineTo(cx, cy + s * 1.4)
-  ctx.closePath()
-  ctx.fill()
-  ctx.stroke()
-}
-
-function renderMesh(ctx, triangles, [r, g, b], size) {
-  // Compute bounding box
-  let minX = Infinity, maxX = -Infinity
-  let minY = Infinity, maxY = -Infinity
-  let minZ = Infinity, maxZ = -Infinity
-
-  for (const tri of triangles) {
-    for (const [x, y, z] of tri) {
-      if (x < minX) minX = x
-      if (x > maxX) maxX = x
-      if (y < minY) minY = y
-      if (y > maxY) maxY = y
-      if (z < minZ) minZ = z
-      if (z > maxZ) maxZ = z
-    }
-  }
-
-  const cx = (minX + maxX) / 2
-  const cy = (minY + maxY) / 2
-  const cz = (minZ + maxZ) / 2
-
-  const cos45 = Math.cos(Math.PI / 4)
-  const sin45 = Math.sin(Math.PI / 4)
-  const cos30 = Math.cos(Math.PI / 6)
-  const sin30 = Math.sin(Math.PI / 6)
-
-  // Project vertices
-  function project([x, y, z]) {
-    const dx = x - cx
-    const dy = y - cy
-    const dz = z - cz
-
-    const rx = dx * cos45 - dz * sin45
-    const rz = dx * sin45 + dz * cos45
-    const ry = -dy * cos30 + rz * sin30
-
-    return { x: rx, y: ry, z: rz }
-  }
-
-  // Find projected bounds for framing
-  let pMinX = Infinity, pMaxX = -Infinity
-  let pMinY = Infinity, pMaxY = -Infinity
-
-  const projectedTris = []
-  for (const [v0, v1, v2] of triangles) {
-    const p0 = project(v0)
-    const p1 = project(v1)
-    const p2 = project(v2)
-
-    pMinX = Math.min(pMinX, p0.x, p1.x, p2.x)
-    pMaxX = Math.max(pMaxX, p0.x, p1.x, p2.x)
-    pMinY = Math.min(pMinY, p0.y, p1.y, p2.y)
-    pMaxY = Math.max(pMaxY, p0.y, p1.y, p2.y)
-
-    // Compute normal for lighting
-    const e1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]]
-    const e2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]]
-    const n = normalizeVector(crossProduct(e1, e2))
-    const avgZ = (p0.z + p1.z + p2.z) / 3
-
-    projectedTris.push({ p0, p1, p2, normal: n, z: avgZ })
-  }
-
-  const spanX = Math.max(1, pMaxX - pMinX)
-  const spanY = Math.max(1, pMaxY - pMinY)
-  const midX = (pMinX + pMaxX) / 2
-  const midY = (pMinY + pMaxY) / 2
-  const scale = (size - 20) / Math.max(spanX, spanY)
-
-  // Sort back-to-front
-  projectedTris.sort((a, b) => a.z - b.z)
-
-  // Key light direction
-  const light = normalizeVector([0.5, -1.0, 0.7])
-
-  ctx.lineWidth = 0.5
-  ctx.strokeStyle = 'rgba(0,0,0,0.2)'
-
-  for (const { p0, p1, p2, normal } of projectedTris) {
-    const diff = Math.abs(normal[0] * light[0] + normal[1] * light[1] + normal[2] * light[2])
-    const intensity = 0.35 + 0.65 * diff
-    const fillR = Math.min(255, Math.round(r * intensity))
-    const fillG = Math.min(255, Math.round(g * intensity))
-    const fillB = Math.min(255, Math.round(b * intensity))
-
-    const x0 = size / 2 + (p0.x - midX) * scale
-    const y0 = size / 2 - (p0.y - midY) * scale
-    const x1 = size / 2 + (p1.x - midX) * scale
-    const y1 = size / 2 - (p1.y - midY) * scale
-    const x2 = size / 2 + (p2.x - midX) * scale
-    const y2 = size / 2 - (p2.y - midY) * scale
-
-    ctx.fillStyle = `rgb(${fillR},${fillG},${fillB})`
-    ctx.beginPath()
-    ctx.moveTo(x0, y0)
-    ctx.lineTo(x1, y1)
-    ctx.lineTo(x2, y2)
-    ctx.closePath()
-    ctx.fill()
-    ctx.stroke()
-  }
+/**
+ * Render a thumbnail of a part in the given colour, as a PNG data URL, or
+ * `null` when the part cannot be resolved or WebGL is unavailable.
+ *
+ * `rgb` is the part colour as `[r, g, b]` in 0–1, resolved by the caller from
+ * the LDConfig colour table.
+ */
+export async function renderIsometricThumbnail(file, color, ldrawBase, rgb) {
+  const geometry = await flattenPart(file, (sub) => fetchDatText(sub, ldrawBase))
+  if (geometry.triangles.length === 0) return null
+  const partRgb = Array.isArray(rgb) && rgb.length === 3 ? rgb : [0.627, 0.647, 0.663]
+  const canvas = draw(geometry, partRgb)
+  return canvas ? canvasToDataUrl(canvas) : null
 }

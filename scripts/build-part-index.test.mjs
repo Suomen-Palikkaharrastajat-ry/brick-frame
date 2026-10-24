@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { buildIndex, extractConnectionsFromText, parseElementsCsv, parsePartHeader, writeElementsIndex, writeIndex, parseRebrickablePartColors, renderSvgThumbnail, batchRenderThumbnails } from './build-part-index.mjs'
-import { parseLDrawGeometry } from '../studio-app/thumbnail-pipeline.js'
+import { flattenPart } from '../studio-app/thumbnail-pipeline.js'
 
 const brick = `0 Brick  2 x  4
 0 Name: 3001.dat
@@ -113,16 +113,30 @@ test('batchRenderThumbnails generates thumbnail files in output directory', () =
   assert.ok(fs.existsSync(path.join(dir, '3023.svg')))
 })
 
-test('parseLDrawGeometry extracts triangles, quads and normalized subfile references', () => {
-  const dat = `1 16 10 20 30 1 0 0 0 1 0 0 0 1 s\\3001s01.dat
-3 16 0 0 0 10 0 0 0 10 0
-4 16 -40 0 -20 -40 24 -20 40 24 -20 40 0 -20
-`
-  const { triangles, subfiles } = parseLDrawGeometry(dat)
+test('flattenPart resolves sub-files with their transform and inherited colour', async () => {
+  const files = {
+    'part.dat': '1 4 10 20 30 1 0 0 0 1 0 0 0 1 s/sub.dat\n2 24 0 0 0 1 0 0\n',
+    's/sub.dat': '3 16 0 0 0 1 0 0 0 1 0\n4 16 0 0 0 1 0 0 1 1 0 0 1 0\n',
+  }
+  const { triangles, lines } = await flattenPart('part.dat', async (f) => files[f] ?? null)
   assert.equal(triangles.length, 3)
-  assert.equal(subfiles.length, 1)
-  assert.equal(subfiles[0].file, 's/3001s01.dat')
-  assert.deepEqual(subfiles[0].matrix.slice(0, 3), [10, 20, 30])
+  assert.deepEqual(triangles[0].v[0], [10, 20, 30])
+  assert.equal(triangles[0].color, 4)
+  assert.equal(lines.length, 2)
+})
+
+test('flattenPart flips winding under BFC INVERTNEXT', async () => {
+  const files = {
+    'plain.dat': '1 16 0 0 0 1 0 0 0 1 0 0 0 1 tri.dat\n',
+    'inverted.dat': '0 BFC INVERTNEXT\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 tri.dat\n',
+    'tri.dat': '3 16 0 0 0 1 0 0 0 1 0\n',
+  }
+  const load = async (f) => files[f] ?? null
+  const plain = await flattenPart('plain.dat', load)
+  const inverted = await flattenPart('inverted.dat', load)
+  assert.deepEqual(plain.triangles[0].v, [[0, 0, 0], [1, 0, 0], [0, 1, 0]])
+  assert.deepEqual(inverted.triangles[0].v, [[0, 0, 0], [0, 1, 0], [1, 0, 0]])
+  assert.equal(plain.triangles[0].color, 16)
 })
 
 test('extractConnectionsFromText identifies studs, tubes, pins, axles, clips and sockets', () => {

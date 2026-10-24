@@ -106,7 +106,7 @@ port saveRecents : List String -> Cmd msg
 
 {-| Request on-demand isometric thumbnail generation for parts in an active colour.
 -}
-port requestThumbnails : List { file : String, color : Int } -> Cmd msg
+port requestThumbnails : List { file : String, color : Int, rgb : List Float } -> Cmd msg
 
 
 {-| Receive generated or cached thumbnail image data URL from IndexedDB.

@@ -185,11 +185,11 @@ openThumbnailDb().then((db) => {
 
     while (queue.length > 0) {
       const item = queue.shift()
-      const { file, color } = item
+      const { file, color, rgb } = item
       try {
         let url = await getCachedThumbnail(db, file, color)
         if (!url) {
-          url = await renderIsometricThumbnail(file, color, ldrawBase)
+          url = await renderIsometricThumbnail(file, color, ldrawBase, rgb)
           if (url) {
             await storeCachedThumbnail(db, file, color, url)
           }

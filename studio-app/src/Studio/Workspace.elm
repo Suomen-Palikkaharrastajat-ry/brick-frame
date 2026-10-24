@@ -40,6 +40,7 @@ import Json.Decode as Decode
 import LDraw.BOM as BOM exposing (ModelBOM)
 import LDraw.Catalog as Catalog exposing (ElementCatalog, PartIndex)
 import LDraw.ColorData as ColorData
+import LDraw.Colors as Colors
 import LDraw.Connectivity as Connectivity
     exposing
         ( BoundingBox3D
@@ -230,8 +231,8 @@ type Msg
     | WindowSized Int Int
     | PartIndexLoaded (Result Http.Error PartIndex.PartIndex)
     | PaletteQuery String
-    | PaletteCategory (Maybe String)
     | PaletteGroup (Maybe String)
+    | PaletteCategory (Maybe String)
     | PaletteToggleFavorite String
     | PaletteSelectShelf Palette.Shelf
     | PaletteToggleColorFilter
@@ -1138,7 +1139,6 @@ updatePage msg model =
             in
             ( updated, requestVisibleThumbnails updated )
 
-        PaletteCategory category ->
         PaletteGroup group ->
             let
                 palette =
@@ -1160,6 +1160,7 @@ updatePage msg model =
             in
             ( updated, requestVisibleThumbnails updated )
 
+        PaletteCategory category ->
             let
                 palette =
                     model.palette
@@ -1716,13 +1717,19 @@ requestVisibleThumbnails model =
                 missing =
                     Palette.filterParts Palette.resultLimit model.palette model.activeColour index
                         |> List.filter (\p -> not (Dict.member p.file model.thumbnails))
+
+                -- The renderer has no colour table of its own; send the one the
+                -- 3D view uses so cards match the preview.
+                thumbnailRgb =
+                    Colors.resolveColor model.activeColour 16
+                        |> (\c -> [ c.r, c.g, c.b ])
             in
             if List.isEmpty missing then
                 Cmd.none
 
             else
                 Ports.requestThumbnails
-                    (List.map (\p -> { file = p.file, color = model.activeColour }) missing)
+                    (List.map (\p -> { file = p.file, color = model.activeColour, rgb = thumbnailRgb }) missing)
 
         _ ->
             Cmd.none
@@ -3367,6 +3374,7 @@ viewPalette : Model -> Html Msg
 viewPalette model =
     Palette.view
         { onQuery = PaletteQuery
+        , onGroup = PaletteGroup
         , onCategory = PaletteCategory
         , onArm = ArmPart
         , onAdd = AddArmedPart
@@ -3374,7 +3382,6 @@ viewPalette model =
         , onAddManual = AddManualPart
         , onToggleFavorite = PaletteToggleFavorite
         , onSelectShelf = PaletteSelectShelf
-        , onGroup = PaletteGroup
         , onToggleColorFilter = PaletteToggleColorFilter
         , onInspect = PaletteInspect
         , onRotateTurntable = PaletteRotateTurntable
