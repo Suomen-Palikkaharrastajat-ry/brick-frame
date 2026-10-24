@@ -100,6 +100,7 @@ keyDown key =
             , repeat = False
             , targetTag = "BODY"
             , targetEditable = False
+            , targetRole = ""
             }
     in
     Viewport.KeyPressed event

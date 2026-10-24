@@ -18,8 +18,10 @@ printable sheet view, and standalone HTML instructions export.
 
 -}
 
+import Browser.Events
 import Dict
 import EmbeddedParts
+import FeatherIcons
 import Html exposing (Html, div, input, span, text)
 import Html.Attributes as Attr
 import Html.Events
@@ -31,6 +33,7 @@ import Ports
 import Render.Camera as Camera exposing (Camera)
 import Render.Style as Style
 import Studio.Colours as Colours
+import Task
 import Time
 import UI.Button as Button
 import UI.ShortcutHelp as ShortcutHelp
@@ -462,11 +465,9 @@ handleEvent event ( model, cmds ) =
                                     ( next, cmds ++ [ cmd ] )
 
                             "Escape" ->
-                                let
-                                    ( next, cmd ) =
-                                        update Leave model
-                                in
-                                ( next, cmds ++ [ cmd ] )
+                                -- `Main` switches pages, and only sees messages
+                                -- from outside: re-send `Leave` as a command.
+                                ( model, cmds ++ [ Task.perform identity (Task.succeed Leave) ] )
 
                             _ ->
                                 ( model, cmds )
@@ -539,7 +540,9 @@ subscriptions model =
     let
         baseSubs =
             [ Sub.map ViewportMsg (Viewport.subscriptions model.viewport)
-            , Ports.viewportResized (\size -> WindowSized size.width size.height)
+            , -- Window size, not the runtime's port: Elm replaces the mount node, so the
+              -- runtime's ResizeObserver watches a detached element and never fires.
+              Browser.Events.onResize WindowSized
             , Ports.geometryFlattened (ViewportMsg << Viewport.GeometryFlattened)
             , Ports.geometryFlattenFailed (ViewportMsg << Viewport.GeometryFlattenFailed)
             ]
@@ -641,92 +644,224 @@ viewTopBar model =
     let
         total =
             List.length model.steps
+
+        partCount =
+            List.length (Document.placements model.document)
+
+        partitionButtons =
+            if partCount > 0 then
+                [ div
+                    [ Attr.style "display" "flex"
+                    , Attr.style "gap" "4px"
+                    , Attr.attribute "role" "group"
+                    , Attr.attribute "aria-label" "Split into steps automatically"
+                    ]
+                    [ Button.secondary (AutoStepBy 1) "1 part per step"
+                    , Button.secondary (AutoStepBy 2) "2 parts per step"
+                    ]
+                ]
+
+            else
+                []
     in
     div
         [ Attr.style "position" "absolute"
-        , Attr.style "top" "8px"
+        , Attr.style "top" "12px"
         , Attr.style "left" "12px"
         , Attr.style "right" "12px"
         , Attr.style "display" "flex"
-        , Attr.style "align-items" "center"
+        , Attr.style "flex-wrap" "wrap"
+        , Attr.style "justify-content" "space-between"
+        , Attr.style "align-items" "flex-start"
         , Attr.style "gap" "8px"
         , Attr.style "pointer-events" "auto"
         , Attr.style "touch-action" "none"
-        , Attr.style "color" Theme.textMuted
-        , Attr.style "font-family" "monospace"
-        , Attr.style "font-size" "12px"
-        , Attr.style "white-space" "nowrap"
         ]
-        [ Button.secondary Leave "← Back to Studio"
-        , span [ Attr.style "color" Theme.textPrimary, Attr.style "font-weight" "600" ]
-            [ text "Building Instructions" ]
-        , span [ Attr.style "flex" "1", Attr.style "overflow" "hidden", Attr.style "text-overflow" "ellipsis" ]
-            [ text
-                (String.fromInt total
-                    ++ " steps • "
-                    ++ String.fromInt (List.length (Document.placements model.document))
-                    ++ " parts"
-                )
-            ]
-        , if not (List.isEmpty (Document.placements model.document)) then
-            div [ Attr.style "display" "flex", Attr.style "gap" "4px" ]
-                [ Button.secondary (AutoStepBy 1) "1 pc/step"
-                , Button.secondary (AutoStepBy 2) "2 pcs/step"
-                ]
-
-          else
-            text ""
-        , Button.toggle
-            { active = model.viewMode == ModeSheet, enabled = True }
-            ToggleViewMode
-            (if model.viewMode == ModeSheet then
-                "3D View"
-
-             else
-                "📄 Sheet"
+        [ Html.header
+            (cardStyle
+                ++ [ Attr.style "gap" "12px"
+                   , Attr.style "padding" "6px 14px 6px 6px"
+                   , Attr.style "max-width" "100%"
+                   ]
             )
-        , Button.secondary ExportHtml "💾 Export HTML"
-        , Button.secondary ToggleHelp "?"
+            [ Button.icon
+                { icon = icon FeatherIcons.arrowLeft
+                , label = "Back to editing"
+                , shortcut = Just "Esc"
+                , pressed = Nothing
+                , enabled = True
+                , showLabel = True
+                }
+                Leave
+            , Html.h1
+                [ Attr.style "margin" "0"
+                , Attr.style "font-size" "15px"
+                , Attr.style "font-weight" "700"
+                , Attr.style "color" Theme.textPrimary
+                , Attr.style "white-space" "nowrap"
+                ]
+                [ text "Building instructions" ]
+            , span
+                [ Attr.attribute "role" "status"
+                , Attr.style "overflow" "hidden"
+                , Attr.style "text-overflow" "ellipsis"
+                , Attr.style "white-space" "nowrap"
+                ]
+                [ text (summary total partCount) ]
+            ]
+        , div
+            (cardStyle
+                ++ [ Attr.style "flex-wrap" "wrap"
+                   , Attr.style "gap" "6px"
+                   , Attr.style "padding" "6px"
+                   , Attr.attribute "role" "group"
+                   , Attr.attribute "aria-label" "Instruction options"
+                   ]
+            )
+            (partitionButtons
+                ++ [ Button.icon
+                        { icon = icon FeatherIcons.fileText
+                        , label = "Sheet view"
+                        , shortcut = Nothing
+                        , pressed = Just (model.viewMode == ModeSheet)
+                        , enabled = True
+                        , showLabel = True
+                        }
+                        ToggleViewMode
+                   , Button.icon
+                        { icon = icon FeatherIcons.download
+                        , label = "Export HTML"
+                        , shortcut = Nothing
+                        , pressed = Nothing
+                        , enabled = True
+                        , showLabel = True
+                        }
+                        ExportHtml
+                   , Button.icon
+                        { icon = icon FeatherIcons.helpCircle
+                        , label = "Keyboard shortcuts"
+                        , shortcut = Just "?"
+                        , pressed = Nothing
+                        , enabled = True
+                        , showLabel = False
+                        }
+                        ToggleHelp
+                   ]
+            )
         ]
+
+
+{-| The card look shared by the floating panels: opaque, bordered, brand-tinted shadow.
+Callers add their own padding and gap.
+-}
+cardStyle : List (Html.Attribute msg)
+cardStyle =
+    [ Attr.style "display" "flex"
+    , Attr.style "align-items" "center"
+    , Attr.style "box-sizing" "border-box"
+    , Attr.style "background" Theme.panelSurface
+    , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+    , Attr.style "border-radius" "10px"
+    , Attr.style "box-shadow" floatingShadow
+    , Attr.style "color" Theme.textMuted
+    , Attr.style "font-size" "13px"
+    ]
+
+
+icon : FeatherIcons.Icon -> Html msg
+icon featherIcon =
+    featherIcon
+        |> FeatherIcons.withSize 18
+        |> FeatherIcons.withStrokeWidth 1.75
+        |> FeatherIcons.toHtml [ Attr.attribute "aria-hidden" "true", Attr.attribute "focusable" "false" ]
+
+
+floatingShadow : String
+floatingShadow =
+    "0 6px 20px color-mix(in srgb, var(--color-brand) 12%, transparent), 0 1px 2px color-mix(in srgb, var(--color-brand) 8%, transparent)"
+
+
+{-| A count with its noun, singular for one: "1 part", "34 parts".
+-}
+countOf : Int -> String -> String -> String
+countOf n singular plural =
+    String.fromInt n
+        ++ " "
+        ++ (if n == 1 then
+                singular
+
+            else
+                plural
+           )
+
+
+summary : Int -> Int -> String
+summary total partCount =
+    countOf total "step" "steps" ++ " · " ++ countOf partCount "part" "parts"
+
+
+{-| The file name as it reads on screen: "2431.dat" becomes "2431".
+-}
+partName : String -> String
+partName file =
+    if String.endsWith ".dat" file then
+        String.dropRight 4 file
+
+    else
+        file
 
 
 viewCalloutBox : Step -> Html Msg
 viewCalloutBox step =
     div
-        [ Attr.style "position" "absolute"
-        , Attr.style "top" "48px"
-        , Attr.style "left" "12px"
-        , Attr.style "width" "280px"
-        , Attr.style "max-width" "calc(100vw - 24px)"
-        , Attr.style "background" Theme.panelBackground
-        , Attr.style "backdrop-filter" "blur(8px)"
-        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-        , Attr.style "border-radius" "8px"
-        , Attr.style "padding" "12px"
-        , Attr.style "pointer-events" "auto"
-        , Attr.style "font-family" "monospace"
-        , Attr.style "font-size" "12px"
-        , Attr.style "color" Theme.textPrimary
-        , Attr.style "box-shadow" "0 4px 16px rgba(0, 0, 0, 0.12)"
-        ]
+        (cardStyle
+            ++ [ Attr.style "position" "absolute"
+               , Attr.style "top" "72px"
+               , Attr.style "left" "12px"
+               , Attr.style "width" "280px"
+               , Attr.style "max-width" "calc(100% - 24px)"
+               , Attr.style "padding" "6px"
+               , Attr.style "flex-direction" "column"
+               , Attr.style "align-items" "stretch"
+               , Attr.style "gap" "6px"
+               , Attr.style "pointer-events" "auto"
+               ]
+        )
         [ div
             [ Attr.style "display" "flex"
             , Attr.style "justify-content" "space-between"
             , Attr.style "align-items" "center"
-            , Attr.style "margin-bottom" "8px"
-            , Attr.style "font-weight" "600"
+            , Attr.style "gap" "8px"
+            , Attr.style "padding" "4px 6px 2px"
             ]
-            [ span [] [ text ("Step " ++ String.fromInt step.index ++ " Parts") ]
-            , span [ Attr.style "color" Theme.textMuted, Attr.style "font-size" "11px" ]
-                [ text (String.fromInt (List.length step.placements) ++ " pcs") ]
+            [ Html.h2
+                [ Attr.style "margin" "0"
+                , Attr.style "font-size" "12px"
+                , Attr.style "font-weight" "600"
+                , Attr.style "color" Theme.textPrimary
+                ]
+                [ text ("Step " ++ String.fromInt step.index) ]
+            , span
+                [ Attr.style "color" Theme.textMuted
+                , Attr.style "font-size" "12px"
+                , Attr.style "font-variant-numeric" "tabular-nums"
+                ]
+                [ text (countOf (List.length step.placements) "part" "parts") ]
             ]
         , if List.isEmpty step.callout then
-            div [ Attr.style "color" Theme.textMuted, Attr.style "font-style" "italic" ]
+            div
+                [ Attr.style "padding" "4px 6px"
+                , Attr.style "color" Theme.textMuted
+                , Attr.style "font-size" "12px"
+                ]
                 [ text "No new parts in this step" ]
 
           else
-            div
-                [ Attr.style "display" "flex"
+            Html.ul
+                [ Attr.style "list-style" "none"
+                , Attr.style "margin" "0"
+                , Attr.style "padding" "0"
+                , Attr.style "display" "flex"
                 , Attr.style "flex-direction" "column"
                 , Attr.style "gap" "6px"
                 , Attr.style "max-height" "220px"
@@ -738,29 +873,48 @@ viewCalloutBox step =
 
 viewCalloutItem : CalloutItem -> Html Msg
 viewCalloutItem item =
-    div
-        [ Attr.style "display" "flex"
+    Html.li
+        [ Attr.attribute "aria-label"
+            (String.fromInt item.count ++ " × " ++ partName item.part ++ ", " ++ Steps.colorName item.color)
+        , Attr.style "display" "flex"
         , Attr.style "align-items" "center"
         , Attr.style "gap" "8px"
+        , Attr.style "margin" "0"
         , Attr.style "background" Theme.panelSubtleBackground
         , Attr.style "padding" "4px 8px"
-        , Attr.style "border-radius" "4px"
+        , Attr.style "border-radius" "6px"
         , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
         ]
         [ div
-            [ Attr.style "width" "14px"
+            [ Attr.attribute "aria-hidden" "true"
+            , Attr.style "width" "14px"
             , Attr.style "height" "14px"
-            , Attr.style "border-radius" "2px"
+            , Attr.style "border-radius" "3px"
             , Attr.style "border" "1px solid rgba(0, 0, 0, 0.25)"
             , Attr.style "background" (Colours.css (Colors.resolveColor 16 item.color))
             , Attr.style "flex-shrink" "0"
             ]
             []
-        , span [ Attr.style "font-weight" "700", Attr.style "color" Theme.brand ]
+        , span
+            [ Attr.attribute "aria-hidden" "true"
+            , Attr.style "font-weight" "700"
+            , Attr.style "color" Theme.brand
+            , Attr.style "font-variant-numeric" "tabular-nums"
+            ]
             [ text (String.fromInt item.count ++ "×") ]
-        , span [ Attr.style "font-weight" "600", Attr.style "flex" "1", Attr.style "overflow" "hidden", Attr.style "text-overflow" "ellipsis" ]
-            [ text item.part ]
-        , span [ Attr.style "color" Theme.textMuted, Attr.style "font-size" "11px" ]
+        , span
+            [ Attr.attribute "aria-hidden" "true"
+            , Attr.style "font-weight" "600"
+            , Attr.style "flex" "1"
+            , Attr.style "overflow" "hidden"
+            , Attr.style "text-overflow" "ellipsis"
+            ]
+            [ text (partName item.part) ]
+        , span
+            [ Attr.attribute "aria-hidden" "true"
+            , Attr.style "color" Theme.textMuted
+            , Attr.style "font-size" "11px"
+            ]
             [ text (Steps.colorName item.color) ]
         ]
 
@@ -778,47 +932,92 @@ viewNavigation model =
             model.currentStepIndex < total
     in
     div
-        [ Attr.style "position" "absolute"
-        , Attr.style "bottom" "16px"
-        , Attr.style "left" "50%"
-        , Attr.style "transform" "translateX(-50%)"
-        , Attr.style "display" "flex"
-        , Attr.style "align-items" "center"
-        , Attr.style "gap" "8px"
-        , Attr.style "background" Theme.panelBackground
-        , Attr.style "backdrop-filter" "blur(8px)"
-        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-        , Attr.style "border-radius" "8px"
-        , Attr.style "padding" "8px 14px"
-        , Attr.style "pointer-events" "auto"
-        , Attr.style "box-shadow" "0 8px 24px rgba(0, 0, 0, 0.15)"
-        , Attr.style "font-family" "monospace"
-        , Attr.style "font-size" "12px"
-        , Attr.style "white-space" "nowrap"
-        ]
-        [ Button.toggle { active = False, enabled = hasPrev } PrevStep "◀ Prev"
-        , Button.toggle { active = model.isPlaying, enabled = total > 1 }
-            TogglePlay
-            (if model.isPlaying then
-                "⏸ Pause"
+        (cardStyle
+            ++ [ Attr.style "position" "absolute"
+               , Attr.style "bottom" "16px"
+               , Attr.style "left" "50%"
+               , Attr.style "transform" "translateX(-50%)"
+               , Attr.style "max-width" "calc(100% - 24px)"
+               , Attr.style "flex-wrap" "wrap"
+               , Attr.style "justify-content" "center"
+               , Attr.style "gap" "6px"
+               , Attr.style "padding" "6px"
+               , Attr.style "pointer-events" "auto"
+               , Attr.attribute "role" "group"
+               , Attr.attribute "aria-label" "Steps"
+               ]
+        )
+        [ Button.icon
+            { icon = icon FeatherIcons.chevronLeft
+            , label = "Previous step"
+            , shortcut = Just "ArrowLeft"
+            , pressed = Nothing
+            , enabled = hasPrev
+            , showLabel = False
+            }
+            PrevStep
+        , Button.icon
+            { icon =
+                icon
+                    (if model.isPlaying then
+                        FeatherIcons.pause
 
-             else
-                "▶ Play"
-            )
-        , Button.toggle { active = False, enabled = hasNext } NextStep "Next ▶"
-        , span [ Attr.style "font-weight" "600", Attr.style "min-width" "80px", Attr.style "text-align" "center" ]
+                     else
+                        FeatherIcons.play
+                    )
+            , label =
+                if model.isPlaying then
+                    "Pause"
+
+                else
+                    "Play"
+            , shortcut = Just "Space"
+            , pressed = Nothing
+            , enabled = total > 1
+            , showLabel = False
+            }
+            TogglePlay
+        , Button.icon
+            { icon = icon FeatherIcons.chevronRight
+            , label = "Next step"
+            , shortcut = Just "ArrowRight"
+            , pressed = Nothing
+            , enabled = hasNext
+            , showLabel = False
+            }
+            NextStep
+        , span
+            [ Attr.attribute "role" "status"
+            , Attr.attribute "aria-live" "polite"
+            , Attr.attribute "aria-label" ("Step " ++ String.fromInt model.currentStepIndex ++ " of " ++ String.fromInt total)
+            , Attr.style "font-weight" "600"
+            , Attr.style "color" Theme.textPrimary
+            , Attr.style "min-width" "56px"
+            , Attr.style "text-align" "center"
+            , Attr.style "font-variant-numeric" "tabular-nums"
+            ]
             [ text (String.fromInt model.currentStepIndex ++ " / " ++ String.fromInt total) ]
         , input
             [ Attr.type_ "range"
+            , Attr.attribute "aria-label" "Step"
+            , Attr.attribute "aria-valuetext" ("Step " ++ String.fromInt model.currentStepIndex ++ " of " ++ String.fromInt total)
             , Attr.min "1"
             , Attr.max (String.fromInt (max 1 total))
             , Attr.value (String.fromInt model.currentStepIndex)
             , Html.Events.onInput SetStepSlider
             , Attr.style "cursor" "pointer"
-            , Attr.style "width" "100px"
+            , Attr.style "width" "120px"
             ]
             []
-        , Button.secondary FocusActiveStep "🎯 Focus"
+        , Button.icon
+            { icon = icon FeatherIcons.crosshair
+            , label = "Focus"
+            , shortcut = Just "F"
+            , pressed = Nothing
+            , enabled = True
+            , showLabel = True
+            }
+            FocusActiveStep
         , Button.toggle { active = model.autoFrame, enabled = True } ToggleAutoFrame "Auto-frame"
         ]
 
@@ -850,7 +1049,7 @@ viewSheet model =
         , Attr.style "padding" "64px 20px 40px"
         , Attr.style "box-sizing" "border-box"
         ]
-        [ div
+        [ Html.main_
             [ Attr.style "max-width" "760px"
             , Attr.style "margin" "0 auto"
             , Attr.style "display" "flex"
@@ -863,43 +1062,59 @@ viewSheet model =
 
 viewSheetStep : Int -> Step -> Html Msg
 viewSheetStep total step =
-    div
-        [ Attr.style "background" Theme.panelBackground
-        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-        , Attr.style "border-radius" "8px"
-        , Attr.style "padding" "16px"
-        , Attr.style "font-family" "monospace"
-        ]
+    Html.section
+        (cardStyle
+            ++ [ Attr.style "flex-direction" "column"
+               , Attr.style "align-items" "stretch"
+               , Attr.style "gap" "12px"
+               , Attr.style "padding" "16px"
+               ]
+        )
         [ div
             [ Attr.style "display" "flex"
+            , Attr.style "flex-wrap" "wrap"
             , Attr.style "justify-content" "space-between"
             , Attr.style "align-items" "center"
+            , Attr.style "gap" "8px"
             , Attr.style "border-bottom" ("1px solid " ++ Theme.borderDefault)
             , Attr.style "padding-bottom" "10px"
-            , Attr.style "margin-bottom" "12px"
             ]
-            [ span [ Attr.style "font-size" "16px", Attr.style "font-weight" "700" ]
+            [ Html.h2
+                [ Attr.style "margin" "0"
+                , Attr.style "font-size" "14px"
+                , Attr.style "font-weight" "700"
+                , Attr.style "color" Theme.textPrimary
+                ]
                 [ text ("Step " ++ String.fromInt step.index ++ " of " ++ String.fromInt total) ]
-            , span [ Attr.style "color" Theme.textMuted, Attr.style "font-size" "12px" ]
+            , span
+                [ Attr.style "color" Theme.textMuted
+                , Attr.style "font-size" "12px"
+                , Attr.style "font-variant-numeric" "tabular-nums"
+                ]
                 [ text
-                    (String.fromInt (List.length step.placements)
-                        ++ " new parts ("
+                    (countOf (List.length step.placements) "new part" "new parts"
+                        ++ " · "
                         ++ String.fromInt (List.length step.accumulatedPlacements)
-                        ++ " total)"
+                        ++ " in total"
                     )
                 ]
             ]
-        , div
-            [ Attr.style "display" "flex"
-            , Attr.style "flex-wrap" "wrap"
-            , Attr.style "gap" "8px"
-            ]
-            (if List.isEmpty step.callout then
-                [ div [ Attr.style "color" Theme.textMuted, Attr.style "font-style" "italic" ]
-                    [ text "No new parts in this step" ]
+        , if List.isEmpty step.callout then
+            div
+                [ Attr.style "color" Theme.textMuted
+                , Attr.style "font-size" "12px"
+                , Attr.style "font-style" "italic"
                 ]
+                [ text "No new parts in this step" ]
 
-             else
-                List.map viewCalloutItem step.callout
-            )
+          else
+            Html.ul
+                [ Attr.style "list-style" "none"
+                , Attr.style "margin" "0"
+                , Attr.style "padding" "0"
+                , Attr.style "display" "flex"
+                , Attr.style "flex-wrap" "wrap"
+                , Attr.style "gap" "8px"
+                ]
+                (List.map viewCalloutItem step.callout)
         ]

@@ -29,7 +29,8 @@ import UI.Theme as Theme
 field.
 -}
 type alias Config msg =
-    { onPosition : Axis -> Float -> msg
+    { describe : String -> String
+    , onPosition : Axis -> Float -> msg
     , onRotation : Axis -> Float -> msg
     , onDuplicate : msg
     , onDelete : msg
@@ -102,47 +103,49 @@ viewWithCollisions : Set Int -> Config msg -> Document -> Set Int -> Html msg
 viewWithCollisions collidingIds config document selection =
     case fieldsWithCollisions collidingIds selection document of
         Nothing ->
-            div [ Attr.style "color" Theme.textMuted, Attr.style "font-size" "12px" ]
-                [ text "Nothing selected. Click a part, or pick one in the tree." ]
+            div [ Attr.style "color" Theme.textMuted, Attr.style "font-size" "13px", Attr.style "line-height" "1.5" ]
+                [ text "Nothing selected. Click a part, or pick one in the structure list." ]
 
         Just f ->
             div
                 [ Attr.style "display" "flex"
                 , Attr.style "flex-direction" "column"
                 , Attr.style "gap" "10px"
-                , Attr.style "font-family" "monospace"
-                , Attr.style "font-size" "12px"
+                , Attr.style "font-size" "13px"
                 ]
-                [ if f.colliding then
+                [ summary config f
+                , if f.colliding then
                     div
-                        [ Attr.style "color" Theme.brandRed
-                        , Attr.style "font-weight" "600"
+                        [ Attr.attribute "role" "alert"
+                        , Attr.style "padding" "6px 10px"
+                        , Attr.style "border-radius" "6px"
+                        , Attr.style "border-left" ("3px solid " ++ Theme.brandRed)
+                        , Attr.style "background" "color-mix(in srgb, var(--color-brand-red) 8%, transparent)"
+                        , Attr.style "color" Theme.textPrimary
                         , Attr.style "font-size" "12px"
-                        , Attr.style "display" "flex"
-                        , Attr.style "align-items" "center"
-                        , Attr.style "gap" "4px"
                         ]
-                        [ text "⚠ Solid collision detected" ]
+                        [ text "Overlaps another part" ]
 
                   else
                     text ""
-                , div [ Attr.style "color" Theme.textPrimary, Attr.style "font-weight" "600" ] [ text (summary f) ]
                 , colourLine f
-                , group "Position (LDU)"
-                    [ numberField "X" f.position.x (config.onPosition AxisX)
-                    , numberField "Y" f.position.y (config.onPosition AxisY)
-                    , numberField "Z" f.position.z (config.onPosition AxisZ)
+                , group "Position"
+                    "LDU"
+                    [ numberField "Position" "X" f.position.x (config.onPosition AxisX)
+                    , numberField "Position" "Y" f.position.y (config.onPosition AxisY)
+                    , numberField "Position" "Z" f.position.z (config.onPosition AxisZ)
                     ]
                 , case f.rotation of
                     Just e ->
-                        group "Rotation (°)"
-                            [ numberField "X" e.x (config.onRotation AxisX)
-                            , numberField "Y" e.y (config.onRotation AxisY)
-                            , numberField "Z" e.z (config.onRotation AxisZ)
+                        group "Rotation"
+                            "degrees"
+                            [ numberField "Rotation" "X" e.x (config.onRotation AxisX)
+                            , numberField "Rotation" "Y" e.y (config.onRotation AxisY)
+                            , numberField "Rotation" "Z" e.z (config.onRotation AxisZ)
                             ]
 
                     Nothing ->
-                        div [ Attr.style "color" Theme.textMuted ]
+                        div [ Attr.style "color" Theme.textMuted, Attr.style "font-size" "12px" ]
                             [ text
                                 (if f.count > 1 then
                                     "Select one part to edit its rotation."
@@ -158,30 +161,55 @@ viewWithCollisions collidingIds config document selection =
                 ]
 
 
-summary : Fields -> String
-summary f =
+{-| What is selected: the part's name, with its file underneath.
+-}
+summary : Config msg -> Fields -> Html msg
+summary config f =
+    let
+        fileId file =
+            if String.endsWith ".dat" (String.toLower file) then
+                String.dropRight 4 file
+
+            else
+                file
+
+        name file =
+            case config.describe file of
+                "" ->
+                    fileId file
+
+                description ->
+                    description
+
+        line primary secondary =
+            div [ Attr.style "display" "flex", Attr.style "flex-direction" "column", Attr.style "gap" "2px" ]
+                [ div [ Attr.style "color" Theme.textPrimary, Attr.style "font-weight" "600", Attr.style "font-size" "14px", Attr.style "line-height" "1.3" ] [ text primary ]
+                , div [ Attr.style "color" Theme.textMuted, Attr.style "font-size" "12px" ] [ text secondary ]
+                ]
+    in
     case f.files of
         [ file ] ->
             if f.count == 1 then
-                file
+                line (name file) ("Part " ++ fileId file)
 
             else
-                String.fromInt f.count ++ " × " ++ file
+                line (String.fromInt f.count ++ " × " ++ name file) ("Part " ++ fileId file)
 
         _ ->
-            String.fromInt f.count ++ " parts"
+            line (String.fromInt f.count ++ " parts") (String.fromInt (List.length f.files) ++ " different kinds")
 
 
 colourLine : Fields -> Html msg
 colourLine f =
     case f.colours of
         [ code ] ->
-            div [ Attr.style "display" "flex", Attr.style "align-items" "center", Attr.style "gap" "8px", Attr.style "color" Theme.textMuted ]
+            div [ Attr.style "display" "flex", Attr.style "align-items" "center", Attr.style "gap" "8px" ]
                 [ span
-                    [ Attr.style "display" "inline-block"
-                    , Attr.style "width" "14px"
-                    , Attr.style "height" "14px"
-                    , Attr.style "border-radius" "3px"
+                    [ Attr.attribute "aria-hidden" "true"
+                    , Attr.style "display" "inline-block"
+                    , Attr.style "width" "16px"
+                    , Attr.style "height" "16px"
+                    , Attr.style "border-radius" "4px"
                     , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
                     , Attr.style "background"
                         (Colours.all
@@ -192,48 +220,72 @@ colourLine f =
                         )
                     ]
                     []
-                , text ("Colour " ++ String.fromInt code ++ " — pick another in the colour panel")
+                , span [ Attr.style "color" Theme.textPrimary ] [ text (Colours.nameOf code) ]
+                , span [ Attr.style "color" Theme.textMuted, Attr.style "font-size" "12px" ] [ text ("· " ++ String.fromInt code) ]
                 ]
 
         _ ->
-            div [ Attr.style "color" Theme.textMuted ] [ text "Several colours — pick one in the colour panel to set them all." ]
+            div [ Attr.style "color" Theme.textMuted, Attr.style "font-size" "12px" ] [ text "Several colours. Pick one to set them all." ]
 
 
-group : String -> List (Html msg) -> Html msg
-group title children =
-    div []
-        (div
-            [ Attr.style "color" Theme.textMuted
-            , Attr.style "text-transform" "uppercase"
-            , Attr.style "font-size" "10px"
-            , Attr.style "letter-spacing" "0.06em"
+{-| Three axis fields under a legend, side by side.
+-}
+group : String -> String -> List (Html msg) -> Html msg
+group title unit children =
+    Html.fieldset
+        [ Attr.style "border" "none"
+        , Attr.style "margin" "0"
+        , Attr.style "padding" "0"
+        , Attr.style "min-width" "0"
+        ]
+        [ Html.legend
+            [ Attr.style "padding" "0"
             , Attr.style "margin-bottom" "4px"
+            , Attr.style "color" Theme.textMuted
+            , Attr.style "font-size" "11px"
+            , Attr.style "font-weight" "600"
+            , Attr.style "text-transform" "uppercase"
+            , Attr.style "letter-spacing" "0.06em"
             ]
-            [ text title ]
-            :: children
-        )
+            [ text title
+            , span [ Attr.style "text-transform" "none", Attr.style "font-weight" "400", Attr.style "letter-spacing" "0" ] [ text (" (" ++ unit ++ ")") ]
+            ]
+        , div [ Attr.style "display" "grid", Attr.style "grid-template-columns" "repeat(3, minmax(0, 1fr))", Attr.style "gap" "6px" ] children
+        ]
 
 
-numberField : String -> Float -> (Float -> msg) -> Html msg
-numberField label value toMsg =
-    div [ Attr.style "display" "flex", Attr.style "align-items" "center", Attr.style "gap" "8px", Attr.style "margin-bottom" "4px" ]
-        [ span [ Attr.style "width" "14px", Attr.style "color" Theme.textMuted ] [ text label ]
+{-| One axis value. Typing and leaving the field, or pressing Enter, sends it.
+-}
+numberField : String -> String -> Float -> (Float -> msg) -> Html msg
+numberField quantity axis value toMsg =
+    Html.label
+        [ Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "gap" "4px"
+        , Attr.style "padding" "0 0 0 8px"
+        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "border-radius" "6px"
+        , Attr.style "background" Theme.panelSurface
+        ]
+        [ span [ Attr.attribute "aria-hidden" "true", Attr.style "color" Theme.textMuted, Attr.style "font-size" "12px", Attr.style "font-weight" "600" ] [ text axis ]
         , input
             [ Attr.type_ "number"
             , Attr.step "any"
-            , Attr.attribute "aria-label" label
+            , Attr.attribute "aria-label" (quantity ++ " " ++ axis)
             , Attr.value (formatNumber value)
             , Html.Events.on "change" (changeDecoder toMsg)
             , Attr.style "flex" "1"
+            , Attr.style "width" "100%"
             , Attr.style "min-width" "0"
-            , Attr.style "padding" "4px 6px"
+            , Attr.style "padding" "6px 6px 6px 0"
             , Attr.style "box-sizing" "border-box"
-            , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-            , Attr.style "border-radius" "4px"
-            , Attr.style "background" Theme.panelSurface
+            , Attr.style "border" "none"
+            , Attr.style "border-radius" "6px"
+            , Attr.style "background" "transparent"
             , Attr.style "color" Theme.textPrimary
-            , Attr.style "font-family" "monospace"
-            , Attr.style "font-size" "12px"
+            , Attr.style "font" "inherit"
+            , Attr.style "font-size" "13px"
+            , Attr.style "font-variant-numeric" "tabular-nums"
             ]
             []
         ]
@@ -265,14 +317,16 @@ formatNumber value =
 actionButton : msg -> String -> Html msg
 actionButton msg label =
     button
-        [ Html.Events.onClick msg
-        , Attr.style "padding" "6px 10px"
+        [ Attr.type_ "button"
+        , Attr.class "ui-button"
+        , Html.Events.onClick msg
+        , Attr.style "padding" "7px 12px"
         , Attr.style "background" Theme.panelSubtleBackground
         , Attr.style "color" Theme.textPrimary
         , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
         , Attr.style "border-radius" "6px"
-        , Attr.style "font-family" "monospace"
-        , Attr.style "font-size" "12px"
+        , Attr.style "font-family" "inherit"
+        , Attr.style "font-size" "13px"
         , Attr.style "cursor" "pointer"
         ]
         [ text label ]

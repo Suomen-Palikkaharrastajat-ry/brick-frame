@@ -6,28 +6,32 @@ module Studio.BOM exposing
     , view
     )
 
-{-| Interactive Bill of Materials (BOM) modal and drawer view.
+{-| Interactive parts list (bill of materials) modal.
+
+The panel is a modal dialog (`role="dialog"`, `aria-modal`) labelled by its
+heading. It closes from the close button, a click on the dimmed backdrop, or
+Escape pressed while focus is inside it.
 
 Provides:
 
   - Summary metrics (total parts, unique lots, estimated weight, dimensions)
-  - Search filtering by part name, ID, or category
-  - Submodel filtering
-  - Column-based sorting
-  - Element ID and color swatch presentation
-  - Instance highlighting synchronization with the 3D viewport
-  - Direct export buttons for BrickLink XML and Rebrickable CSV
-  - Clipboard copy for Markdown table and plain text parts lists
+  - Search filtering by part ID, name, colour or element ID
+  - Category and submodel filtering
+  - Sortable column headers (buttons carrying `aria-sort`)
+  - Keyboard-reachable row selection that highlights the matching instances
+    in the 3D viewport
+  - Export buttons for BrickLink XML and Rebrickable CSV
+  - Clipboard copy as a Markdown table or plain text
   - Optional revision diff view
 
 -}
 
-import Html exposing (Html, button, div, input, option, select, span, table, tbody, td, text, th, thead, tr)
+import FeatherIcons
+import Html exposing (Html, button, div, h2, input, option, select, span, table, tbody, td, text, th, thead, tr)
 import Html.Attributes as Attr
 import Html.Events
 import Json.Decode as Decode
-import LDraw.BOM as BOM exposing (BOMDiff, DiffLot, ModelBOM, PartLot)
-import LDraw.Catalog as Catalog
+import LDraw.BOM as BOM exposing (BOMDiff, ModelBOM, PartLot)
 import LDraw.Colors as Colors
 import Studio.Colours as Colours
 import UI.Button as Button
@@ -91,7 +95,14 @@ type alias Config msg =
     }
 
 
-{-| Main view for the BOM panel. Renders as a modal overlay drawer.
+{-| The id of the dialog heading, referenced by `aria-labelledby`.
+-}
+titleId : String
+titleId =
+    "bom-title"
+
+
+{-| Main view for the parts list. Renders as a modal dialog over a dimmed backdrop.
 -}
 view : Config msg -> State -> List String -> ModelBOM -> Maybe ModelBOM -> Html msg
 view config state submodelNames currentBom maybeBaseBom =
@@ -124,19 +135,30 @@ view config state submodelNames currentBom maybeBaseBom =
         , Attr.style "inset" "0"
         , Attr.style "z-index" "50"
         , Attr.style "display" "flex"
-        , Attr.style "flex-direction" "column"
-        , Attr.style "background" "color-mix(in srgb, var(--color-bg-dark) 40%, transparent)"
-        , Attr.style "backdrop-filter" "blur(4px)"
         , Attr.style "padding" "16px"
         , Attr.style "pointer-events" "auto"
         ]
         [ div
-            [ Attr.style "display" "flex"
+            [ Attr.attribute "aria-hidden" "true"
+            , Html.Events.onClick config.onClose
+            , Attr.style "position" "absolute"
+            , Attr.style "inset" "0"
+            , Attr.style "background" "color-mix(in srgb, var(--color-brand) 18%, transparent)"
+            , Attr.style "backdrop-filter" "blur(4px)"
+            ]
+            []
+        , div
+            [ Attr.attribute "role" "dialog"
+            , Attr.attribute "aria-modal" "true"
+            , Attr.attribute "aria-labelledby" titleId
+            , Html.Events.preventDefaultOn "keydown" (escapeKeyDecoder config.onClose)
+            , Attr.style "position" "relative"
+            , Attr.style "display" "flex"
             , Attr.style "flex-direction" "column"
             , Attr.style "background" Theme.panelSurface
             , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-            , Attr.style "border-radius" "8px"
-            , Attr.style "box-shadow" "0 20px 25px -5px rgba(0, 0, 0, 0.2)"
+            , Attr.style "border-radius" "10px"
+            , Attr.style "box-shadow" floatingShadow
             , Attr.style "width" "100%"
             , Attr.style "max-width" "1100px"
             , Attr.style "height" "90vh"
@@ -160,41 +182,95 @@ view config state submodelNames currentBom maybeBaseBom =
         ]
 
 
+{-| Closes the dialog on Escape. Other keys are left alone, so the decoder
+fails and the browser keeps its default handling.
+-}
+escapeKeyDecoder : msg -> Decode.Decoder ( msg, Bool )
+escapeKeyDecoder onClose =
+    Decode.field "key" Decode.string
+        |> Decode.andThen
+            (\key ->
+                if key == "Escape" || key == "Esc" then
+                    Decode.succeed ( onClose, True )
+
+                else
+                    Decode.fail "not the Escape key"
+            )
+
+
+{-| A Feather icon sized for toolbar buttons, hidden from assistive technology.
+-}
+icon : FeatherIcons.Icon -> Html msg
+icon featherIcon =
+    featherIcon
+        |> FeatherIcons.withSize 18
+        |> FeatherIcons.withStrokeWidth 1.75
+        |> FeatherIcons.toHtml [ Attr.attribute "aria-hidden" "true", Attr.attribute "focusable" "false" ]
+
+
+{-| A small chevron showing the active sort direction, hidden from assistive technology.
+-}
+sortIcon : Bool -> Html msg
+sortIcon ascending =
+    (if ascending then
+        FeatherIcons.chevronUp
+
+     else
+        FeatherIcons.chevronDown
+    )
+        |> FeatherIcons.withSize 14
+        |> FeatherIcons.withStrokeWidth 2
+        |> FeatherIcons.toHtml [ Attr.attribute "aria-hidden" "true", Attr.attribute "focusable" "false" ]
+
+
+floatingShadow : String
+floatingShadow =
+    "0 6px 20px color-mix(in srgb, var(--color-brand) 12%, transparent), 0 1px 2px color-mix(in srgb, var(--color-brand) 8%, transparent)"
+
+
 viewHeader : Config msg -> ModelBOM -> Html msg
 viewHeader config bom =
     div
         [ Attr.style "display" "flex"
         , Attr.style "align-items" "center"
         , Attr.style "justify-content" "space-between"
+        , Attr.style "gap" "12px"
         , Attr.style "padding" "12px 16px"
         , Attr.style "border-bottom" ("1px solid " ++ Theme.borderDefault)
         , Attr.style "background" Theme.panelSubtleBackground
         ]
-        [ div [ Attr.style "display" "flex", Attr.style "align-items" "baseline", Attr.style "gap" "10px" ]
-            [ span
-                [ Attr.style "font-size" "18px"
+        [ div [ Attr.style "display" "flex", Attr.style "align-items" "baseline", Attr.style "gap" "10px", Attr.style "flex-wrap" "wrap" ]
+            [ h2
+                [ Attr.id titleId
+                , Attr.style "margin" "0"
+                , Attr.style "font-size" "18px"
                 , Attr.style "font-weight" "700"
                 , Attr.style "color" Theme.textPrimary
                 ]
-                [ text "Bill of Materials (BOM)" ]
+                [ text "Parts list" ]
             , span
                 [ Attr.style "font-size" "12px"
                 , Attr.style "color" Theme.textMuted
                 ]
-                [ text (String.fromInt bom.totalParts ++ " total parts • " ++ String.fromInt bom.uniqueLots ++ " unique lots") ]
+                [ text (String.fromInt bom.totalParts ++ " total parts, " ++ String.fromInt bom.uniqueLots ++ " unique lots") ]
             ]
         , button
-            [ Html.Events.onClick config.onClose
-            , Attr.title "Close BOM"
-            , Attr.attribute "aria-label" "Close"
+            [ Attr.id "bom-close"
+            , Attr.type_ "button"
+            , Html.Events.onClick config.onClose
+            , Attr.attribute "aria-label" "Close parts list"
+            , Attr.title "Close (Esc)"
+            , Attr.style "display" "inline-flex"
+            , Attr.style "align-items" "center"
+            , Attr.style "justify-content" "center"
             , Attr.style "background" "transparent"
             , Attr.style "border" "none"
-            , Attr.style "font-size" "20px"
+            , Attr.style "border-radius" "6px"
             , Attr.style "color" Theme.textMuted
             , Attr.style "cursor" "pointer"
-            , Attr.style "padding" "4px 8px"
+            , Attr.style "padding" "6px"
             ]
-            [ text "✕" ]
+            [ icon FeatherIcons.x ]
         ]
 
 
@@ -283,7 +359,7 @@ viewControls config state submodels categories maybeDiff =
             [ input
                 [ Attr.type_ "search"
                 , Attr.placeholder "Search part, color, element..."
-                , Attr.attribute "aria-label" "Search inventory"
+                , Attr.attribute "aria-label" "Search parts"
                 , Attr.value state.query
                 , Html.Events.onInput config.onQuery
                 , Attr.style "padding" "6px 10px"
@@ -309,7 +385,7 @@ viewControls config state submodels categories maybeDiff =
                         )
                         (Decode.at [ "target", "value" ] Decode.string)
                     )
-                , Attr.attribute "aria-label" "Filter Category"
+                , Attr.attribute "aria-label" "Filter by category"
                 , Attr.style "padding" "6px 10px"
                 , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
                 , Attr.style "border-radius" "4px"
@@ -317,7 +393,7 @@ viewControls config state submodels categories maybeDiff =
                 , Attr.style "color" Theme.textPrimary
                 , Attr.style "background" Theme.panelSurface
                 ]
-                (option [ Attr.value "", Attr.selected (state.category == Nothing) ] [ text "All Categories" ]
+                (option [ Attr.value "", Attr.selected (state.category == Nothing) ] [ text "All categories" ]
                     :: List.map
                         (\cat ->
                             option [ Attr.value cat, Attr.selected (state.category == Just cat) ] [ text cat ]
@@ -342,7 +418,7 @@ viewControls config state submodels categories maybeDiff =
                             )
                             (Decode.at [ "target", "value" ] Decode.string)
                         )
-                    , Attr.attribute "aria-label" "Filter Submodel"
+                    , Attr.attribute "aria-label" "Filter by submodel"
                     , Attr.style "padding" "6px 10px"
                     , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
                     , Attr.style "border-radius" "4px"
@@ -350,7 +426,7 @@ viewControls config state submodels categories maybeDiff =
                     , Attr.style "color" Theme.textPrimary
                     , Attr.style "background" Theme.panelSurface
                     ]
-                    (option [ Attr.value "", Attr.selected (state.submodel == Nothing) ] [ text "Entire Model" ]
+                    (option [ Attr.value "", Attr.selected (state.submodel == Nothing) ] [ text "Entire model" ]
                         :: List.map
                             (\sub ->
                                 option [ Attr.value sub, Attr.selected (state.submodel == Just sub) ] [ text sub ]
@@ -359,83 +435,115 @@ viewControls config state submodels categories maybeDiff =
                     )
             , case maybeDiff of
                 Just _ ->
-                    Button.secondary config.onToggleDiff
-                        (if state.showDiff then
-                            "Show Inventory"
-
-                         else
-                            "Show Revision Diff"
-                        )
+                    Button.toggle { active = state.showDiff, enabled = True } config.onToggleDiff "Revision diff"
 
                 Nothing ->
                     text ""
             ]
-        , div [ Attr.style "display" "flex", Attr.style "align-items" "center", Attr.style "gap" "6px", Attr.style "flex-wrap" "wrap" ]
-            [ Button.secondary config.onExportBrickLink "BrickLink XML"
-            , Button.secondary config.onExportRebrickable "Rebrickable CSV"
-            , Button.secondary config.onCopyMarkdown "Copy Markdown"
-            , Button.secondary config.onCopyPlainText "Copy Text"
+        , div
+            [ Attr.attribute "role" "group"
+            , Attr.attribute "aria-label" "Export"
+            , Attr.style "display" "flex"
+            , Attr.style "align-items" "center"
+            , Attr.style "gap" "6px"
+            , Attr.style "flex-wrap" "wrap"
+            ]
+            [ exportButton FeatherIcons.download "BrickLink XML" config.onExportBrickLink
+            , exportButton FeatherIcons.download "Rebrickable CSV" config.onExportRebrickable
+            , exportButton FeatherIcons.copy "Copy as Markdown" config.onCopyMarkdown
+            , exportButton FeatherIcons.copy "Copy as text" config.onCopyPlainText
             ]
         ]
+
+
+{-| A labelled export or copy button with a leading Feather icon.
+-}
+exportButton : FeatherIcons.Icon -> String -> msg -> Html msg
+exportButton featherIcon label msg =
+    Button.icon
+        { icon = icon featherIcon
+        , label = label
+        , shortcut = Nothing
+        , pressed = Nothing
+        , enabled = True
+        , showLabel = True
+        }
+        msg
+
+
+{-| A column header that sorts the table. The button inside carries the
+click; the `th` carries the sort direction for assistive technology.
+-}
+sortableHeader : Config msg -> State -> SortColumn -> String -> String -> Html msg
+sortableHeader config state column label align =
+    let
+        isActive =
+            state.sortColumn == column
+
+        ariaSort =
+            if not isActive then
+                "none"
+
+            else if state.sortAscending then
+                "ascending"
+
+            else
+                "descending"
+
+        arrow =
+            if isActive then
+                [ sortIcon state.sortAscending ]
+
+            else
+                []
+    in
+    th
+        [ Attr.attribute "scope" "col"
+        , Attr.attribute "aria-sort" ariaSort
+        , Attr.style "padding" "8px 10px"
+        , Attr.style "text-align" align
+        , Attr.style "white-space" "nowrap"
+        , Attr.style "border-bottom" ("1px solid " ++ Theme.borderDefault)
+        ]
+        [ button
+            [ Attr.type_ "button"
+            , Html.Events.onClick (config.onSort column)
+            , Attr.style "display" "inline-flex"
+            , Attr.style "align-items" "center"
+            , Attr.style "gap" "4px"
+            , Attr.style "padding" "0"
+            , Attr.style "background" "transparent"
+            , Attr.style "border" "none"
+            , Attr.style "font-family" "inherit"
+            , Attr.style "font-size" "12px"
+            , Attr.style "font-weight" "600"
+            , Attr.style "color" Theme.textMuted
+            , Attr.style "cursor" "pointer"
+            ]
+            (text label :: arrow)
+        ]
+
+
+{-| A non-sortable column header.
+-}
+plainHeader : String -> String -> Html msg
+plainHeader align label =
+    th
+        [ Attr.attribute "scope" "col"
+        , Attr.style "padding" "8px 10px"
+        , Attr.style "font-size" "12px"
+        , Attr.style "font-weight" "600"
+        , Attr.style "text-align" align
+        , Attr.style "color" Theme.textMuted
+        , Attr.style "white-space" "nowrap"
+        , Attr.style "border-bottom" ("1px solid " ++ Theme.borderDefault)
+        ]
+        [ text label ]
 
 
 viewInventoryTable : Config msg -> State -> List PartLot -> Html msg
 viewInventoryTable config state lots =
     let
-        sortHeader col label =
-            let
-                arrow =
-                    if state.sortColumn == col then
-                        if state.sortAscending then
-                            " ▲"
-
-                        else
-                            " ▼"
-
-                    else
-                        ""
-            in
-            th
-                [ Html.Events.onClick (config.onSort col)
-                , Attr.style "padding" "8px 10px"
-                , Attr.style "font-size" "12px"
-                , Attr.style "font-weight" "600"
-                , Attr.style "color" Theme.textMuted
-                , Attr.style "text-align" "left"
-                , Attr.style "cursor" "pointer"
-                , Attr.style "user-select" "none"
-                , Attr.style "white-space" "nowrap"
-                , Attr.style "border-bottom" ("1px solid " ++ Theme.borderDefault)
-                ]
-                [ text (label ++ arrow) ]
-
-        numericHeader col label =
-            let
-                arrow =
-                    if state.sortColumn == col then
-                        if state.sortAscending then
-                            " ▲"
-
-                        else
-                            " ▼"
-
-                    else
-                        ""
-            in
-            th
-                [ Html.Events.onClick (config.onSort col)
-                , Attr.style "padding" "8px 10px"
-                , Attr.style "font-size" "12px"
-                , Attr.style "font-weight" "600"
-                , Attr.style "color" Theme.textMuted
-                , Attr.style "text-align" "right"
-                , Attr.style "cursor" "pointer"
-                , Attr.style "user-select" "none"
-                , Attr.style "white-space" "nowrap"
-                , Attr.style "border-bottom" ("1px solid " ++ Theme.borderDefault)
-                ]
-                [ text (label ++ arrow) ]
-
         lotRow lot =
             let
                 isSelected =
@@ -447,6 +555,9 @@ viewInventoryTable config state lots =
                 swatchColor =
                     Colours.css rgba
 
+                colorLabel =
+                    lot.colorName ++ " (" ++ String.fromInt lot.colorId ++ ")"
+
                 elemText =
                     Maybe.withDefault "—" lot.elementId
 
@@ -456,6 +567,13 @@ viewInventoryTable config state lots =
 
                     else
                         "transparent"
+
+                selectedAttrs =
+                    if isSelected then
+                        [ Attr.attribute "aria-current" "true" ]
+
+                    else
+                        []
             in
             tr
                 [ Html.Events.onClick (config.onSelectLot lot.partId lot.colorId)
@@ -464,15 +582,29 @@ viewInventoryTable config state lots =
                 , Attr.style "border-bottom" ("1px solid " ++ Theme.borderDefault)
                 ]
                 [ td [ Attr.style "padding" "6px 10px", Attr.style "width" "28px" ]
-                    [ div
-                        [ Attr.title (lot.colorName ++ " (" ++ String.fromInt lot.colorId ++ ")")
-                        , Attr.style "width" "18px"
-                        , Attr.style "height" "18px"
-                        , Attr.style "border-radius" "3px"
-                        , Attr.style "background" swatchColor
-                        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+                    [ button
+                        ([ Attr.type_ "button"
+                         , Attr.attribute "aria-label" ("Select " ++ lot.name ++ " (" ++ lot.partId ++ "), " ++ colorLabel)
+                         , Html.Events.stopPropagationOn "click" (Decode.succeed ( config.onSelectLot lot.partId lot.colorId, True ))
+                         , Attr.style "display" "flex"
+                         , Attr.style "padding" "0"
+                         , Attr.style "background" "transparent"
+                         , Attr.style "border" "none"
+                         , Attr.style "border-radius" "3px"
+                         , Attr.style "cursor" "pointer"
+                         ]
+                            ++ selectedAttrs
+                        )
+                        [ div
+                            [ Attr.attribute "aria-hidden" "true"
+                            , Attr.style "width" "18px"
+                            , Attr.style "height" "18px"
+                            , Attr.style "border-radius" "3px"
+                            , Attr.style "background" swatchColor
+                            , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+                            ]
+                            []
                         ]
-                        []
                     ]
                 , td [ Attr.style "padding" "6px 10px", Attr.style "font-family" "monospace", Attr.style "font-size" "12px", Attr.style "color" Theme.textPrimary ]
                     [ text lot.partId ]
@@ -481,8 +613,8 @@ viewInventoryTable config state lots =
                 , td [ Attr.style "padding" "6px 10px", Attr.style "font-size" "12px", Attr.style "color" Theme.textMuted ]
                     [ text lot.category ]
                 , td [ Attr.style "padding" "6px 10px", Attr.style "font-size" "12px", Attr.style "color" Theme.textPrimary ]
-                    [ text (lot.colorName ++ " (" ++ String.fromInt lot.colorId ++ ")") ]
-                , td [ Attr.style "padding" "6px 10px", Attr.style "font-family" "monospace", Attr.style "font-size" "12px", Attr.style "color" Theme.textMuted ]
+                    [ text colorLabel ]
+                , td [ Attr.style "padding" "6px 10px", Attr.style "font-size" "12px", Attr.style "color" Theme.textMuted ]
                     [ text elemText ]
                 , td [ Attr.style "padding" "6px 10px", Attr.style "font-size" "13px", Attr.style "font-weight" "600", Attr.style "text-align" "right", Attr.style "color" Theme.textPrimary ]
                     [ text (String.fromInt lot.count) ]
@@ -491,6 +623,22 @@ viewInventoryTable config state lots =
                 , td [ Attr.style "padding" "6px 10px", Attr.style "font-size" "12px", Attr.style "font-weight" "600", Attr.style "text-align" "right", Attr.style "color" Theme.textPrimary ]
                     [ text (String.fromFloat lot.totalWeightGrams ++ " g") ]
                 ]
+
+        bodyRows =
+            if List.isEmpty lots then
+                [ tr []
+                    [ td
+                        [ Attr.colspan 9
+                        , Attr.style "padding" "16px 10px"
+                        , Attr.style "font-size" "13px"
+                        , Attr.style "color" Theme.textMuted
+                        ]
+                        [ text "No parts match the current filters." ]
+                    ]
+                ]
+
+            else
+                List.map lotRow lots
     in
     div
         [ Attr.style "flex" "1"
@@ -498,7 +646,8 @@ viewInventoryTable config state lots =
         , Attr.style "padding" "0 16px 16px 16px"
         ]
         [ table
-            [ Attr.style "width" "100%"
+            [ Attr.attribute "aria-label" "Parts inventory"
+            , Attr.style "width" "100%"
             , Attr.style "border-collapse" "collapse"
             , Attr.style "text-align" "left"
             ]
@@ -509,18 +658,32 @@ viewInventoryTable config state lots =
                 , Attr.style "z-index" "1"
                 ]
                 [ tr []
-                    [ th [ Attr.style "padding" "8px 10px", Attr.style "width" "28px" ] []
-                    , sortHeader SortPartId "Part ID"
-                    , sortHeader SortName "Name"
-                    , sortHeader SortCategory "Category"
-                    , sortHeader SortColor "Color"
-                    , sortHeader SortElementId "Element ID"
-                    , numericHeader SortCount "Qty"
-                    , numericHeader SortUnitWeight "Unit Wt"
-                    , numericHeader SortTotalWeight "Total Wt"
+                    [ th
+                        [ Attr.attribute "scope" "col"
+                        , Attr.style "padding" "8px 10px"
+                        , Attr.style "width" "28px"
+                        , Attr.style "border-bottom" ("1px solid " ++ Theme.borderDefault)
+                        ]
+                        [ span
+                            [ Attr.style "position" "absolute"
+                            , Attr.style "width" "1px"
+                            , Attr.style "height" "1px"
+                            , Attr.style "overflow" "hidden"
+                            , Attr.style "clip" "rect(0 0 0 0)"
+                            ]
+                            [ text "Swatch" ]
+                        ]
+                    , sortableHeader config state SortPartId "Part ID" "left"
+                    , sortableHeader config state SortName "Name" "left"
+                    , sortableHeader config state SortCategory "Category" "left"
+                    , sortableHeader config state SortColor "Color" "left"
+                    , sortableHeader config state SortElementId "Element ID" "left"
+                    , sortableHeader config state SortCount "Qty" "right"
+                    , sortableHeader config state SortUnitWeight "Unit weight" "right"
+                    , sortableHeader config state SortTotalWeight "Total weight" "right"
                     ]
                 ]
-            , tbody [] (List.map lotRow lots)
+            , tbody [] bodyRows
             ]
         ]
 
@@ -576,9 +739,14 @@ viewDiffTable diff =
         , Attr.style "overflow-y" "auto"
         , Attr.style "padding" "0 16px 16px 16px"
         ]
-        [ div [ Attr.style "padding" "10px 0", Attr.style "font-size" "13px", Attr.style "color" Theme.textMuted ]
+        [ div
+            [ Attr.attribute "role" "status"
+            , Attr.style "padding" "10px 0"
+            , Attr.style "font-size" "13px"
+            , Attr.style "color" Theme.textMuted
+            ]
             [ text
-                ("Revision Comparison: "
+                ("Revision comparison: "
                     ++ String.fromInt (List.length diff.addedLots)
                     ++ " lots added, "
                     ++ String.fromInt (List.length diff.removedLots)
@@ -590,7 +758,8 @@ viewDiffTable diff =
                 )
             ]
         , table
-            [ Attr.style "width" "100%"
+            [ Attr.attribute "aria-label" "Revision diff"
+            , Attr.style "width" "100%"
             , Attr.style "border-collapse" "collapse"
             ]
             [ thead
@@ -599,13 +768,13 @@ viewDiffTable diff =
                 , Attr.style "background" Theme.panelSurface
                 ]
                 [ tr []
-                    [ th [ Attr.style "padding" "8px 10px", Attr.style "font-size" "12px", Attr.style "text-align" "left", Attr.style "color" Theme.textMuted ] [ text "Status" ]
-                    , th [ Attr.style "padding" "8px 10px", Attr.style "font-size" "12px", Attr.style "text-align" "left", Attr.style "color" Theme.textMuted ] [ text "Part ID" ]
-                    , th [ Attr.style "padding" "8px 10px", Attr.style "font-size" "12px", Attr.style "text-align" "left", Attr.style "color" Theme.textMuted ] [ text "Name" ]
-                    , th [ Attr.style "padding" "8px 10px", Attr.style "font-size" "12px", Attr.style "text-align" "left", Attr.style "color" Theme.textMuted ] [ text "Color" ]
-                    , th [ Attr.style "padding" "8px 10px", Attr.style "font-size" "12px", Attr.style "text-align" "right", Attr.style "color" Theme.textMuted ] [ text "Old Qty" ]
-                    , th [ Attr.style "padding" "8px 10px", Attr.style "font-size" "12px", Attr.style "text-align" "right", Attr.style "color" Theme.textMuted ] [ text "New Qty" ]
-                    , th [ Attr.style "padding" "8px 10px", Attr.style "font-size" "12px", Attr.style "text-align" "right", Attr.style "color" Theme.textMuted ] [ text "Diff" ]
+                    [ plainHeader "left" "Status"
+                    , plainHeader "left" "Part ID"
+                    , plainHeader "left" "Name"
+                    , plainHeader "left" "Color"
+                    , plainHeader "right" "Old qty"
+                    , plainHeader "right" "New qty"
+                    , plainHeader "right" "Diff"
                     ]
                 ]
             , tbody [] rows

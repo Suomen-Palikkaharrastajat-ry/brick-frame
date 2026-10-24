@@ -7,6 +7,7 @@ module Viewport.Shortcuts exposing
     , hasContinuousInput
     , helpRows
     , isTextEntryTarget
+    , isWidgetKey
     , lookFor
     , movementFor
     , normalizeKey
@@ -52,6 +53,7 @@ type alias KeyEvent =
     , repeat : Bool
     , targetTag : String
     , targetEditable : Bool
+    , targetRole : String
     }
 
 
@@ -113,16 +115,45 @@ normalizeKey key =
 
 {-| Whether a key event originated in something the user is typing into.
 
-`BUTTON` is included on purpose: the browser already activates a focused button
-on Space, so letting the document handler see it too made every Space press
-toggle playback twice.
+Buttons are deliberately not on the list: clicking a toolbar button focuses it,
+and treating that as typing silenced every shortcut until the canvas was
+clicked again. The keys a focused button does handle itself are left to it by
+`isWidgetKey` instead.
 
 -}
 isTextEntryTarget : KeyEvent -> Bool
 isTextEntryTarget event =
     event.targetEditable
         || List.member (String.toUpper event.targetTag)
-            [ "INPUT", "TEXTAREA", "SELECT", "BUTTON", "OPTION" ]
+            [ "INPUT", "TEXTAREA", "SELECT", "OPTION" ]
+
+
+{-| Whether the focused control handles this key itself, so a shortcut must not.
+
+Space and Enter activate a focused button or link — handling them again here
+toggled playback twice. Arrow keys, Home and End move within a composite widget
+(a radio group of swatches, a tree, a listbox), and orbiting the camera at the
+same time would make those widgets unusable from the keyboard.
+
+-}
+isWidgetKey : KeyEvent -> Bool
+isWidgetKey event =
+    let
+        tag =
+            String.toUpper event.targetTag
+
+        role =
+            String.toLower event.targetRole
+
+        activates =
+            List.member tag [ "BUTTON", "A", "SUMMARY" ]
+                || List.member role [ "button", "link", "checkbox", "switch", "menuitem", "tab", "option", "radio", "treeitem" ]
+
+        navigates =
+            List.member role [ "radio", "treeitem", "option", "tab", "slider", "menuitem", "gridcell" ]
+    in
+    (activates && List.member event.key [ " ", "Spacebar", "Enter" ])
+        || (navigates && List.member event.key [ "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End" ])
 
 
 {-| The one-shot action for a key press, if any.
@@ -133,7 +164,7 @@ at a time.
 -}
 actionFor : { helpVisible : Bool, walking : Bool } -> KeyEvent -> Maybe Action
 actionFor context event =
-    if isTextEntryTarget event || event.ctrl || event.meta || event.alt then
+    if isTextEntryTarget event || isWidgetKey event || event.ctrl || event.meta || event.alt then
         Nothing
 
     else

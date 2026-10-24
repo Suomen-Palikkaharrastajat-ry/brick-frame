@@ -596,12 +596,12 @@ editingSuite =
                         |> Expect.equal Nothing
             , test "Escape clears selection before exiting a submodel, and Enter enters a submodel" <|
                 \_ ->
-                    [ shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False } "Escape"
-                    , shortcutIn { hasSelection = True, helpVisible = True, walking = False, inSubmodel = False } "Escape"
-                    , shortcutIn { hasSelection = False, helpVisible = False, walking = False, inSubmodel = False } "Escape"
-                    , shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = True } "Escape"
-                    , shortcutIn { hasSelection = False, helpVisible = False, walking = False, inSubmodel = True } "Escape"
-                    , shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False } "Enter"
+                    [ shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False, menuOpen = False } "Escape"
+                    , shortcutIn { hasSelection = True, helpVisible = True, walking = False, inSubmodel = False, menuOpen = False } "Escape"
+                    , shortcutIn { hasSelection = False, helpVisible = False, walking = False, inSubmodel = False, menuOpen = False } "Escape"
+                    , shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = True, menuOpen = False } "Escape"
+                    , shortcutIn { hasSelection = False, helpVisible = False, walking = False, inSubmodel = True, menuOpen = False } "Escape"
+                    , shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False, menuOpen = False } "Enter"
                     ]
                         |> Expect.equal
                             [ Just Shortcuts.ClearSelection
@@ -617,10 +617,84 @@ editingSuite =
                     , shortcut { key = "g", ctrl = True, shift = True, target = "BODY" }
                     )
                         |> Expect.equal ( Just Shortcuts.GroupSubmodel, Just Shortcuts.ExplodeSubmodel )
+            , test "document keys: search, parts list, instructions, simulate, open" <|
+                \_ ->
+                    [ shortcut { key = "/", ctrl = False, shift = False, target = "BODY" }
+                    , shortcut { key = "b", ctrl = False, shift = False, target = "BODY" }
+                    , shortcut { key = "i", ctrl = False, shift = False, target = "BODY" }
+                    , shortcut { key = "p", ctrl = False, shift = False, target = "BODY" }
+                    , shortcut { key = "o", ctrl = True, shift = False, target = "BODY" }
+                    ]
+                        |> Expect.equal
+                            [ Just Shortcuts.FocusSearch
+                            , Just Shortcuts.ToggleBOM
+                            , Just Shortcuts.OpenInstructions
+                            , Just Shortcuts.Simulate
+                            , Just Shortcuts.OpenFile
+                            ]
+            , test "[ makes the move step finer and ] coarser" <|
+                \_ ->
+                    ( shortcut { key = "[", ctrl = False, shift = False, target = "BODY" }
+                    , shortcut { key = "]", ctrl = False, shift = False, target = "BODY" }
+                    )
+                        |> Expect.equal ( Just Shortcuts.NextGridStep, Just Shortcuts.CoarserGridStep )
+            , test "Escape closes an open menu first" <|
+                \_ ->
+                    shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False, menuOpen = True } "Escape"
+                        |> Expect.equal (Just Shortcuts.CloseMenu)
+            , test "shortcuts still work while a toolbar button has focus" <|
+                \_ ->
+                    -- Regression: clicking a button focused it, and the studio's
+                    -- keys went dead until the canvas was clicked.
+                    shortcut { key = "m", ctrl = False, shift = False, target = "BUTTON" }
+                        |> Expect.equal (Just (Shortcuts.UseTool MoveTool))
+            , test "arrows nudge a selection, Shift nudges finely" <|
+                \_ ->
+                    [ nudge True "ArrowRight" False
+                    , nudge True "ArrowUp" True
+                    , nudge True "PageDown" False
+                    ]
+                        |> Expect.equal
+                            [ Just (Shortcuts.Nudge { direction = Shortcuts.Right, fine = False })
+                            , Just (Shortcuts.Nudge { direction = Shortcuts.Away, fine = True })
+                            , Just (Shortcuts.Nudge { direction = Shortcuts.Down, fine = False })
+                            ]
+            , test "without a selection the arrows stay with the camera" <|
+                \_ ->
+                    nudge False "ArrowLeft" False
+                        |> Expect.equal Nothing
+            , test "arrows inside the tree move focus, not parts" <|
+                \_ ->
+                    Shortcuts.nudgeFor { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False, menuOpen = False }
+                        { key = "ArrowDown"
+                        , shift = False
+                        , ctrl = False
+                        , meta = False
+                        , alt = False
+                        , repeat = False
+                        , targetTag = "DIV"
+                        , targetEditable = False
+                        , targetRole = "treeitem"
+                        }
+                        |> Expect.equal Nothing
+            , test "nudging up raises the selection one plate, and undo puts it back" <|
+                \_ ->
+                    let
+                        heightOf model =
+                            Document.getPlacement 0 model.document
+                                |> Maybe.map (\p -> Vec3.getY (Mat4.transform p.matrix (vec3 0 0 0)))
+
+                        raised =
+                            loaded
+                                |> step (SelectPlacement 0 False)
+                                |> step (NudgeSelection (Shortcuts.Nudge { direction = Shortcuts.Up, fine = False }))
+                    in
+                    ( heightOf raised, heightOf (step Undo raised) )
+                        |> Expect.equal ( Just -8, Just 0 )
             , test "the viewport keys are not taken" <|
                 \_ ->
                     [ "w", "a", "s", "d", "f", "g", "1", "+", "?" ]
-                        |> List.map (shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False })
+                        |> List.map (shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False, menuOpen = False })
                         |> List.all ((==) Nothing)
                         |> Expect.equal True
             ]
@@ -1017,7 +1091,7 @@ editingSuite =
 
 shortcut : { key : String, ctrl : Bool, shift : Bool, target : String } -> Maybe Shortcuts.Action
 shortcut { key, ctrl, shift, target } =
-    Shortcuts.actionFor { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False }
+    Shortcuts.actionFor { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False, menuOpen = False }
         { key = key
         , shift = shift
         , ctrl = ctrl
@@ -1026,6 +1100,22 @@ shortcut { key, ctrl, shift, target } =
         , repeat = False
         , targetTag = target
         , targetEditable = False
+        , targetRole = ""
+        }
+
+
+nudge : Bool -> String -> Bool -> Maybe Shortcuts.Nudge
+nudge hasSelection key shift =
+    Shortcuts.nudgeFor { hasSelection = hasSelection, helpVisible = False, walking = False, inSubmodel = False, menuOpen = False }
+        { key = key
+        , shift = shift
+        , ctrl = False
+        , meta = False
+        , alt = False
+        , repeat = False
+        , targetTag = "DIV"
+        , targetEditable = False
+        , targetRole = "application"
         }
 
 
@@ -1040,6 +1130,7 @@ shortcutIn context key =
         , repeat = False
         , targetTag = "BODY"
         , targetEditable = False
+        , targetRole = ""
         }
 
 
@@ -1336,21 +1427,21 @@ panelSuite =
                         |> Expect.equal 0
             ]
         , describe "layout"
-            [ test "a wide window shrinks the canvas to the space between the panes" <|
+            [ test "a wide window shrinks the canvas to the space between the panes, below the header" <|
                 \_ ->
                     step (WindowSized 1400 900) loaded
                         |> Expect.all
                             [ \m -> Expect.equal Layout.Wide m.layout.mode
                             , \m -> Expect.equal 800 m.viewport.width
-                            , \m -> Expect.equal 900 m.viewport.height
+                            , \m -> Expect.equal (900 - Layout.headerHeight Layout.Wide) m.viewport.height
                             ]
-            , test "a phone gets a full-width canvas above the tab bar" <|
+            , test "a phone gets a full-width canvas between the header and the tab bar" <|
                 \_ ->
                     step (WindowSized 390 780) loaded
                         |> Expect.all
                             [ \m -> Expect.equal Layout.Narrow m.layout.mode
                             , \m -> Expect.equal 390 m.viewport.width
-                            , \m -> Expect.equal (780 - Layout.tabBarHeight) m.viewport.height
+                            , \m -> Expect.equal (780 - Layout.tabBarHeight - Layout.headerHeight Layout.Narrow) m.viewport.height
                             ]
             , test "a panel opens and closes" <|
                 \_ ->
@@ -1509,6 +1600,7 @@ snappingSuite =
                         , repeat = False
                         , targetTag = "BODY"
                         , targetEditable = False
+                        , targetRole = ""
                         }
 
                     mAltPressed =
@@ -1534,6 +1626,7 @@ snappingSuite =
                         , repeat = False
                         , targetTag = "BODY"
                         , targetEditable = False
+                        , targetRole = ""
                         }
 
                     dummyPoint =
@@ -1715,6 +1808,7 @@ snappingSuite =
                         , repeat = False
                         , targetTag = "BODY"
                         , targetEditable = False
+                        , targetRole = ""
                         }
 
                     modelDuringDrag =

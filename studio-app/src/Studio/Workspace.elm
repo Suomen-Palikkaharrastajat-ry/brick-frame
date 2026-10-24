@@ -30,6 +30,7 @@ import Browser.Events
 import Data
 import Dict exposing (Dict)
 import EmbeddedParts
+import FeatherIcons
 import Gear.Joint as Joint
 import Html exposing (Html, button, div, span, text)
 import Html.Attributes as Attr
@@ -38,6 +39,7 @@ import Http
 import Json.Decode as Decode
 import LDraw.BOM as BOM exposing (ModelBOM)
 import LDraw.Catalog as Catalog exposing (ElementCatalog, PartIndex)
+import LDraw.ColorData as ColorData
 import LDraw.Connectivity as Connectivity
     exposing
         ( BoundingBox3D
@@ -50,7 +52,7 @@ import LDraw.Connectivity as Connectivity
 import LDraw.Document as Document exposing (Document)
 import LDraw.Export as Export
 import LDraw.Resolve as Resolve
-import LDraw.Types exposing (LDrawLine)
+import LDraw.Types exposing (LDrawLine(..))
 import LDraw.Writer as Writer
 import Math.Matrix4 as Mat4 exposing (Mat4)
 import Math.Vector3 as Vec3 exposing (vec3)
@@ -170,6 +172,9 @@ type alias Model =
     , activeSnap : Maybe SnapCandidate
     , collidingPlacements : Set Int
     , altHeld : Bool
+    , announcement : String
+    , descriptions : Dict String String
+    , treeFocus : Maybe String
     }
 
 
@@ -258,6 +263,12 @@ type Msg
     | BOMCopyPlainText
     | BOMToggleDiff
     | ElementCatalogLoaded (Result Http.Error ElementCatalog)
+    | FocusElement String
+    | FocusSearch
+    | CoarserGridStep
+    | NudgeSelection StudioShortcuts.Nudge
+    | Request Msg
+    | MenuPick Msg
     | NoOp
 
 
@@ -329,6 +340,9 @@ init flags =
             , activeSnap = Nothing
             , collidingPlacements = Set.empty
             , altHeld = False
+            , announcement = ""
+            , descriptions = Dict.empty
+            , treeFocus = Nothing
             }
 
         ( opened, openCmd ) =
@@ -339,7 +353,9 @@ init flags =
         [ Cmd.map ViewportMsg viewportCmd
         , Cmd.map PreviewMsg previewCmd
         , openCmd
-        , Ports.setUrlHash (Hash.encodeCamera viewport.camera)
+
+        -- No hash write here: the camera has not been framed yet, and a hash
+        -- holding this default camera made every reload skip auto-fit.
         , PartIndex.fetch flags.ldrawBase PartIndexLoaded
         , Http.get
             { url = withoutTrailingSlash flags.ldrawBase ++ "/elements-index.json"
@@ -430,16 +446,262 @@ renderStyle flags =
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
+    let
+        ( next, cmd ) =
+            route msg model
+    in
+    case announce msg model next of
+        "" ->
+            ( next, cmd )
+
+        said ->
+            ( { next | announcement = said }, cmd )
+
+
+{-| What a screen reader should hear after `msg` took `before` to `after`, or
+"" for nothing new. Shown in the polite live region (`viewAnnouncement`).
+-}
+announce : Msg -> Model -> Model -> String
+announce msg before after =
+    let
+        count n =
+            String.fromInt n
+                ++ (if n == 1 then
+                        " part"
+
+                    else
+                        " parts"
+                   )
+
+        -- Did the command go through? Every edit and every undo/redo moves a
+        -- command between the history's stacks. (Comparing documents would
+        -- compare matrices, which Elm's equality cannot do reliably.)
+        changed =
+            ( List.length after.history.undo, List.length after.history.redo )
+                /= ( List.length before.history.undo, List.length before.history.redo )
+    in
+    case msg of
+        Undo ->
+            ifTrue changed "Undone"
+
+        Redo ->
+            ifTrue changed "Redone"
+
+        DeleteSelection ->
+            ifTrue changed ("Deleted " ++ count (Set.size before.selection))
+
+        DuplicateSelection ->
+            ifTrue changed ("Duplicated " ++ count (Set.size before.selection))
+
+        NudgeSelection _ ->
+            ifTrue changed ("Moved " ++ count (Set.size after.selection))
+
+        RotateSelection _ _ ->
+            ifTrue changed ("Turned " ++ count (Set.size after.selection) ++ " by " ++ String.fromInt after.rotateStep ++ "°")
+
+        UseTool tool ->
+            case tool of
+                SelectTool ->
+                    "Select tool"
+
+                MoveTool ->
+                    "Move tool"
+
+                RotateTool ->
+                    "Rotate tool"
+
+        NextGridStep ->
+            "Move step " ++ String.fromInt after.gridStep ++ " LDU"
+
+        CoarserGridStep ->
+            "Move step " ++ String.fromInt after.gridStep ++ " LDU"
+
+        NextRotateStep ->
+            "Turn step " ++ String.fromInt after.rotateStep ++ "°"
+
+        NextSnapDistance ->
+            "Snap " ++ snapValue after.snapDistance
+
+        NextCollisionMode ->
+            "Collision " ++ collisionValue after.collisionMode
+
+        PickColour code ->
+            Colours.nameOf code
+                ++ (if changed then
+                        " applied to " ++ count (Set.size after.selection)
+
+                    else
+                        ""
+                   )
+
+        _ ->
+            if after.selection /= before.selection then
+                selectionSummary after
+
+            else
+                ""
+
+
+ifTrue : Bool -> String -> String
+ifTrue condition said =
+    if condition then
+        said
+
+    else
+        ""
+
+
+{-| The selection in words: one part by name and colour, several by count.
+-}
+selectionSummary : Model -> String
+selectionSummary model =
+    case Set.toList model.selection |> List.filterMap (\id -> Document.getPlacement id model.document) of
+        [] ->
+            "Selection cleared"
+
+        [ placement ] ->
+            let
+                description =
+                    case partDescription model placement.fileText of
+                        "" ->
+                            partKey placement.fileText
+
+                        found ->
+                            found
+            in
+            description ++ ", " ++ Colours.nameOf placement.color ++ " selected"
+
+        placements ->
+            String.fromInt (List.length placements) ++ " parts selected"
+
+
+{-| Route a message: viewport key presses may be nudges, other viewport
+messages go to the viewport, the rest to `updatePage`.
+-}
+route : Msg -> Model -> ( Model, Cmd Msg )
+route msg model =
+    case msg of
+        ViewportMsg (Viewport.KeyPressed keyEvent) ->
+            -- With a selection, the arrows and Page keys nudge it. They are kept
+            -- from the viewport, which would otherwise orbit the camera at the
+            -- same time; key repeat keeps nudging while the key is held.
+            -- During a drag the arrows turn the dragged part instead.
+            case ( model.drag, StudioShortcuts.nudgeFor (shortcutContext model) keyEvent ) of
+                ( Nothing, Just nudge ) ->
+                    update (NudgeSelection nudge) model
+
+                _ ->
+                    updateViewport (Viewport.KeyPressed keyEvent) model
+
+        ViewportMsg viewportMsg ->
+            updateViewport viewportMsg model
+
+        _ ->
+            updatePage msg model
+
+
+{-| Pass a message to the viewport and act on the events it reports.
+-}
+updateViewport : Viewport.Msg -> Model -> ( Model, Cmd Msg )
+updateViewport viewportMsg model =
+    let
+        ( viewport, viewportCmd, events ) =
+            Viewport.update viewportMsg model.viewport
+
+        ( next, eventCmds ) =
+            handleEvents events ( { model | viewport = viewport }, [] )
+    in
+    ( next, Cmd.batch (Cmd.map ViewportMsg viewportCmd :: eventCmds) )
+
+
+{-| Focus an element once the next view has been drawn — a dialog or sheet that
+is opening does not exist in the DOM until then.
+-}
+focusSoon : String -> Cmd Msg
+focusSoon id =
+    Process.sleep 30
+        |> Task.andThen (\_ -> Browser.Dom.focus id)
+        |> Task.attempt (\_ -> NoOp)
+
+
+{-| How far a keyboard nudge moves the selection, in LDraw coordinates.
+
+The arrows follow the screen: the camera's right and forward directions are
+snapped to whichever ground axis they are closest to, so "right" stays right
+however the model has been orbited. LDraw is Y-down and its Z runs opposite to
+the camera's, hence the sign flips.
+
+-}
+nudgeDelta : Model -> StudioShortcuts.Nudge -> Vec3.Vec3
+nudgeDelta model (StudioShortcuts.Nudge nudge) =
+    let
+        azimuth =
+            model.viewport.camera.azimuth
+
+        horizontal =
+            if nudge.fine then
+                1
+
+            else
+                toFloat model.gridStep
+
+        vertical =
+            if nudge.fine then
+                1
+
+            else
+                min 8 (toFloat model.gridStep)
+
+        -- Screen right and screen-forward on the ground, in camera (Y-up) space.
+        ( rightX, rightZ ) =
+            ( cos azimuth, -(sin azimuth) )
+
+        ( awayX, awayZ ) =
+            ( -(sin azimuth), -(cos azimuth) )
+
+        onGround ( x, z ) amount =
+            if abs x >= abs z then
+                Vec3.vec3 (amount * sign x) 0 0
+
+            else
+                -- Camera Z is LDraw −Z.
+                Vec3.vec3 0 0 (-amount * sign z)
+
+        sign v =
+            if v < 0 then
+                -1
+
+            else
+                1
+    in
+    case nudge.direction of
+        StudioShortcuts.Right ->
+            onGround ( rightX, rightZ ) horizontal
+
+        StudioShortcuts.Left ->
+            onGround ( rightX, rightZ ) -horizontal
+
+        StudioShortcuts.Away ->
+            onGround ( awayX, awayZ ) horizontal
+
+        StudioShortcuts.Toward ->
+            onGround ( awayX, awayZ ) -horizontal
+
+        StudioShortcuts.Up ->
+            -- LDraw's Y points down.
+            Vec3.vec3 0 -vertical 0
+
+        StudioShortcuts.Down ->
+            Vec3.vec3 0 vertical 0
+
+
+{-| Everything that is not a key press for the viewport.
+-}
+updatePage : Msg -> Model -> ( Model, Cmd Msg )
+updatePage msg model =
     case msg of
         ViewportMsg viewportMsg ->
-            let
-                ( viewport, viewportCmd, events ) =
-                    Viewport.update viewportMsg model.viewport
-
-                ( next, eventCmds ) =
-                    handleEvents events ( { model | viewport = viewport }, [] )
-            in
-            ( next, Cmd.batch (Cmd.map ViewportMsg viewportCmd :: eventCmds) )
+            updateViewport viewportMsg model
 
         FileTextReceived text ->
             if model.drag /= Nothing then
@@ -466,7 +728,14 @@ update msg model =
                 ( opened, Cmd.batch [ openCmd, Ports.saveDraft "" ] )
 
         ToggleHelp ->
-            ( { model | helpOpen = not model.helpOpen }, Cmd.none )
+            ( { model | helpOpen = not model.helpOpen }
+            , if model.helpOpen then
+                -- Back to the canvas, where the keys the dialog listed work.
+                focusSoon "canvas"
+
+              else
+                focusSoon "shortcut-help-close"
+            )
 
         UseTool tool ->
             if model.drag /= Nothing then
@@ -717,6 +986,12 @@ update msg model =
         NextRotateStep ->
             ( { model | rotateStep = nextStep rotateSteps model.rotateStep }, Cmd.none )
 
+        CoarserGridStep ->
+            ( { model | gridStep = nextStep (List.reverse gridSteps) model.gridStep }, Cmd.none )
+
+        NudgeSelection nudge ->
+            whenSelected (\ids m -> commit (Translate ids (nudgeDelta m nudge)) m) model
+
         NextSnapDistance ->
             ( { model | snapDistance = nextSnapStep snapSteps model.snapDistance }, Cmd.none )
 
@@ -833,7 +1108,13 @@ update msg model =
                     model.palette
 
                 loaded =
-                    { model | palette = { palette | index = Palette.Loaded index } }
+                    { model
+                        | palette = { palette | index = Palette.Loaded index }
+                        , descriptions =
+                            index.parts
+                                |> List.map (\part -> ( partKey part.file, part.description ))
+                                |> Dict.fromList
+                    }
             in
             ( loaded, requestVisibleThumbnails loaded )
 
@@ -1121,10 +1402,17 @@ update msg model =
                     else
                         model.baseBOM
             in
-            ( { model | bomOpen = willOpen, baseBOM = baseBOM }, Cmd.none )
+            ( { model | bomOpen = willOpen, baseBOM = baseBOM }
+            , if willOpen then
+                -- Into the dialog, so Escape closes it and Tab stays inside.
+                focusSoon "bom-close"
+
+              else
+                focusSoon "canvas"
+            )
 
         CloseBOM ->
-            ( { model | bomOpen = False }, Cmd.none )
+            ( { model | bomOpen = False }, focusSoon "canvas" )
 
         BOMQuery query ->
             let
@@ -1248,6 +1536,35 @@ update msg model =
         InstructionsRequested ->
             -- The page above this one changes pages; the workspace stays as it is.
             ( model, Cmd.none )
+
+        FocusSearch ->
+            -- On a phone the search lives in the Parts sheet, which has to be
+            -- drawn before it can take focus.
+            ( if model.layout.mode == Layout.Narrow then
+                { model | panel = Just PartsPanel }
+
+              else
+                model
+            , focusSoon "part-search"
+            )
+
+        MenuPick inner ->
+            update inner { model | exportMenuOpen = False }
+
+        Request inner ->
+            ( model, Task.perform identity (Task.succeed inner) )
+
+        FocusElement id ->
+            -- Roving focus in the tree and the swatch grid: the arrow keys move
+            -- DOM focus, which only a command can do. The tree's last row is
+            -- remembered so Tab returns to it.
+            ( if String.startsWith "tree-" id then
+                { model | treeFocus = Just id }
+
+              else
+                model
+            , Task.attempt (\_ -> NoOp) (Browser.Dom.focus id)
+            )
 
         NoOp ->
             ( model, Cmd.none )
@@ -2603,6 +2920,7 @@ shortcutContext model =
     , helpVisible = model.helpOpen
     , walking = model.viewport.camera.navigation == Camera.Walk
     , inSubmodel = not (List.isEmpty model.context.path)
+    , menuOpen = model.exportMenuOpen
     }
 
 
@@ -2665,6 +2983,29 @@ msgForStudioAction action =
         StudioShortcuts.NextRotateStep ->
             NextRotateStep
 
+        StudioShortcuts.CoarserGridStep ->
+            CoarserGridStep
+
+        StudioShortcuts.OpenFile ->
+            RequestFileUpload
+
+        StudioShortcuts.FocusSearch ->
+            FocusSearch
+
+        StudioShortcuts.ToggleBOM ->
+            ToggleBOM
+
+        StudioShortcuts.OpenInstructions ->
+            -- The page change happens in `Main`, which only sees messages that
+            -- reach it from outside, so the key re-sends the button's message.
+            Request InstructionsRequested
+
+        StudioShortcuts.Simulate ->
+            Request SimulateRequested
+
+        StudioShortcuts.CloseMenu ->
+            ToggleExportMenu
+
 
 {-| Map a viewport shortcut to the message it stands for. Playback shortcuts have
 no meaning while editing.
@@ -2723,7 +3064,9 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
         [ Sub.map ViewportMsg (Viewport.subscriptions model.viewport)
-        , Ports.viewportResized (\size -> WindowSized size.width size.height)
+        , -- Window size, not the runtime's port: Elm replaces the mount node, so the
+          -- runtime's ResizeObserver watches a detached element and never fires.
+          Browser.Events.onResize WindowSized
         , Ports.fileContentReceived FileTextReceived
         , Ports.fileLoadError FileFailed
         , Ports.geometryFlattened (ViewportMsg << Viewport.GeometryFlattened)
@@ -2741,19 +3084,30 @@ subscriptions model =
 view : Model -> Html Msg
 view model =
     let
-        content =
+        narrow =
+            model.layout.mode == Layout.Narrow
+
+        body =
             case model.layout.mode of
                 Layout.Wide ->
                     div
                         [ Attr.style "display" "flex"
-                        , Attr.style "width" "100%"
-                        , Attr.style "height" "100%"
-                        , Attr.style "overflow" "hidden"
-                        , Attr.style "background" Theme.appBackground
+                        , Attr.style "flex" "1"
+                        , Attr.style "min-height" "0"
                         ]
-                        [ pane [ heading "Parts", div [ Attr.style "flex" "1", Attr.style "min-height" "0" ] [ viewPalette model ], heading "Colours", viewColours model ]
+                        [ pane "Parts and colours"
+                            [ heading "parts-heading" "Parts"
+                            , div [ Attr.style "flex" "1", Attr.style "min-height" "0" ] [ viewPalette model ]
+                            , heading "colours-heading" "Colour"
+                            , viewColours model
+                            ]
                         , canvasArea model
-                        , pane [ heading "Selection", viewInspector model, heading "Structure", div [ Attr.style "flex" "1", Attr.style "min-height" "0", Attr.style "overflow-y" "auto" ] [ viewTree model ] ]
+                        , pane "Selection and structure"
+                            [ heading "selection-heading" "Selection"
+                            , viewInspector model
+                            , heading "structure-heading" "Structure"
+                            , div [ Attr.class "scroll-thin", Attr.style "flex" "1", Attr.style "min-height" "0", Attr.style "overflow-y" "auto" ] [ viewTree model ]
+                            ]
                         ]
 
                 Layout.Narrow ->
@@ -2761,29 +3115,50 @@ view model =
                         [ Attr.style "position" "relative"
                         , Attr.style "display" "flex"
                         , Attr.style "flex-direction" "column"
-                        , Attr.style "width" "100%"
-                        , Attr.style "height" "100%"
-                        , Attr.style "overflow" "hidden"
-                        , Attr.style "background" Theme.appBackground
+                        , Attr.style "flex" "1"
+                        , Attr.style "min-height" "0"
                         ]
                         [ canvasArea model
                         , viewTabs model
                         , viewSheet model
                         ]
     in
-    if model.bomOpen then
-        div
-            [ Attr.style "position" "relative"
-            , Attr.style "width" "100%"
-            , Attr.style "height" "100%"
-            , Attr.style "overflow" "hidden"
-            ]
-            [ content
-            , viewBOMModal model
-            ]
+    div
+        [ Attr.style "position" "relative"
+        , Attr.style "display" "flex"
+        , Attr.style "flex-direction" "column"
+        , Attr.style "width" "100%"
+        , Attr.style "height" "100%"
+        , Attr.style "overflow" "hidden"
+        , Attr.style "background" Theme.appBackground
+        , Attr.style "color" Theme.textPrimary
+        ]
+        ([ viewHeader model
+         , body
+         , viewAnnouncement model
+         ]
+            ++ (if model.exportMenuOpen then
+                    [ div
+                        -- A click anywhere else closes the menu.
+                        [ Attr.style "position" "absolute"
+                        , Attr.style "inset" "0"
+                        , Attr.style "z-index" "29"
+                        , Html.Events.onClick ToggleExportMenu
+                        ]
+                        []
+                    , viewExportMenu model
+                    ]
 
-    else
-        content
+                else
+                    []
+               )
+            ++ (if model.bomOpen then
+                    [ viewBOMModal model ]
+
+                else
+                    []
+               )
+        )
 
 
 viewBOMModal : Model -> Html Msg
@@ -2824,11 +3199,35 @@ partIndexFromPalette palette =
             Catalog.emptyPartIndex
 
 
+{-| Give "~Moved to" stubs the name and category of the part they point at.
+The part index leaves stubs out, so a model that still uses an old number
+(4185 for 4185a) listed it as just "Part 4185".
+-}
+withMovedParts : Model -> PartIndex -> PartIndex
+withMovedParts model index =
+    Document.placements model.document
+        |> List.map .fileText
+        |> Set.fromList
+        |> Set.foldl
+            (\file acc ->
+                case Catalog.getPartInfo file acc of
+                    Just _ ->
+                        acc
+
+                    Nothing ->
+                        movedTo model (partKey file)
+                            |> Maybe.andThen (\target -> Catalog.getPartInfo target acc)
+                            |> Maybe.map (\info -> Catalog.insertPart file info acc)
+                            |> Maybe.withDefault acc
+            )
+            index
+
+
 computeBOM : Model -> ModelBOM
 computeBOM model =
     let
         pIndex =
-            partIndexFromPalette model.palette
+            withMovedParts model (partIndexFromPalette model.palette)
     in
     case model.bomState.submodel of
         Just subName ->
@@ -2842,45 +3241,69 @@ computeBOM model =
 -}
 canvasArea : Model -> Html Msg
 canvasArea model =
-    div
+    Html.main_
         [ Attr.style "position" "relative"
         , Attr.style "width" (String.fromInt model.layout.canvasWidth ++ "px")
         , Attr.style "height" (String.fromInt model.layout.canvasHeight ++ "px")
         , Attr.style "flex" "none"
         , Attr.style "overflow" "hidden"
         ]
-        [ Html.map ViewportMsg
-            (Viewport.view
-                { extraEntities =
-                    \camera _ aspect ->
-                        Overlay.entities camera
-                            aspect
-                            model.viewport.instancedScene
-                            { selection = model.selection
-                            , meshed = model.hints.meshed
-                            , isolated = model.hints.isolated
-                            , colliding = model.collidingPlacements
-                            , snapGuide = Maybe.map .guide model.activeSnap
-                            }
-                            (currentHandles model)
-                            (currentArcHandles model)
-                , coarsenWhileMoving = True
-                }
-                model.viewport
-            )
+        [ div
+            -- The keyboard's home: focusable so the camera and nudge keys have
+            -- somewhere to go, and `application` so screen readers pass them on.
+            -- Clicking the canvas focuses it, which also takes focus off
+            -- whichever toolbar button was used last.
+            [ Attr.id "canvas"
+            , Attr.class "canvas-focus"
+            , Attr.tabindex 0
+            , Attr.attribute "role" "application"
+            , Attr.attribute "aria-roledescription" "3D model view"
+            , Attr.attribute "aria-label" "Model"
+            , Attr.attribute "aria-describedby" "canvas-help"
+            , Attr.style "position" "absolute"
+            , Attr.style "inset" "0"
+            ]
+            [ span [ Attr.id "canvas-help", Attr.class "sr-only" ]
+                [ text "Drag to orbit, Shift and drag to pan, scroll to zoom. Arrow keys orbit the camera, or nudge the selected parts. Press question mark for all keyboard shortcuts." ]
+            , canvasView model
+            ]
         , overlay model
         ]
 
 
-{-| A side pane of the wide layout.
+canvasView : Model -> Html Msg
+canvasView model =
+    Html.map ViewportMsg
+        (Viewport.view
+            { extraEntities =
+                \camera _ aspect ->
+                    Overlay.entities camera
+                        aspect
+                        model.viewport.instancedScene
+                        { selection = model.selection
+                        , meshed = model.hints.meshed
+                        , isolated = model.hints.isolated
+                        , colliding = model.collidingPlacements
+                        , snapGuide = Maybe.map .guide model.activeSnap
+                        }
+                        (currentHandles model)
+                        (currentArcHandles model)
+            , coarsenWhileMoving = True
+            }
+            model.viewport
+        )
+
+
+{-| A side pane of the wide layout, as a labelled landmark.
 -}
-pane : List (Html Msg) -> Html Msg
-pane children =
-    div
-        [ Attr.style "width" (String.fromInt Layout.panelWidth ++ "px")
+pane : String -> List (Html Msg) -> Html Msg
+pane label children =
+    Html.aside
+        [ Attr.attribute "aria-label" label
+        , Attr.style "width" (String.fromInt Layout.panelWidth ++ "px")
         , Attr.style "flex" "none"
         , Attr.style "box-sizing" "border-box"
-        , Attr.style "padding" "12px"
+        , Attr.style "padding" "12px 14px"
         , Attr.style "display" "flex"
         , Attr.style "flex-direction" "column"
         , Attr.style "gap" "8px"
@@ -2893,15 +3316,19 @@ pane children =
         children
 
 
-heading : String -> Html Msg
-heading title =
-    div
-        [ Attr.style "color" Theme.textMuted
+{-| A pane section title: a real heading, so screen readers can jump between
+sections, styled as a small overline.
+-}
+heading : String -> String -> Html Msg
+heading id title =
+    Html.h2
+        [ Attr.id id
+        , Attr.style "margin" "6px 0 0"
+        , Attr.style "color" Theme.textMuted
         , Attr.style "text-transform" "uppercase"
-        , Attr.style "font-size" "10px"
+        , Attr.style "font-size" "11px"
+        , Attr.style "font-weight" "600"
         , Attr.style "letter-spacing" "0.08em"
-        , Attr.style "font-family" "monospace"
-        , Attr.style "margin-top" "4px"
         ]
         [ text title ]
 
@@ -2952,7 +3379,19 @@ viewPreview model =
                 ]
 
             Nothing ->
-                [ div [ Attr.style "padding" "12px", Attr.style "color" Theme.textMuted, Attr.style "font-size" "11px", Attr.style "font-family" "monospace" ] [ text "Preview" ] ]
+                [ div
+                    [ Attr.style "height" "100%"
+                    , Attr.style "display" "flex"
+                    , Attr.style "align-items" "center"
+                    , Attr.style "justify-content" "center"
+                    , Attr.style "padding" "12px"
+                    , Attr.style "box-sizing" "border-box"
+                    , Attr.style "text-align" "center"
+                    , Attr.style "color" Theme.textMuted
+                    , Attr.style "font-size" "13px"
+                    ]
+                    [ text "Pick a part to preview it" ]
+                ]
         )
 
 
@@ -2975,6 +3414,7 @@ viewColours model =
     Colours.view
         { current = model.activeColour
         , onPick = PickColour
+        , focus = FocusElement
         , armedPart = activePart
         , filterOfficialOnly = model.palette.colorFilterMode == Palette.OfficialOnly
         , onToggleFilter = PaletteToggleColorFilter
@@ -2985,7 +3425,8 @@ viewInspector : Model -> Html Msg
 viewInspector model =
     Inspector.viewWithCollisions
         model.collidingPlacements
-        { onPosition = SetPosition
+        { describe = partDescription model
+        , onPosition = SetPosition
         , onRotation = SetRotation
         , onDuplicate = DuplicateSelection
         , onDelete = DeleteSelection
@@ -3001,8 +3442,77 @@ viewTree model =
         , onSelect = SelectPlacement
         , activeSubmodel = model.context.activeSubmodel
         , onSelectSubmodel = SelectSubmodel
+        , describe = \file -> partDescription model file
+        , colourName = \code -> Dict.get code ColorData.colorNames |> Maybe.withDefault ("Colour " ++ String.fromInt code)
+        , colourCss = \code -> Dict.get code ColorData.colorTable |> Maybe.map Colours.css |> Maybe.withDefault "transparent"
+        , focus = FocusElement
+        , lastFocused = model.treeFocus
         }
         model.document
+
+
+{-| The palette's description for a part file, or "" when the catalogue is not
+loaded or does not list the file. Matches case-insensitively, with or without ".dat".
+-}
+partDescription : Model -> String -> String
+partDescription model file =
+    let
+        key =
+            partKey file
+    in
+    case Dict.get key model.descriptions of
+        Just description ->
+            description
+
+        Nothing ->
+            -- "~Moved to 4185a" stubs are left out of the part index, but the
+            -- part itself has been loaded for drawing: follow the stub once.
+            movedTo model key
+                |> Maybe.andThen (\target -> Dict.get (partKey target) model.descriptions)
+                |> Maybe.withDefault ""
+
+
+{-| The part a "~Moved to" stub points at, from the loaded part file.
+-}
+movedTo : Model -> String -> Maybe String
+movedTo model key =
+    [ key ++ ".dat", "parts/" ++ key ++ ".dat" ]
+        |> List.filterMap (\candidate -> Dict.get candidate model.viewport.partCache)
+        |> List.head
+        |> Maybe.andThen
+            (\status ->
+                case status of
+                    Resolve.Loaded ((Comment first) :: _) ->
+                        let
+                            words =
+                                String.words first
+                                    |> List.filter (\w -> w /= "0")
+                        in
+                        case words of
+                            "~Moved" :: "to" :: target :: _ ->
+                                Just target
+
+                            _ ->
+                                Nothing
+
+                    _ ->
+                        Nothing
+            )
+
+
+{-| A part file as the description lookup keys it: lower case, no `.dat`.
+-}
+partKey : String -> String
+partKey name =
+    let
+        lower =
+            String.toLower name
+    in
+    if String.endsWith ".dat" lower then
+        String.dropRight 4 lower
+
+    else
+        lower
 
 
 {-| The narrow layout's tab bar: one button per panel, tapping the open one closes it.
@@ -3011,32 +3521,60 @@ viewTabs : Model -> Html Msg
 viewTabs model =
     let
         tab panel label =
-            Button.toggle
-                { active = model.panel == Just panel, enabled = True }
-                (OpenPanel
+            button
+                [ Attr.type_ "button"
+                , Attr.class "ui-button"
+                , Html.Events.onClick
+                    (OpenPanel
+                        (if model.panel == Just panel then
+                            Nothing
+
+                         else
+                            Just panel
+                        )
+                    )
+                , Attr.attribute "aria-expanded" (boolAttr (model.panel == Just panel))
+                , Attr.attribute "aria-controls" "panel-sheet"
+                , Attr.style "flex" "1"
+                , Attr.style "padding" "0 8px"
+                , Attr.style "border" "none"
+                , Attr.style "border-top"
+                    ("3px solid "
+                        ++ (if model.panel == Just panel then
+                                Theme.brandYellow
+
+                            else
+                                "transparent"
+                           )
+                    )
+                , Attr.style "background" "transparent"
+                , Attr.style "color"
                     (if model.panel == Just panel then
-                        Nothing
+                        Theme.textPrimary
 
                      else
-                        Just panel
+                        Theme.textMuted
                     )
-                )
-                label
+                , Attr.style "font" "inherit"
+                , Attr.style "font-size" "13px"
+                , Attr.style "font-weight" "600"
+                , Attr.style "cursor" "pointer"
+                ]
+                [ text label ]
     in
-    div
-        [ Attr.style "height" (String.fromInt Layout.tabBarHeight ++ "px")
+    Html.nav
+        [ Attr.attribute "aria-label" "Panels"
+        , Attr.style "height" (String.fromInt Layout.tabBarHeight ++ "px")
         , Attr.style "flex" "none"
         , Attr.style "display" "flex"
-        , Attr.style "gap" "6px"
-        , Attr.style "padding" "6px 8px"
         , Attr.style "box-sizing" "border-box"
         , Attr.style "background" Theme.panelSurface
         , Attr.style "border-top" ("1px solid " ++ Theme.borderDefault)
         ]
         [ tab PartsPanel "Parts"
-        , tab ColoursPanel "Colours"
-        , tab InspectorPanel "Edit"
-        , tab TreePanel "Tree"
+        , tab ColoursPanel "Colour"
+        , tab InspectorPanel "Selection"
+        , tab TreePanel "Structure"
         ]
 
 
@@ -3049,8 +3587,11 @@ viewSheet model =
             text ""
 
         Just panel ->
-            div
-                [ Attr.style "position" "absolute"
+            Html.section
+                [ Attr.id "panel-sheet"
+                , Attr.attribute "aria-label" (panelName panel)
+                , Attr.class "scroll-thin"
+                , Attr.style "position" "absolute"
                 , Attr.style "left" "0"
                 , Attr.style "right" "0"
                 , Attr.style "bottom" (String.fromInt Layout.tabBarHeight ++ "px")
@@ -3060,7 +3601,9 @@ viewSheet model =
                 , Attr.style "overflow-y" "auto"
                 , Attr.style "background" Theme.panelSurface
                 , Attr.style "border-top" ("1px solid " ++ Theme.borderDefault)
-                , Attr.style "box-shadow" "0 -8px 24px color-mix(in srgb, var(--color-brand) 10%, transparent)"
+                , Attr.style "border-radius" "12px 12px 0 0"
+                , Attr.style "box-shadow" "0 -8px 24px color-mix(in srgb, var(--color-brand) 12%, transparent)"
+                , Attr.style "z-index" "5"
                 ]
                 [ case panel of
                     PartsPanel ->
@@ -3077,6 +3620,22 @@ viewSheet model =
                 ]
 
 
+panelName : Panel -> String
+panelName panel =
+    case panel of
+        PartsPanel ->
+            "Parts"
+
+        ColoursPanel ->
+            "Colour"
+
+        InspectorPanel ->
+            "Selection"
+
+        TreePanel ->
+            "Structure"
+
+
 overlay : Model -> Html Msg
 overlay model =
     div
@@ -3088,16 +3647,10 @@ overlay model =
         , Attr.style "pointer-events" "none"
         ]
         ([ viewStatus model
-         , viewTopBar model
          , viewBreadcrumbs model
-         , viewToolbar model
+         , viewToolRail model
+         , viewSnapBar model
          ]
-            ++ (if model.exportMenuOpen then
-                    [ viewExportMenu ]
-
-                else
-                    []
-               )
             ++ (if model.panel == Nothing then
                     [ viewPad model ]
 
@@ -3105,7 +3658,15 @@ overlay model =
                     []
                )
             ++ (if model.helpOpen then
-                    [ ShortcutHelp.view
+                    [ div
+                        [ Attr.style "position" "absolute"
+                        , Attr.style "inset" "0"
+                        , Attr.style "background" "color-mix(in srgb, var(--color-brand) 18%, transparent)"
+                        , Attr.style "pointer-events" "auto"
+                        , Html.Events.onClick ToggleHelp
+                        ]
+                        []
+                    , ShortcutHelp.view
                         { rows = Shortcuts.helpRows ++ StudioShortcuts.helpRows
                         , onClose = ToggleHelp
                         }
@@ -3124,164 +3685,470 @@ viewBreadcrumbs model =
 
     else
         let
-            rootSegment =
-                span
-                    [ Attr.style "cursor" "pointer"
-                    , Attr.style "text-decoration" "underline"
-                    , Html.Events.onClick (NavigateToSubmodel 0)
-                    ]
-                    [ text "Model" ]
+            lastIndex =
+                List.length model.context.path - 1
 
-            pathSegments =
-                model.context.path
-                    |> List.indexedMap
-                        (\idx step ->
-                            [ span [ Attr.style "margin" "0 4px" ] [ text ">" ]
-                            , span
-                                [ Attr.style "cursor" "pointer"
-                                , Attr.style "font-weight"
-                                    (if idx == List.length model.context.path - 1 then
-                                        "bold"
+            crumb target label isCurrent =
+                Html.li [ Attr.style "display" "flex", Attr.style "align-items" "center", Attr.style "gap" "6px" ]
+                    [ if isCurrent then
+                        span [ Attr.attribute "aria-current" "location", Attr.style "font-weight" "600" ] [ text label ]
 
-                                     else
-                                        "normal"
-                                    )
-                                , Attr.style "color"
-                                    (if idx == List.length model.context.path - 1 then
-                                        Theme.brand
-
-                                     else
-                                        Theme.textPrimary
-                                    )
-                                , Html.Events.onClick (NavigateToSubmodel (idx + 1))
-                                ]
-                                [ text step.submodelName ]
+                      else
+                        button
+                            [ Attr.type_ "button"
+                            , Html.Events.onClick (NavigateToSubmodel target)
+                            , Attr.style "background" "none"
+                            , Attr.style "border" "none"
+                            , Attr.style "padding" "2px 0"
+                            , Attr.style "font" "inherit"
+                            , Attr.style "color" Theme.textPrimary
+                            , Attr.style "text-decoration" "underline"
+                            , Attr.style "cursor" "pointer"
                             ]
+                            [ text label ]
+                    ]
+
+            separator =
+                Html.li [ Attr.attribute "aria-hidden" "true", Attr.style "color" Theme.textMuted ] [ text "›" ]
+
+            segments =
+                crumb 0 "Model" False
+                    :: List.concat
+                        (List.indexedMap
+                            (\idx step -> [ separator, crumb (idx + 1) step.submodelName (idx == lastIndex) ])
+                            model.context.path
                         )
-                    |> List.concat
 
             frameLabel =
                 case model.context.coordinateFrame of
                     LocalFrame ->
-                        "Frame: Local"
+                        "Frame: local"
 
                     WorldFrame ->
-                        "Frame: World"
+                        "Frame: world"
         in
-        div
-            [ Attr.style "position" "absolute"
-            , Attr.style "top" "44px"
-            , Attr.style "left" "12px"
+        Html.nav
+            [ Attr.attribute "aria-label" "Submodel path"
+            , Attr.style "position" "absolute"
+            , Attr.style "top" "12px"
+            , Attr.style "left" "50%"
+            , Attr.style "transform" "translateX(-50%)"
             , Attr.style "display" "flex"
             , Attr.style "align-items" "center"
-            , Attr.style "gap" "8px"
-            , Attr.style "padding" "4px 8px"
-            , Attr.style "border-radius" "4px"
-            , Attr.style "background" "color-mix(in srgb, var(--color-surface) 90%, transparent)"
+            , Attr.style "gap" "10px"
+            , Attr.style "padding" "4px 4px 4px 12px"
+            , Attr.style "border-radius" "10px"
+            , Attr.style "background" Theme.panelSurface
             , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+            , Attr.style "box-shadow" floatingShadow
             , Attr.style "pointer-events" "auto"
-            , Attr.style "font-family" "monospace"
-            , Attr.style "font-size" "11px"
-            , Attr.style "color" Theme.textPrimary
+            , Attr.style "font-size" "13px"
+            , Attr.style "white-space" "nowrap"
             ]
-            ([ rootSegment ]
-                ++ pathSegments
-                ++ [ span [ Attr.style "margin-left" "8px" ] []
-                   , Button.secondary ToggleCoordinateFrame frameLabel
-                   , Button.secondary ExitSubmodel "Exit (Esc)"
-                   ]
-            )
+            [ Html.ol [ Attr.style "display" "flex", Attr.style "gap" "6px", Attr.style "list-style" "none", Attr.style "margin" "0", Attr.style "padding" "0" ] segments
+            , Button.secondary ToggleCoordinateFrame frameLabel
+            , Button.icon
+                { icon = featherIcon FeatherIcons.logOut
+                , label = "Leave submodel"
+                , shortcut = Just "Esc"
+                , pressed = Nothing
+                , enabled = True
+                , showLabel = True
+                }
+                ExitSubmodel
+            ]
 
 
-viewTopBar : Model -> Html Msg
-viewTopBar model =
+{-| The app bar: what is open, then the document's actions.
+-}
+viewHeader : Model -> Html Msg
+viewHeader model =
     let
         narrow =
             model.layout.mode == Layout.Narrow
+
+        action iconName label shortcut msg =
+            Button.icon
+                { icon = featherIcon iconName
+                , label = label
+                , shortcut = shortcut
+                , pressed = Nothing
+                , enabled = True
+                , showLabel = not narrow
+                }
+                msg
+
+        group label children =
+            div
+                [ Attr.attribute "role" "group"
+                , Attr.attribute "aria-label" label
+                , Attr.style "display" "flex"
+                , Attr.style "gap" "6px"
+                , Attr.style "flex" "none"
+                ]
+                children
+
+        divider =
+            div
+                [ Attr.attribute "aria-hidden" "true"
+                , Attr.style "width" "1px"
+                , Attr.style "height" "24px"
+                , Attr.style "flex" "none"
+                , Attr.style "background" Theme.borderDefault
+                ]
+                []
     in
-    div
-        [ Attr.style "position" "absolute"
-        , Attr.style "top" "8px"
-        , Attr.style "left" "12px"
-        , Attr.style "right" "12px"
+    Html.header
+        [ Attr.class "scroll-none"
+        , Attr.style "height" (String.fromInt (Layout.headerHeight model.layout.mode) ++ "px")
+        , Attr.style "flex" "none"
+        , Attr.style "box-sizing" "border-box"
         , Attr.style "display" "flex"
         , Attr.style "align-items" "center"
-        , Attr.style "gap" "8px"
-        , Attr.style "pointer-events" "auto"
-        , Attr.style "touch-action" "none"
-        , Attr.style "color" Theme.textMuted
-        , Attr.style "font-family" "monospace"
-        , Attr.style "font-size" "12px"
-        , Attr.style "white-space" "nowrap"
+        , Attr.style "gap" "10px"
+        , Attr.style "padding" "0 12px"
+        , Attr.style "background" Theme.panelSurface
+        , Attr.style "border-bottom" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "overflow-x" "auto"
+        , Attr.style "overflow-y" "hidden"
         ]
-        [ span [ Attr.style "color" Theme.textPrimary, Attr.style "font-weight" "600" ]
-            [ text
+        [ div [ Attr.style "display" "flex", Attr.style "align-items" "center", Attr.style "gap" "10px", Attr.style "flex" "none" ]
+            [ brandMark
+            , Html.h1
+                [ Attr.style "margin" "0"
+                , Attr.style "font-size" "15px"
+                , Attr.style "font-weight" "700"
+                , Attr.style "letter-spacing" "-0.01em"
+                , Attr.style "white-space" "nowrap"
+                ]
                 (if narrow then
-                    "Studio"
+                    [ span [ Attr.class "sr-only" ] [ text "Palikkakehys " ], text "Studio" ]
 
                  else
-                    "Palikkakehys Studio"
+                    [ text "Palikkakehys Studio" ]
                 )
             ]
-        , span [ Attr.style "flex" "1", Attr.style "min-width" "0", Attr.style "overflow" "hidden", Attr.style "text-overflow" "ellipsis" ] [ text (documentSummary model) ]
-        , Button.toggle
-            { active = model.renderQuality == Style.Realistic, enabled = True }
-            ToggleRenderQuality
-            (if narrow then
-                "HD"
+        , div
+            [ Attr.style "flex" "1"
+            , Attr.style "min-width" "40px"
+            , Attr.style "overflow" "hidden"
+            , Attr.style "text-overflow" "ellipsis"
+            , Attr.style "white-space" "nowrap"
+            , Attr.style "color" Theme.textMuted
+            , Attr.style "font-size" "13px"
+            ]
+            [ text (documentSummary model) ]
+        , if narrow then
+            text ""
 
-             else
-                "Realistic"
-            )
-        , Button.secondary ToggleBOM
-            (if narrow then
-                "BOM"
+          else
+            group "File"
+                [ action FeatherIcons.filePlus "New" Nothing NewDocument
+                , action FeatherIcons.folder "Open" (Just "Ctrl O") RequestFileUpload
+                , action FeatherIcons.save "Save" (Just "Ctrl S") Save
+                , button
+                    [ Attr.type_ "button"
+                    , Attr.id "export-button"
+                    , Attr.class "ui-button"
+                    , Html.Events.onClick ToggleExportMenu
+                    , Attr.attribute "aria-expanded" (boolAttr model.exportMenuOpen)
+                    , Attr.attribute "aria-haspopup" "true"
+                    , Attr.attribute "aria-controls" "export-menu"
+                    , Attr.title "Export"
+                    , Attr.style "display" "inline-flex"
+                    , Attr.style "align-items" "center"
+                    , Attr.style "gap" "6px"
+                    , Attr.style "height" "36px"
+                    , Attr.style "min-width" "36px"
+                    , Attr.style "justify-content" "center"
+                    , Attr.style "padding"
+                        (if narrow then
+                            "0"
 
-             else
-                "Model Info & BOM (" ++ String.fromInt (List.length (Document.placements model.document)) ++ ")"
-            )
-        , Button.secondary SimulateRequested "▶ Simulate"
-        , Button.secondary InstructionsRequested "📖 Instructions"
-        , Button.secondary NewDocument "New"
-        , Button.secondary RequestFileUpload
-            (if narrow then
-                "Open"
+                         else
+                            "0 10px 0 12px"
+                        )
+                    , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+                    , Attr.style "border-radius" "6px"
+                    , Attr.style "background"
+                        (if model.exportMenuOpen then
+                            Theme.brandYellow
 
-             else
-                "Open file"
-            )
-        , Button.secondary Save "Save"
-        , Button.toggle { active = model.exportMenuOpen, enabled = True } ToggleExportMenu "Export"
+                         else
+                            Theme.panelSubtleBackground
+                        )
+                    , Attr.style "color" Theme.textPrimary
+                    , Attr.style "font" "inherit"
+                    , Attr.style "font-size" "13px"
+                    , Attr.style "font-weight" "500"
+                    , Attr.style "cursor" "pointer"
+                    ]
+                    (if narrow then
+                        [ featherIcon FeatherIcons.share, span [ Attr.class "sr-only" ] [ text "Export" ] ]
+
+                     else
+                        [ featherIcon FeatherIcons.share, text "Export", featherIcon FeatherIcons.chevronDown ]
+                    )
+                ]
+        , if narrow then
+            text ""
+
+          else
+            divider
+        , if narrow then
+            text ""
+
+          else
+            group "Model"
+                [ Button.icon
+                    { icon = featherIcon FeatherIcons.sun
+                    , label = "Realistic"
+                    , shortcut = Nothing
+                    , pressed = Just (model.renderQuality == Style.Realistic)
+                    , enabled = True
+                    , showLabel = not narrow
+                    }
+                    ToggleRenderQuality
+                , action FeatherIcons.list
+                    ("Parts list ("
+                        ++ String.fromInt (List.length (Document.placements model.document))
+                        ++ ")"
+                    )
+                    (Just "B")
+                    ToggleBOM
+                , action FeatherIcons.bookOpen "Instructions" (Just "I") InstructionsRequested
+                , simulateButton narrow
+                ]
+        , if narrow then
+            div [ Attr.style "display" "flex", Attr.style "gap" "6px", Attr.style "flex" "none" ]
+                [ simulateButton narrow
+                , button
+                    [ Attr.type_ "button"
+                    , Attr.id "export-button"
+                    , Attr.class "ui-button"
+                    , Html.Events.onClick ToggleExportMenu
+                    , Attr.attribute "aria-expanded" (boolAttr model.exportMenuOpen)
+                    , Attr.attribute "aria-haspopup" "true"
+                    , Attr.attribute "aria-controls" "export-menu"
+                    , Attr.attribute "aria-label" "More actions"
+                    , Attr.title "More actions"
+                    , Attr.style "display" "inline-flex"
+                    , Attr.style "align-items" "center"
+                    , Attr.style "justify-content" "center"
+                    , Attr.style "width" "36px"
+                    , Attr.style "height" "36px"
+                    , Attr.style "padding" "0"
+                    , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+                    , Attr.style "border-radius" "6px"
+                    , Attr.style "background"
+                        (if model.exportMenuOpen then
+                            Theme.brandYellow
+
+                         else
+                            Theme.panelSubtleBackground
+                        )
+                    , Attr.style "color" Theme.textPrimary
+                    , Attr.style "cursor" "pointer"
+                    ]
+                    [ featherIcon FeatherIcons.moreVertical ]
+                ]
+
+          else
+            text ""
         ]
 
 
-viewExportMenu : Html Msg
-viewExportMenu =
+{-| The header's leading action, in the dark brand colour.
+-}
+simulateButton : Bool -> Html Msg
+simulateButton narrow =
+    button
+        [ Attr.type_ "button"
+        , Attr.class "ui-button"
+        , Html.Events.onClick SimulateRequested
+        , Attr.title "Simulate gears (P)"
+        , Attr.attribute "aria-keyshortcuts" "P"
+        , Attr.style "display" "inline-flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "center"
+        , Attr.style "gap" "6px"
+        , Attr.style "height" "36px"
+        , Attr.style "min-width" "36px"
+        , Attr.style "padding"
+            (if narrow then
+                "0"
+
+             else
+                "0 14px"
+            )
+        , Attr.style "border" ("1px solid " ++ Theme.brand)
+        , Attr.style "border-radius" "6px"
+        , Attr.style "background" Theme.brand
+        , Attr.style "color" Theme.textOnDark
+        , Attr.style "font" "inherit"
+        , Attr.style "font-size" "13px"
+        , Attr.style "font-weight" "600"
+        , Attr.style "cursor" "pointer"
+        ]
+        (if narrow then
+            [ featherIcon FeatherIcons.play, span [ Attr.class "sr-only" ] [ text "Simulate" ] ]
+
+         else
+            [ featherIcon FeatherIcons.play, text "Simulate" ]
+        )
+
+
+{-| A small 2×2 brick in the brand yellow, the studio's logo.
+-}
+brandMark : Html Msg
+brandMark =
+    let
+        stud =
+            span
+                [ Attr.style "width" "7px"
+                , Attr.style "height" "7px"
+                , Attr.style "border-radius" "50%"
+                , Attr.style "background" "color-mix(in srgb, var(--color-brand-yellow) 70%, white)"
+                , Attr.style "box-shadow" "0 1px 0 color-mix(in srgb, var(--color-brand) 30%, transparent)"
+                ]
+                []
+    in
+    span
+        [ Attr.attribute "aria-hidden" "true"
+        , Attr.style "display" "grid"
+        , Attr.style "grid-template-columns" "7px 7px"
+        , Attr.style "gap" "4px"
+        , Attr.style "padding" "5px"
+        , Attr.style "border-radius" "6px"
+        , Attr.style "background" Theme.brandYellow
+        , Attr.style "box-shadow" "inset 0 -2px 0 color-mix(in srgb, var(--color-brand) 18%, transparent)"
+        ]
+        [ stud, stud, stud, stud ]
+
+
+viewExportMenu : Model -> Html Msg
+viewExportMenu model =
+    let
+        narrow =
+            model.layout.mode == Layout.Narrow
+
+        sectionTitle title =
+            div
+                [ Attr.attribute "aria-hidden" "true"
+                , Attr.style "padding" "8px 12px 2px"
+                , Attr.style "font-size" "11px"
+                , Attr.style "font-weight" "600"
+                , Attr.style "text-transform" "uppercase"
+                , Attr.style "letter-spacing" "0.06em"
+                , Attr.style "color" Theme.textMuted
+                ]
+                [ text title ]
+
+        -- On a phone the header has room for Simulate only; the rest of its
+        -- actions live at the top of this menu.
+        documentItems =
+            if narrow then
+                [ sectionTitle "Document"
+                , item NewDocument "New" "Start an empty model"
+                , item RequestFileUpload "Open…" "An .ldr, .mpd or .io file"
+                , item Save "Save" "Download the model as .ldr"
+                , item ToggleBOM ("Parts list (" ++ String.fromInt (List.length (Document.placements model.document)) ++ ")") "Every part, with BrickLink export"
+                , item InstructionsRequested "Instructions" "Step-by-step building pages"
+                , item ToggleRenderQuality
+                    (if model.renderQuality == Style.Realistic then
+                        "Draft rendering"
+
+                     else
+                        "Realistic rendering"
+                    )
+                    "Bevels and stud logos, slower"
+                , sectionTitle "Export"
+                ]
+
+            else
+                []
+
+        item msg label description =
+            button
+                [ Attr.type_ "button"
+                , Attr.class "ui-button"
+                , Html.Events.onClick (MenuPick msg)
+                , Attr.style "display" "flex"
+                , Attr.style "flex-direction" "column"
+                , Attr.style "align-items" "flex-start"
+                , Attr.style "gap" "2px"
+                , Attr.style "width" "100%"
+                , Attr.style "padding" "8px 12px"
+                , Attr.style "border" "1px solid transparent"
+                , Attr.style "border-radius" "6px"
+                , Attr.style "background" "transparent"
+                , Attr.style "color" Theme.textPrimary
+                , Attr.style "font" "inherit"
+                , Attr.style "text-align" "left"
+                , Attr.style "cursor" "pointer"
+                ]
+                [ span [ Attr.style "font-size" "13px", Attr.style "font-weight" "600" ] [ text label ]
+                , span [ Attr.style "font-size" "12px", Attr.style "color" Theme.textMuted ] [ text description ]
+                ]
+    in
     div
-        [ Attr.style "position" "absolute"
-        , Attr.style "top" "44px"
-        , Attr.style "right" "12px"
+        [ Attr.id "export-menu"
+        , Attr.attribute "role" "group"
+        , Attr.attribute "aria-label"
+            (if narrow then
+                "More actions"
+
+             else
+                "Export formats"
+            )
+        , Attr.class "scroll-thin"
+        , Attr.style "max-height" "calc(100% - 80px)"
+        , Attr.style "overflow-y" "auto"
+        , Attr.style "position" "absolute"
+        , Attr.style "top" (String.fromInt (Layout.headerHeight (modeFor narrow) + 4) ++ "px")
+        , Attr.style "right"
+            (if narrow then
+                "8px"
+
+             else
+                String.fromInt (Layout.panelWidth + 12) ++ "px"
+            )
+        , Attr.style "width" "260px"
+        , Attr.style "max-width" "calc(100% - 16px)"
+        , Attr.style "box-sizing" "border-box"
         , Attr.style "display" "flex"
         , Attr.style "flex-direction" "column"
-        , Attr.style "gap" "6px"
-        , Attr.style "padding" "10px"
+        , Attr.style "gap" "2px"
+        , Attr.style "padding" "6px"
         , Attr.style "background" Theme.panelSurface
         , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-        , Attr.style "border-radius" "8px"
-        , Attr.style "pointer-events" "auto"
-        , Attr.style "z-index" "20"
+        , Attr.style "border-radius" "10px"
+        , Attr.style "box-shadow" floatingShadow
+        , Attr.style "z-index" "30"
         ]
-        [ Button.secondary (ExportFormat Export.GlTFBinary) "Export glTF (.glb)"
-        , Button.secondary (ExportFormat Export.BlenderScript) "Export Blender (.py)"
-        , Button.secondary (ExportFormat Export.UsdzArchive) "Export AR (.usdz)"
-        , Button.secondary CaptureSnapshot "Render PNG (1080p)"
-        ]
+        (documentItems
+            ++ [ item (ExportFormat Export.GlTFBinary) "glTF (.glb)" "For three.js, Blender and most 3D tools"
+               , item (ExportFormat Export.BlenderScript) "Blender script (.py)" "Rebuilds the model with bevelled parts"
+               , item (ExportFormat Export.UsdzArchive) "AR model (.usdz)" "Quick Look on iPhone and iPad"
+               , item CaptureSnapshot "Picture (.png)" "A 1080p render of the current view"
+               ]
+        )
 
 
-{-| Tools, edit actions and the snapping steps, down the left edge.
+modeFor : Bool -> Layout.Mode
+modeFor narrow =
+    if narrow then
+        Layout.Narrow
+
+    else
+        Layout.Wide
+
+
+{-| Tools and edit actions: an opaque card down the left edge of the canvas
+(along the top on a phone), so nothing behind it bleeds through.
 -}
-viewToolbar : Model -> Html Msg
-viewToolbar model =
+viewToolRail : Model -> Html Msg
+viewToolRail model =
     let
         hasSelection =
             not (Set.isEmpty model.selection)
@@ -3299,96 +4166,324 @@ viewToolbar model =
         narrow =
             model.layout.mode == Layout.Narrow
 
-        direction =
-            if narrow then
-                "row"
+        tool t iconName label key =
+            Button.icon
+                { icon = featherIcon iconName
+                , label = label
+                , shortcut = Just key
+                , pressed = Just (model.tool == t)
+                , enabled = True
+                , showLabel = False
+                }
+                (UseTool t)
 
-            else
-                "column"
+        act iconName label key enabled msg =
+            Button.icon
+                { icon = featherIcon iconName
+                , label = label
+                , shortcut = Just key
+                , pressed = Nothing
+                , enabled = enabled
+                , showLabel = False
+                }
+                msg
 
-        group =
-            div [ Attr.style "display" "flex", Attr.style "flex-direction" direction, Attr.style "gap" "4px", Attr.style "flex" "none" ]
+        divider =
+            div
+                [ Attr.attribute "aria-hidden" "true"
+                , Attr.style "flex" "none"
+                , Attr.style "background" Theme.borderDefault
+                , Attr.style "margin"
+                    (if narrow then
+                        "4px 2px"
+
+                     else
+                        "2px 4px"
+                    )
+                , Attr.style
+                    (if narrow then
+                        "width"
+
+                     else
+                        "height"
+                    )
+                    "1px"
+                ]
+                []
     in
     div
-        ([ Attr.style "position" "absolute"
-         , Attr.style "top"
-            (if List.isEmpty model.context.path then
-                "56px"
-
-             else
-                "84px"
-            )
-         , Attr.style "left"
+        [ Attr.style "position" "absolute"
+        , Attr.style "top" "12px"
+        , Attr.style "left" "12px"
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "flex-start"
+        , Attr.style "gap" "8px"
+        , Attr.style "pointer-events" "none"
+        , Attr.style "max-width" "calc(100% - 24px)"
+        , Attr.style "flex-direction"
             (if narrow then
-                "8px"
+                "column"
 
              else
-                "12px"
+                "row"
             )
-         , Attr.style "display" "flex"
-         , Attr.style "flex-direction" direction
-         , Attr.style "gap"
-            (if narrow then
-                "6px"
+        ]
+        [ div
+            [ Attr.attribute "role" "group"
+            , Attr.attribute "aria-label" "Edit tools"
+            , Attr.class "scroll-none"
+            , Attr.style "display" "flex"
+            , Attr.style "flex-direction"
+                (if narrow then
+                    "row"
 
-             else
-                "12px"
-            )
-         , Attr.style "pointer-events" "auto"
-         , Attr.style "touch-action" "none"
-         ]
-            ++ (if narrow then
-                    [ Attr.style "right" "8px", Attr.style "overflow-x" "auto", Attr.style "padding-bottom" "4px" ]
-
-                else
-                    []
-               )
-        )
-        [ group
-            [ toolButton model SelectTool "Select"
-            , toolButton model MoveTool "Move"
-            , toolButton model RotateTool "Rotate"
+                 else
+                    "column"
+                )
+            , Attr.style "gap" "4px"
+            , Attr.style "padding" "6px"
+            , Attr.style "max-width" "100%"
+            , Attr.style "box-sizing" "border-box"
+            , Attr.style "overflow-x" "auto"
+            , Attr.style "background" Theme.panelSurface
+            , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+            , Attr.style "border-radius" "10px"
+            , Attr.style "box-shadow" floatingShadow
+            , Attr.style "pointer-events" "auto"
+            , Attr.style "touch-action" "none"
             ]
-        , group
-            ([ Button.toggle { active = False, enabled = Edit.canUndo model.history } Undo "Undo"
-             , Button.toggle { active = False, enabled = Edit.canRedo model.history } Redo "Redo"
-             , Button.toggle { active = False, enabled = hasSelection } DuplicateSelection "Duplicate"
-             , Button.toggle { active = False, enabled = hasSelection } DeleteSelection "Delete"
-             , Button.toggle { active = False, enabled = hasSelection } GroupSelection "Group"
-             , Button.toggle { active = False, enabled = hasSelectedSubmodel } ExplodeSelection "Explode"
-             , Button.toggle { active = False, enabled = hasSelectedSubmodel } EnterSubmodel "Enter"
-             ]
-                ++ rotateButtons model hasSelection
-            )
-        , group
-            [ Button.secondary NextGridStep ("Move step " ++ String.fromInt model.gridStep)
-            , Button.secondary NextRotateStep ("Turn step " ++ String.fromInt model.rotateStep ++ "°")
-            , Button.secondary NextSnapDistance (snapLabel model.snapDistance)
-            , Button.secondary NextCollisionMode (collisionLabel model.collisionMode)
+            [ tool SelectTool FeatherIcons.mousePointer "Select" "V"
+            , tool MoveTool FeatherIcons.move "Move" "M"
+            , tool RotateTool FeatherIcons.rotateCw "Rotate" "R"
+            , divider
+            , act FeatherIcons.cornerUpLeft "Undo" "Ctrl Z" (Edit.canUndo model.history) Undo
+            , act FeatherIcons.cornerUpRight "Redo" "Ctrl Shift Z" (Edit.canRedo model.history) Redo
+            , divider
+            , act FeatherIcons.copy "Duplicate" "Ctrl D" hasSelection DuplicateSelection
+            , act FeatherIcons.trash2 "Delete" "Delete" hasSelection DeleteSelection
+            , divider
+            , act FeatherIcons.package "Group into submodel" "Ctrl G" hasSelection GroupSelection
+            , act FeatherIcons.box "Explode submodel" "Ctrl Shift G" hasSelectedSubmodel ExplodeSelection
+            , act FeatherIcons.logIn "Enter submodel" "Enter" hasSelectedSubmodel EnterSubmodel
             ]
+        , viewTurnPanel model hasSelection
         ]
 
 
-toolButton : Model -> Tool -> String -> Html Msg
-toolButton model tool label =
-    Button.toggle { active = model.tool == tool, enabled = True } (UseTool tool) label
-
-
-{-| The rotate tool's buttons: a turn either way about each axis.
+{-| With the rotate tool: a turn either way about each axis, by the turn step.
 -}
-rotateButtons : Model -> Bool -> List (Html Msg)
-rotateButtons model hasSelection =
-    if model.tool == RotateTool then
-        [ ( "X", AxisX ), ( "Y", AxisY ), ( "Z", AxisZ ) ]
-            |> List.concatMap
-                (\( name, axis ) ->
-                    [ Button.toggle { active = False, enabled = hasSelection } (RotateSelection axis -1) (name ++ " −")
-                    , Button.toggle { active = False, enabled = hasSelection } (RotateSelection axis 1) (name ++ " +")
-                    ]
-                )
+viewTurnPanel : Model -> Bool -> Html Msg
+viewTurnPanel model hasSelection =
+    if model.tool /= RotateTool then
+        text ""
 
     else
-        []
+        let
+            turn ( name, axis ) =
+                div [ Attr.style "display" "flex", Attr.style "gap" "4px", Attr.style "align-items" "center" ]
+                    [ span [ Attr.style "width" "14px", Attr.style "font-weight" "700", Attr.style "font-size" "12px", Attr.style "color" (axisColour axis), Attr.attribute "aria-hidden" "true" ] [ text name ]
+                    , Button.icon
+                        { icon = featherIcon FeatherIcons.rotateCcw
+                        , label = "Turn " ++ String.fromInt model.rotateStep ++ "° back about " ++ name
+                        , shortcut = Just ("Shift " ++ name)
+                        , pressed = Nothing
+                        , enabled = hasSelection
+                        , showLabel = False
+                        }
+                        (RotateSelection axis -1)
+                    , Button.icon
+                        { icon = featherIcon FeatherIcons.rotateCw
+                        , label = "Turn " ++ String.fromInt model.rotateStep ++ "° about " ++ name
+                        , shortcut = Just name
+                        , pressed = Nothing
+                        , enabled = hasSelection
+                        , showLabel = False
+                        }
+                        (RotateSelection axis 1)
+                    ]
+        in
+        div
+            [ Attr.attribute "role" "group"
+            , Attr.attribute "aria-label" "Turn the selection"
+            , Attr.style "display" "flex"
+            , Attr.style "flex-direction" "column"
+            , Attr.style "gap" "4px"
+            , Attr.style "padding" "8px"
+            , Attr.style "background" Theme.panelSurface
+            , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+            , Attr.style "border-radius" "10px"
+            , Attr.style "box-shadow" floatingShadow
+            , Attr.style "pointer-events" "auto"
+            ]
+            (div [ Attr.style "font-size" "11px", Attr.style "font-weight" "600", Attr.style "color" Theme.textMuted, Attr.style "text-transform" "uppercase", Attr.style "letter-spacing" "0.06em" ]
+                [ text ("Turn " ++ String.fromInt model.rotateStep ++ "°") ]
+                :: List.map turn [ ( "X", AxisX ), ( "Y", AxisY ), ( "Z", AxisZ ) ]
+            )
+
+
+{-| The axis colours the gizmo uses, for the turn panel's labels.
+-}
+axisColour : Axis -> String
+axisColour axis =
+    case axis of
+        AxisX ->
+            Theme.brandRed
+
+        AxisY ->
+            "color-mix(in srgb, var(--color-brand-yellow) 45%, var(--color-brand))"
+
+        AxisZ ->
+            "color-mix(in srgb, var(--color-brand) 40%, var(--color-bg-page))"
+
+
+{-| Snapping and collision settings along the bottom of the canvas, each a
+button that steps to the next value, and the live gear hint beside them.
+-}
+viewSnapBar : Model -> Html Msg
+viewSnapBar model =
+    let
+        narrow =
+            model.layout.mode == Layout.Narrow
+
+        chip msg label value tip =
+            button
+                [ Attr.type_ "button"
+                , Attr.class "ui-button"
+                , Html.Events.onClick msg
+                , Attr.title tip
+                , Attr.attribute "aria-label" (label ++ ": " ++ value ++ ". " ++ tip)
+                , Attr.style "display" "inline-flex"
+                , Attr.style "align-items" "baseline"
+                , Attr.style "gap" "6px"
+                , Attr.style "height" "30px"
+                , Attr.style "padding" "0 10px"
+                , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+                , Attr.style "border-radius" "15px"
+                , Attr.style "background" Theme.panelSurface
+                , Attr.style "color" Theme.textPrimary
+                , Attr.style "font" "inherit"
+                , Attr.style "font-size" "12px"
+                , Attr.style "line-height" "28px"
+                , Attr.style "cursor" "pointer"
+                , Attr.style "flex" "none"
+                ]
+                [ span [ Attr.style "color" Theme.textMuted ] [ text label ]
+                , span [ Attr.style "font-weight" "600" ] [ text value ]
+                ]
+
+        hint =
+            Hints.summary model.hints
+    in
+    div
+        [ Attr.attribute "role" "group"
+        , Attr.attribute "aria-label" "Snapping"
+        , Attr.class "scroll-none"
+        , Attr.style "position" "absolute"
+        , Attr.style "left" "12px"
+        , Attr.style
+            (if narrow then
+                "top"
+
+             else
+                "bottom"
+            )
+            (if narrow then
+                "76px"
+
+             else
+                "12px"
+            )
+        , Attr.style "right"
+            (if narrow then
+                "12px"
+
+             else
+                "190px"
+            )
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "gap" "6px"
+        , Attr.style "overflow-x" "auto"
+        , Attr.style "pointer-events" "none"
+        ]
+        [ div [ Attr.style "display" "flex", Attr.style "gap" "6px", Attr.style "pointer-events" "auto", Attr.style "box-shadow" "none" ]
+            [ chip NextGridStep "Move step" (String.fromInt model.gridStep ++ " LDU") "Change move step ( [ or ] )"
+            , chip NextRotateStep "Turn step" (String.fromInt model.rotateStep ++ "°") "Change turn step ( , or . )"
+            , chip NextSnapDistance "Snap" (snapValue model.snapDistance) "Change connection snapping distance"
+            , chip NextCollisionMode "Collision" (collisionValue model.collisionMode) "Change how overlapping parts are handled"
+            ]
+        , if hint == "" || narrow then
+            text ""
+
+          else
+            span
+                [ Attr.style "flex" "none"
+                , Attr.style "padding" "5px 10px"
+                , Attr.style "border-radius" "15px"
+                , Attr.style "background" "color-mix(in srgb, var(--color-bg-page) 85%, transparent)"
+                , Attr.style "color" Theme.textMuted
+                , Attr.style "font-size" "12px"
+                ]
+                [ text hint ]
+        ]
+
+
+snapValue : Float -> String
+snapValue dist =
+    if dist <= 0 then
+        "off"
+
+    else
+        String.fromInt (round dist) ++ " LDU"
+
+
+collisionValue : CollisionMode -> String
+collisionValue mode =
+    case mode of
+        CollisionStrict ->
+            "strict"
+
+        CollisionSoft ->
+            "soft"
+
+        CollisionOff ->
+            "off"
+
+
+{-| The polite live region: the last thing an action did, for screen readers.
+-}
+viewAnnouncement : Model -> Html Msg
+viewAnnouncement model =
+    div
+        [ Attr.attribute "role" "status"
+        , Attr.attribute "aria-live" "polite"
+        , Attr.class "sr-only"
+        ]
+        [ text model.announcement ]
+
+
+{-| A Feather icon at the size the studio's buttons use.
+-}
+featherIcon : FeatherIcons.Icon -> Html msg
+featherIcon icon =
+    icon
+        |> FeatherIcons.withSize 18
+        |> FeatherIcons.withStrokeWidth 1.75
+        |> FeatherIcons.toHtml [ Attr.attribute "aria-hidden" "true", Attr.attribute "focusable" "false" ]
+
+
+floatingShadow : String
+floatingShadow =
+    "0 6px 20px color-mix(in srgb, var(--color-brand) 12%, transparent), 0 1px 2px color-mix(in srgb, var(--color-brand) 8%, transparent)"
+
+
+boolAttr : Bool -> String
+boolAttr value =
+    if value then
+        "true"
+
+    else
+        "false"
 
 
 documentSummary : Model -> String

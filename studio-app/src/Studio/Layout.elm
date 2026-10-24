@@ -1,8 +1,9 @@
-module Studio.Layout exposing (Layout, Mode(..), Panel(..), compute, panelWidth, tabBarHeight)
+module Studio.Layout exposing (Layout, Mode(..), Panel(..), compute, headerHeight, panelWidth, tabBarHeight)
 
 {-| How the studio's panes are laid out for a window, and how big the 3D canvas
 inside that layout is.
 
+A header row with the document actions runs across the top in both layouts.
 On a wide window the palette sits on the left, the inspector and tree on the
 right and the canvas between them. On a narrow one (a phone) the canvas takes the
 window above a tab bar and the panels become one at a time, in a sheet over its
@@ -52,6 +53,18 @@ tabBarHeight =
     46
 
 
+{-| Height of the header row above the canvas, in pixels.
+-}
+headerHeight : Mode -> Int
+headerHeight mode =
+    case mode of
+        Wide ->
+            56
+
+        Narrow ->
+            48
+
+
 {-| The narrowest window that gets the wide layout.
 -}
 wideFrom : Int
@@ -66,11 +79,11 @@ compute width height =
     if width >= wideFrom then
         { mode = Wide
         , canvasWidth = width - 2 * panelWidth
-        , canvasHeight = height
+        , canvasHeight = max 1 (height - headerHeight Wide)
         }
 
     else
         { mode = Narrow
         , canvasWidth = width
-        , canvasHeight = max 1 (height - tabBarHeight)
+        , canvasHeight = max 1 (height - tabBarHeight - headerHeight Narrow)
         }

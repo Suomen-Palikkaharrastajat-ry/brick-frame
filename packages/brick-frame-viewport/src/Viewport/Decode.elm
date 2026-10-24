@@ -69,33 +69,39 @@ wheelDeltaDecoder =
 
 {-| Everything `UI.Shortcuts` needs from a keyboard event.
 
-`target.tagName` and `target.isContentEditable` drive the typing guard. Both are
+`target.tagName`, `target.isContentEditable` and `target.role` drive the typing
+and widget guards. All three are
 read defensively — a synthetic event, or one whose target is the document rather
 than an element, has neither.
 
 -}
 keyEventDecoder : Decode.Decoder Shortcuts.KeyEvent
 keyEventDecoder =
-    Decode.map8
-        (\key shift ctrl meta alt repeat targetTag targetEditable ->
-            { key = key
-            , shift = shift
-            , ctrl = ctrl
-            , meta = meta
-            , alt = alt
-            , repeat = repeat
-            , targetTag = targetTag
-            , targetEditable = targetEditable
-            }
+    Decode.map2 (\event role -> { event | targetRole = role })
+        (Decode.map8
+            (\key shift ctrl meta alt repeat targetTag targetEditable ->
+                { key = key
+                , shift = shift
+                , ctrl = ctrl
+                , meta = meta
+                , alt = alt
+                , repeat = repeat
+                , targetTag = targetTag
+                , targetEditable = targetEditable
+                , targetRole = ""
+                }
+            )
+            (Decode.field "key" Decode.string)
+            (optionalFlag "shiftKey")
+            (optionalFlag "ctrlKey")
+            (optionalFlag "metaKey")
+            (optionalFlag "altKey")
+            (optionalFlag "repeat")
+            (Decode.oneOf [ Decode.at [ "target", "tagName" ] Decode.string, Decode.succeed "" ])
+            (Decode.oneOf [ Decode.at [ "target", "isContentEditable" ] Decode.bool, Decode.succeed False ])
         )
-        (Decode.field "key" Decode.string)
-        (optionalFlag "shiftKey")
-        (optionalFlag "ctrlKey")
-        (optionalFlag "metaKey")
-        (optionalFlag "altKey")
-        (optionalFlag "repeat")
-        (Decode.oneOf [ Decode.at [ "target", "tagName" ] Decode.string, Decode.succeed "" ])
-        (Decode.oneOf [ Decode.at [ "target", "isContentEditable" ] Decode.bool, Decode.succeed False ])
+        -- `Element.role` reflects the `role` attribute; it is null when unset.
+        (Decode.oneOf [ Decode.at [ "target", "role" ] Decode.string, Decode.succeed "" ])
 
 
 {-| A boolean event field, defaulting to `False` when absent.

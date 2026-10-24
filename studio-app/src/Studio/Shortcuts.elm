@@ -1,4 +1,4 @@
-module Studio.Shortcuts exposing (Action(..), Context, Tool(..), actionFor, helpRows)
+module Studio.Shortcuts exposing (Action(..), Context, Nudge(..), NudgeDirection(..), Tool(..), actionFor, helpRows, nudgeFor)
 
 {-| The studio's keyboard shortcuts, on top of the viewport's.
 
@@ -8,7 +8,9 @@ where they are listed here (undo, redo, duplicate, select all), so the browser's
 own shortcuts keep working.
 
 The viewport owns W A S D, the arrows, F, G, `?`, `+ -` and the digits; the keys
-below avoid them.
+below avoid them. The one exception is the arrows while something is selected:
+then they nudge the selection (`nudgeFor`), the way every editor does, and the
+host keeps those presses away from the camera.
 
 -}
 
@@ -38,7 +40,31 @@ type Action
     | UseTool Tool
     | RotateSelection Axis Int
     | NextGridStep
+    | CoarserGridStep
     | NextRotateStep
+    | OpenFile
+    | FocusSearch
+    | ToggleBOM
+    | OpenInstructions
+    | Simulate
+    | CloseMenu
+
+
+{-| A keyboard nudge of the selection, relative to the view: `Right` is towards
+the right of the screen, `Away` into it, `Up` against gravity. `fine` moves one
+LDU instead of the grid step.
+-}
+type Nudge
+    = Nudge { direction : NudgeDirection, fine : Bool }
+
+
+type NudgeDirection
+    = Left
+    | Right
+    | Away
+    | Toward
+    | Up
+    | Down
 
 
 {-| What `Escape` needs to know to back out of the right layer.
@@ -48,6 +74,7 @@ type alias Context =
     , helpVisible : Bool
     , walking : Bool
     , inSubmodel : Bool
+    , menuOpen : Bool
     }
 
 
@@ -55,7 +82,7 @@ type alias Context =
 -}
 actionFor : Context -> KeyEvent -> Maybe Action
 actionFor context event =
-    if ViewportShortcuts.isTextEntryTarget event then
+    if ViewportShortcuts.isTextEntryTarget event || ViewportShortcuts.isWidgetKey event then
         Nothing
 
     else if event.ctrl || event.meta then
@@ -77,6 +104,9 @@ actionFor context event =
 
             "a" ->
                 Just SelectAll
+
+            "o" ->
+                Just OpenFile
 
             "g" ->
                 Just
@@ -109,7 +139,10 @@ actionFor context event =
                     Nothing
 
             "Escape" ->
-                if context.hasSelection && not context.helpVisible && not context.walking then
+                if context.menuOpen then
+                    Just CloseMenu
+
+                else if context.hasSelection && not context.helpVisible && not context.walking then
                     Just ClearSelection
 
                 else if context.inSubmodel && not context.helpVisible && not context.walking then
@@ -137,16 +170,74 @@ actionFor context event =
                 Just (RotateSelection AxisZ (direction event))
 
             "]" ->
-                Just NextGridStep
+                Just CoarserGridStep
 
             "[" ->
                 Just NextGridStep
+
+            "/" ->
+                Just FocusSearch
+
+            "b" ->
+                Just ToggleBOM
+
+            "i" ->
+                Just OpenInstructions
+
+            "p" ->
+                Just Simulate
 
             "." ->
                 Just NextRotateStep
 
             "," ->
                 Just NextRotateStep
+
+            _ ->
+                Nothing
+
+
+{-| The nudge an arrow or Page key asks for, when something is selected and the
+camera is not walking. Shift makes it fine. Ctrl, Cmd and Alt chords are left to
+the browser.
+-}
+nudgeFor : Context -> KeyEvent -> Maybe Nudge
+nudgeFor context event =
+    if
+        ViewportShortcuts.isTextEntryTarget event
+            || ViewportShortcuts.isWidgetKey event
+            || event.ctrl
+            || event.meta
+            || event.alt
+            || not context.hasSelection
+            || context.walking
+            || context.helpVisible
+    then
+        Nothing
+
+    else
+        let
+            nudge d =
+                Just (Nudge { direction = d, fine = event.shift })
+        in
+        case event.key of
+            "ArrowLeft" ->
+                nudge Left
+
+            "ArrowRight" ->
+                nudge Right
+
+            "ArrowUp" ->
+                nudge Away
+
+            "ArrowDown" ->
+                nudge Toward
+
+            "PageUp" ->
+                nudge Up
+
+            "PageDown" ->
+                nudge Down
 
             _ ->
                 Nothing
@@ -169,14 +260,20 @@ helpRows =
       , [ ( "Click", "Select (Shift: add or remove)" )
         , ( "V M R", "Select / move / rotate tool" )
         , ( "Drag a handle", "Move along that axis" )
+        , ( "Arrows", "Nudge the selection by the move step" )
+        , ( "Shift Arrows", "Nudge by 1 LDU" )
+        , ( "PageUp PageDown", "Raise / lower the selection" )
         , ( "X Y Z", "Turn the selection (Shift: the other way)" )
         , ( "Delete", "Remove the selection" )
         , ( "Ctrl D", "Duplicate" )
         , ( "Ctrl A", "Select all" )
-        , ( "Ctrl G", "Group selection into submodel" )
+        , ( "Esc", "Clear selection / exit submodel" )
+        ]
+      )
+    , ( "Submodels"
+      , [ ( "Ctrl G", "Group selection into submodel" )
         , ( "Ctrl Shift G", "Explode submodel" )
         , ( "Enter / Double-click", "Enter submodel" )
-        , ( "Esc", "Clear selection / exit submodel" )
         ]
       )
     , ( "History"
@@ -185,8 +282,17 @@ helpRows =
         ]
       )
     , ( "Grid"
-      , [ ( "[ ]", "Move step: 20, 8, 4 or 1 LDU" )
+      , [ ( "[ ]", "Finer / coarser move step: 1, 4, 8, 20 LDU" )
         , ( ", .", "Turn step: 90° or 15°" )
+        ]
+      )
+    , ( "Document"
+      , [ ( "/", "Search parts" )
+        , ( "Ctrl O", "Open a file" )
+        , ( "Ctrl S", "Save" )
+        , ( "B", "Parts list" )
+        , ( "I", "Building instructions" )
+        , ( "P", "Simulate gears" )
         ]
       )
     ]

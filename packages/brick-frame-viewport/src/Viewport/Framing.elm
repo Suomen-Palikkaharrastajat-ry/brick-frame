@@ -241,7 +241,19 @@ framedDistance width height radius =
         limitingHalfFov =
             max 0.15 (min (fovX / 2) (fovY / 2))
     in
-    clamp 8 maxAutoFitDistance (radius / sin limitingHalfFov * 1.25)
+    clamp 8 maxAutoFitDistance (radius / sin limitingHalfFov * fitMargin)
+
+
+{-| How much room the fitted bounding sphere leaves around itself.
+
+The sphere is the box's circumscribed one, so a model is always smaller on screen
+than its sphere — at 1.25 a typical model filled only a third of the canvas. A
+5 % margin still clears the sphere, and the model gets most of the view.
+
+-}
+fitMargin : Float
+fitMargin =
+    1.05
 
 
 {-| Size the interactive zoom range to the model, and record the canvas height

@@ -118,3 +118,73 @@ input[type="range"]::-webkit-slider-thumb {
   border: 1px solid var(--color-border-brand);
   background: var(--color-brand-yellow);
 }
+
+/* ── Accessibility ──────────────────────────────────────────────────────────
+   Keyboard focus must always be visible. The yellow ring with a dark inner
+   edge reads on white panels, on the yellow "active" buttons and over the 3D
+   canvas alike. Mouse clicks do not show it (:focus-visible). */
+:where(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--color-brand-yellow);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 1px var(--color-brand);
+}
+
+/* The canvas takes focus so keyboard users can drive the camera; a ring just
+   inside its edge shows that it is the keyboard's target. */
+canvas:focus-visible {
+  outline: 3px solid var(--color-brand-yellow);
+  outline-offset: -3px;
+}
+
+/* Text for screen readers only. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Buttons share one hover/press feel; transitions respect reduced motion via
+   the rule above. */
+button:not(:disabled) {
+  transition: background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.ui-button:not(:disabled):not([aria-pressed="true"]):hover {
+  background: var(--color-bg-page);
+  border-color: color-mix(in srgb, var(--color-brand) 35%, var(--color-border-default));
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-default) transparent;
+}
+
+/* A focused canvas wrapper: the ring sits inside, since the pane clips. */
+.canvas-focus:focus-visible {
+  outline: 3px solid var(--color-brand-yellow);
+  outline-offset: -3px;
+  box-shadow: inset 0 0 0 4px var(--color-brand);
+}
+.canvas-focus:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Strips that scroll sideways on a phone: swipeable, without a scrollbar. */
+.scroll-none {
+  scrollbar-width: none;
+}
+.scroll-none::-webkit-scrollbar {
+  display: none;
+}

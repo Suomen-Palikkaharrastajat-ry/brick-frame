@@ -11,11 +11,13 @@ module Studio.Palette exposing
     , view
     )
 
-{-| The part palette: visual thumbnail grid, smart shelves, 3D turntable inspect,
-and real LEGO color availability filtering.
+{-| The part palette: a search box, shelves (All, Favourites, Recent and
+Official colours), a category filter, a part preview, and a grid of part cards.
 
-The catalogue itself is `Studio.PartIndex`. Parts are browsed visually with
-isometric thumbnails, favorite stars, recently placed shelves, and hover inspect cards.
+The catalogue itself is `Studio.PartIndex`. Clicking a card arms that part and
+the Add button places it (double-clicking a card adds it at once). Each card
+also has a favourite toggle and an "Inspect 3D" button that opens a turntable
+view. Colour availability comes from `LDraw.ColorAvailability`.
 
 -}
 
@@ -246,6 +248,7 @@ manualEntry config state =
         [ input
             ([ Attr.type_ "text"
              , Attr.placeholder "Part number, e.g. 3001"
+             , Attr.attribute "aria-label" "Part number"
              , Attr.value state.manual
              , Html.Events.onInput config.onManual
              , Attr.style "flex" "1"
@@ -263,6 +266,7 @@ searchBox : Config msg -> State -> Html msg
 searchBox config state =
     input
         ([ Attr.type_ "search"
+         , Attr.id "part-search"
          , Attr.placeholder "Search parts (name, id, keyword)"
          , Attr.attribute "aria-label" "Search parts"
          , Attr.value state.query
@@ -276,15 +280,17 @@ searchBox config state =
 shelfTabs : Config msg -> State -> Html msg
 shelfTabs config state =
     div
-        [ Attr.style "display" "flex"
+        [ Attr.attribute "role" "group"
+        , Attr.attribute "aria-label" "Shelf"
+        , Attr.style "display" "flex"
+        , Attr.style "flex-wrap" "wrap"
         , Attr.style "gap" "4px"
-        , Attr.style "overflow-x" "auto"
         , Attr.style "padding-bottom" "2px"
         ]
         [ shelfButton config state AllShelf "All"
-        , shelfButton config state FavoritesShelf ("★ (" ++ String.fromInt (Set.size state.favorites) ++ ")")
-        , shelfButton config state RecentShelf ("⏱ (" ++ String.fromInt (List.length state.recentParts) ++ ")")
-        , shelfButton config state ColorMatchedShelf "🎨 Official"
+        , shelfButton config state FavoritesShelf ("Favourites " ++ String.fromInt (Set.size state.favorites))
+        , shelfButton config state RecentShelf ("Recent " ++ String.fromInt (List.length state.recentParts))
+        , shelfButton config state ColorMatchedShelf "Official colours"
         ]
 
 
@@ -296,10 +302,12 @@ shelfButton config state targetShelf label =
     in
     button
         [ Html.Events.onClick (config.onSelectShelf targetShelf)
-        , Attr.style "padding" "3px 8px"
-        , Attr.style "font-size" "11px"
-        , Attr.style "font-family" "monospace"
-        , Attr.style "border-radius" "4px"
+        , Attr.class "palette-item"
+        , Attr.attribute "aria-pressed" (ariaBool isActive)
+        , Attr.style "padding" "4px 10px"
+        , Attr.style "font-size" "12px"
+        , Attr.style "font-family" "inherit"
+        , Attr.style "border-radius" "12px"
         , Attr.style "cursor" "pointer"
         , Attr.style "white-space" "nowrap"
         , Attr.style "border"
@@ -367,7 +375,8 @@ addButton config state =
                 [ text ("Add " ++ part.file) ]
 
         Nothing ->
-            div [ Attr.style "color" Theme.textMuted, Attr.style "font-size" "11px" ] [ text "Pick a part to add it." ]
+            div [ Attr.style "color" Theme.textMuted, Attr.style "font-size" "11px", Attr.style "line-height" "1.5" ]
+                [ text "Click a part to arm it, then click Add. Double-click a part to add it straight away." ]
 
 
 resultsGrid : Config msg -> State -> PartIndex -> Html msg
@@ -380,17 +389,56 @@ resultsGrid config state index =
         [ Attr.style "flex" "1"
         , Attr.style "min-height" "80px"
         , Attr.style "overflow-y" "auto"
-        , Attr.style "display" "grid"
-        , Attr.style "grid-template-columns" "repeat(auto-fill, minmax(84px, 1fr))"
-        , Attr.style "gap" "6px"
-        , Attr.style "padding" "2px"
         ]
         (if List.isEmpty found then
-            [ div [ Attr.style "grid-column" "1 / -1" ] [ note "No parts match in this shelf." ] ]
+            [ note "No parts match in this shelf." ]
 
          else
-            List.map (partCard config state) found
+            [ div
+                [ Attr.attribute "role" "list"
+                , Attr.attribute "aria-label" "Parts"
+                , Attr.style "display" "grid"
+                , Attr.style "grid-template-columns" "repeat(auto-fill, minmax(84px, 1fr))"
+                , Attr.style "gap" "6px"
+                , Attr.style "padding" "2px"
+                ]
+                (List.map (partCard config state) found)
+            ]
         )
+
+
+{-| The file id of a part: its file name without the ".dat" extension.
+-}
+fileId : Part -> String
+fileId part =
+    if String.endsWith ".dat" part.file then
+        String.dropRight 4 part.file
+
+    else
+        part.file
+
+
+{-| The name a screen reader uses for a part: its description, or the file id
+when the description is blank.
+-}
+partName : Part -> String
+partName part =
+    if String.isEmpty (String.trim part.description) then
+        fileId part
+
+    else
+        part.description
+
+
+{-| Render a boolean as the "true" / "false" value that aria-pressed expects.
+-}
+ariaBool : Bool -> String
+ariaBool flag =
+    if flag then
+        "true"
+
+    else
+        "false"
 
 
 partCard : Config msg -> State -> Part -> Html msg
@@ -405,17 +453,18 @@ partCard config state part =
         availability =
             ColorAvailability.checkAvailability part.file config.activeColour
 
-        thumbUrl =
-            Dict.get part.file config.thumbnails
+        name =
+            partName part
     in
     div
-        [ Html.Events.onClick (config.onArm part)
-        , Html.Events.on "dblclick" (Decode.succeed config.onAdd)
+        [ Attr.attribute "role" "listitem"
+        , Attr.class "palette-card"
         , Attr.style "position" "relative"
         , Attr.style "display" "flex"
         , Attr.style "flex-direction" "column"
         , Attr.style "align-items" "center"
         , Attr.style "padding" "6px 4px"
+        , Attr.style "min-width" "0"
         , Attr.style "border-radius" "6px"
         , Attr.style "border"
             (if isArmed then
@@ -431,13 +480,44 @@ partCard config state part =
              else
                 Theme.panelSurface
             )
+        ]
+        [ cardTopBar config part name isFavorite availability
+        , cardPickButton config part name isArmed
+        , cardInspectButton config part name
+        ]
+
+
+{-| The clickable body of a card: thumbnail, file id and description. Clicking
+arms the part; double-clicking arms and adds it. Styled to look like plain
+content inside the card.
+-}
+cardPickButton : Config msg -> Part -> String -> Bool -> Html msg
+cardPickButton config part name isArmed =
+    button
+        [ Html.Events.onClick (config.onArm part)
+        , Html.Events.on "dblclick" (Decode.succeed config.onAdd)
+        , Attr.class "palette-item"
+        , Attr.attribute "aria-pressed" (ariaBool isArmed)
+        , Attr.attribute "aria-label" (name ++ " (" ++ fileId part ++ ")")
+        , Attr.style "display" "flex"
+        , Attr.style "flex-direction" "column"
+        , Attr.style "align-items" "center"
+        , Attr.style "width" "100%"
+        , Attr.style "min-width" "0"
+        , Attr.style "margin" "0"
+        , Attr.style "padding" "0"
+        , Attr.style "background" "none"
+        , Attr.style "border" "none"
+        , Attr.style "border-radius" "4px"
+        , Attr.style "color" "inherit"
+        , Attr.style "font" "inherit"
+        , Attr.style "text-align" "inherit"
         , Attr.style "cursor" "pointer"
         , Attr.style "touch-action" "manipulation"
         ]
-        [ cardTopBar config part isFavorite availability
-        , cardThumbnail thumbUrl part.file
+        [ cardThumbnail (Dict.get part.file config.thumbnails)
         , div
-            [ Attr.style "font-family" "monospace"
+            [ Attr.style "font-family" "inherit"
             , Attr.style "font-size" "10px"
             , Attr.style "font-weight" "600"
             , Attr.style "color" Theme.textPrimary
@@ -459,12 +539,19 @@ partCard config state part =
             , Attr.style "width" "100%"
             ]
             [ text part.description ]
-        , cardInspectButton config part
         ]
 
 
-cardTopBar : Config msg -> Part -> Bool -> ColorAvailability -> Html msg
-cardTopBar config part isFavorite availability =
+cardTopBar : Config msg -> Part -> String -> Bool -> ColorAvailability -> Html msg
+cardTopBar config part name isFavorite availability =
+    let
+        favoriteLabel =
+            if isFavorite then
+                "Remove " ++ name ++ " from favourites"
+
+            else
+                "Add " ++ name ++ " to favourites"
+    in
     div
         [ Attr.style "display" "flex"
         , Attr.style "justify-content" "space-between"
@@ -472,8 +559,11 @@ cardTopBar config part isFavorite availability =
         , Attr.style "align-items" "center"
         ]
         [ button
-            [ Html.Events.stopPropagationOn "click"
-                (Decode.succeed ( config.onToggleFavorite part.file, True ))
+            [ Html.Events.onClick (config.onToggleFavorite part.file)
+            , Attr.class "palette-item"
+            , Attr.attribute "aria-pressed" (ariaBool isFavorite)
+            , Attr.attribute "aria-label" favoriteLabel
+            , Attr.title favoriteLabel
             , Attr.style "background" "transparent"
             , Attr.style "border" "none"
             , Attr.style "cursor" "pointer"
@@ -487,20 +577,24 @@ cardTopBar config part isFavorite availability =
                  else
                     Theme.textMuted
                 )
-            , Attr.attribute "aria-label" "Favorite"
             ]
-            [ text
-                (if isFavorite then
-                    "★"
+            [ span [ Attr.attribute "aria-hidden" "true" ]
+                [ text
+                    (if isFavorite then
+                        "★"
 
-                 else
-                    "☆"
-                )
+                     else
+                        "☆"
+                    )
+                ]
             ]
         , availabilityBadge availability
         ]
 
 
+{-| A small coloured dot showing the part's colour availability. It is exposed
+as an image with a label so the status is not lost for screen reader users.
+-}
 availabilityBadge : ColorAvailability -> Html msg
 availabilityBadge availability =
     let
@@ -516,22 +610,27 @@ availabilityBadge availability =
                     ( "var(--color-brand-red)", "Unofficial Color" )
     in
     div
-        [ Attr.style "width" "7px"
+        [ Attr.attribute "role" "img"
+        , Attr.attribute "aria-label" title
+        , Attr.title title
+        , Attr.style "width" "7px"
         , Attr.style "height" "7px"
         , Attr.style "border-radius" "50%"
         , Attr.style "background" color
-        , Attr.title title
         ]
         []
 
 
-cardThumbnail : Maybe String -> String -> Html msg
-cardThumbnail maybeUrl file =
+{-| The part thumbnail. It is decorative (alt is empty) because the card's
+button already names the part.
+-}
+cardThumbnail : Maybe String -> Html msg
+cardThumbnail maybeUrl =
     case maybeUrl of
         Just url ->
             img
                 [ Attr.src url
-                , Attr.alt file
+                , Attr.alt ""
                 , Attr.style "width" "56px"
                 , Attr.style "height" "56px"
                 , Attr.style "object-fit" "contain"
@@ -542,7 +641,8 @@ cardThumbnail maybeUrl file =
         Nothing ->
             -- Clean placeholder with isometric box symbol
             div
-                [ Attr.style "width" "56px"
+                [ Attr.attribute "aria-hidden" "true"
+                , Attr.style "width" "56px"
                 , Attr.style "height" "56px"
                 , Attr.style "display" "flex"
                 , Attr.style "align-items" "center"
@@ -550,21 +650,22 @@ cardThumbnail maybeUrl file =
                 , Attr.style "background" Theme.panelSubtleBackground
                 , Attr.style "border-radius" "4px"
                 , Attr.style "color" Theme.textMuted
-                , Attr.style "font-family" "monospace"
+                , Attr.style "font-family" "inherit"
                 , Attr.style "font-size" "18px"
                 ]
                 [ text "⬡" ]
 
 
-cardInspectButton : Config msg -> Part -> Html msg
-cardInspectButton config part =
+cardInspectButton : Config msg -> Part -> String -> Html msg
+cardInspectButton config part name =
     button
-        [ Html.Events.stopPropagationOn "click"
-            (Decode.succeed ( config.onInspect (Just part), True ))
+        [ Html.Events.onClick (config.onInspect (Just part))
+        , Attr.class "palette-item"
+        , Attr.attribute "aria-label" ("Inspect " ++ name ++ " in 3D")
         , Attr.style "margin-top" "4px"
         , Attr.style "padding" "1px 4px"
         , Attr.style "font-size" "9px"
-        , Attr.style "font-family" "monospace"
+        , Attr.style "font-family" "inherit"
         , Attr.style "background" Theme.panelSubtleBackground
         , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
         , Attr.style "border-radius" "3px"
@@ -593,13 +694,13 @@ viewInspectModal config state =
                 availText =
                     case availability of
                         InProduction { yearIntroduced, setFrequency } ->
-                            "🟢 Official In Production (since " ++ String.fromInt yearIntroduced ++ ", " ++ String.fromInt setFrequency ++ " sets)"
+                            "Official In Production (since " ++ String.fromInt yearIntroduced ++ ", " ++ String.fromInt setFrequency ++ " sets)"
 
                         OutOfProduction { yearIntroduced, yearDiscontinued } ->
-                            "🟡 Official Out of Production (" ++ String.fromInt yearIntroduced ++ "–" ++ String.fromInt yearDiscontinued ++ ")"
+                            "Official Out of Production (" ++ String.fromInt yearIntroduced ++ "–" ++ String.fromInt yearDiscontinued ++ ")"
 
                         Unofficial ->
-                            "🔴 Unofficial Color Combination"
+                            "Unofficial Color Combination"
             in
             div
                 [ Attr.style "position" "absolute"
@@ -621,10 +722,11 @@ viewInspectModal config state =
                     , Attr.style "justify-content" "space-between"
                     , Attr.style "align-items" "center"
                     ]
-                    [ span [ Attr.style "font-family" "monospace", Attr.style "font-weight" "600", Attr.style "font-size" "12px", Attr.style "color" Theme.textPrimary ]
+                    [ span [ Attr.style "font-family" "inherit", Attr.style "font-weight" "600", Attr.style "font-size" "12px", Attr.style "color" Theme.textPrimary ]
                         [ text part.file ]
                     , button
                         [ Html.Events.onClick (config.onInspect Nothing)
+                        , Attr.attribute "aria-label" "Close 3D inspect"
                         , Attr.style "background" "transparent"
                         , Attr.style "border" "none"
                         , Attr.style "cursor" "pointer"
@@ -637,7 +739,7 @@ viewInspectModal config state =
                 , div
                     [ Attr.style "display" "flex"
                     , Attr.style "gap" "12px"
-                    , Attr.style "font-family" "monospace"
+                    , Attr.style "font-family" "inherit"
                     , Attr.style "font-size" "11px"
                     , Attr.style "color" Theme.textPrimary
                     ]
@@ -645,14 +747,14 @@ viewInspectModal config state =
                     , span []
                         [ text
                             (if meta.isGearOrAxle then
-                                "⚙ Gear/Axle"
+                                "Gear/Axle"
 
                              else
                                 meta.category
                             )
                         ]
                     ]
-                , div [ Attr.style "font-size" "10px", Attr.style "font-family" "monospace", Attr.style "color" Theme.textPrimary ]
+                , div [ Attr.style "font-size" "10px", Attr.style "font-family" "inherit", Attr.style "color" Theme.textPrimary ]
                     [ text availText ]
                 , turntableWidget config state
                 ]
@@ -675,7 +777,7 @@ turntableWidget config state =
             [ Attr.style "display" "flex"
             , Attr.style "justify-content" "space-between"
             , Attr.style "align-items" "center"
-            , Attr.style "font-family" "monospace"
+            , Attr.style "font-family" "inherit"
             , Attr.style "font-size" "10px"
             ]
             [ span [ Attr.style "color" Theme.textMuted ] [ text "3D Turntable" ]
@@ -683,6 +785,7 @@ turntableWidget config state =
             ]
         , input
             [ Attr.type_ "range"
+            , Attr.attribute "aria-label" "Turntable angle"
             , Attr.min "0"
             , Attr.max "360"
             , Attr.step "5"
@@ -710,7 +813,7 @@ inputAttrs =
     , Attr.style "border-radius" "6px"
     , Attr.style "background" Theme.panelSurface
     , Attr.style "color" Theme.textPrimary
-    , Attr.style "font-family" "monospace"
+    , Attr.style "font-family" "inherit"
     , Attr.style "font-size" "12px"
     ]
 
@@ -722,7 +825,7 @@ buttonStyle =
     , Attr.style "color" Theme.textPrimary
     , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
     , Attr.style "border-radius" "6px"
-    , Attr.style "font-family" "monospace"
+    , Attr.style "font-family" "inherit"
     , Attr.style "font-size" "12px"
     , Attr.style "cursor" "pointer"
     ]

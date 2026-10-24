@@ -22,9 +22,11 @@ it normally opens without fetching anything.
 -}
 
 import Array
+import Browser.Events
 import Data
 import Dict
 import EmbeddedParts
+import FeatherIcons
 import Html exposing (Html, div, input, span, text)
 import Html.Attributes as Attr
 import Html.Events
@@ -35,6 +37,7 @@ import Ports
 import Render.Camera as Camera exposing (Camera)
 import Render.Style as Style
 import Simulation
+import Task
 import UI.Button as Button
 import UI.ShortcutHelp as ShortcutHelp
 import UI.Status as Status
@@ -247,11 +250,9 @@ handleEvent event ( model, cmds ) =
 
                 Nothing ->
                     if keyEvent.key == "Escape" then
-                        let
-                            ( next, cmd ) =
-                                updateInner Leave model
-                        in
-                        ( next, cmds ++ [ cmd ] )
+                        -- `Main` switches pages, and it only sees messages that
+                        -- come back from outside: re-send `Leave` as a command.
+                        ( model, cmds ++ [ Task.perform identity (Task.succeed Leave) ] )
 
                     else
                         ( model, cmds )
@@ -346,7 +347,9 @@ subscriptions model =
     Sub.batch
         [ Sub.map ViewportMsg (Viewport.subscriptions model.viewport)
         , Sub.map SimulationMsg (Simulation.subscriptions model.simulation)
-        , Ports.viewportResized (\size -> WindowSized size.width size.height)
+        , -- Window size, not the runtime's port: Elm replaces the mount node, so the
+          -- runtime's ResizeObserver watches a detached element and never fires.
+          Browser.Events.onResize WindowSized
         , Ports.geometryFlattened (ViewportMsg << Viewport.GeometryFlattened)
         , Ports.geometryFlattenFailed (ViewportMsg << Viewport.GeometryFlattenFailed)
         ]
@@ -406,25 +409,51 @@ overlay model =
 
 viewTopBar : Model -> Html Msg
 viewTopBar model =
-    div
+    Html.header
         [ Attr.style "position" "absolute"
-        , Attr.style "top" "8px"
+        , Attr.style "top" "12px"
         , Attr.style "left" "12px"
-        , Attr.style "right" "12px"
+        , Attr.style "max-width" "calc(100% - 24px)"
+        , Attr.style "box-sizing" "border-box"
         , Attr.style "display" "flex"
         , Attr.style "align-items" "center"
-        , Attr.style "gap" "8px"
+        , Attr.style "gap" "12px"
+        , Attr.style "padding" "6px 14px 6px 6px"
         , Attr.style "pointer-events" "auto"
         , Attr.style "touch-action" "none"
+        , Attr.style "background" Theme.panelSurface
+        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "border-radius" "10px"
+        , Attr.style "box-shadow" floatingShadow
         , Attr.style "color" Theme.textMuted
-        , Attr.style "font-family" "monospace"
-        , Attr.style "font-size" "12px"
+        , Attr.style "font-size" "13px"
         , Attr.style "white-space" "nowrap"
         ]
-        [ Button.secondary Leave "← Back to editing"
-        , span [ Attr.style "color" Theme.textPrimary, Attr.style "font-weight" "600" ] [ text "Simulation" ]
-        , span [ Attr.style "flex" "1", Attr.style "overflow" "hidden", Attr.style "text-overflow" "ellipsis" ] [ text (summary model) ]
+        [ Button.icon
+            { icon = icon FeatherIcons.arrowLeft
+            , label = "Back to editing"
+            , shortcut = Just "Esc"
+            , pressed = Nothing
+            , enabled = True
+            , showLabel = True
+            }
+            Leave
+        , Html.h1 [ Attr.style "margin" "0", Attr.style "font-size" "15px", Attr.style "font-weight" "700", Attr.style "color" Theme.textPrimary ] [ text "Simulation" ]
+        , span [ Attr.attribute "role" "status", Attr.style "overflow" "hidden", Attr.style "text-overflow" "ellipsis" ] [ text (summary model) ]
         ]
+
+
+icon : FeatherIcons.Icon -> Html msg
+icon featherIcon =
+    featherIcon
+        |> FeatherIcons.withSize 18
+        |> FeatherIcons.withStrokeWidth 1.75
+        |> FeatherIcons.toHtml [ Attr.attribute "aria-hidden" "true", Attr.attribute "focusable" "false" ]
+
+
+floatingShadow : String
+floatingShadow =
+    "0 6px 20px color-mix(in srgb, var(--color-brand) 12%, transparent), 0 1px 2px color-mix(in srgb, var(--color-brand) 8%, transparent)"
 
 
 summary : Model -> String
@@ -470,30 +499,53 @@ viewControls model =
             , Attr.style "display" "flex"
             , Attr.style "align-items" "center"
             , Attr.style "gap" "8px"
-            , Attr.style "padding" "8px"
+            , Attr.style "padding" "6px 14px 6px 6px"
             , Attr.style "pointer-events" "auto"
             , Attr.style "touch-action" "none"
-            , Attr.style "background" Theme.panelBackground
+            , Attr.style "background" Theme.panelSurface
             , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-            , Attr.style "border-radius" "8px"
-            , Attr.style "font-family" "monospace"
-            , Attr.style "font-size" "12px"
+            , Attr.style "border-radius" "10px"
+            , Attr.style "box-shadow" floatingShadow
+            , Attr.style "font-size" "13px"
             , Attr.style "color" Theme.textMuted
+            , Attr.attribute "role" "group"
+            , Attr.attribute "aria-label" "Motor"
             ]
-            [ Button.toggle
-                { active = model.simulation.playback.running, enabled = True }
-                (SimulationMsg Simulation.ToggleMotor)
-                (if model.simulation.playback.running then
-                    "⏸ Pause"
+            [ Button.icon
+                { icon =
+                    icon
+                        (if model.simulation.playback.running then
+                            FeatherIcons.pause
 
-                 else
-                    "▶ Play"
-                )
-            , Button.secondary (SimulationMsg Simulation.Stop) "■ Stop"
-            , span [] [ text "RPM" ]
+                         else
+                            FeatherIcons.play
+                        )
+                , label =
+                    if model.simulation.playback.running then
+                        "Pause"
+
+                    else
+                        "Play"
+                , shortcut = Just "Space"
+                , pressed = Nothing
+                , enabled = True
+                , showLabel = True
+                }
+                (SimulationMsg Simulation.ToggleMotor)
+            , Button.icon
+                { icon = icon FeatherIcons.square
+                , label = "Stop"
+                , shortcut = Nothing
+                , pressed = Nothing
+                , enabled = True
+                , showLabel = True
+                }
+                (SimulationMsg Simulation.Stop)
+            , Html.label [ Attr.for "motor-speed", Attr.style "margin-left" "6px" ] [ text "Speed" ]
             , input
                 [ Attr.type_ "range"
-                , Attr.attribute "aria-label" "Motor speed"
+                , Attr.id "motor-speed"
+                , Attr.attribute "aria-valuetext" (String.fromInt (round rpm) ++ " RPM")
                 , Attr.min (String.fromFloat -model.simulation.maxRpm)
                 , Attr.max (String.fromFloat model.simulation.maxRpm)
                 , Attr.step "1"
@@ -510,7 +562,7 @@ viewControls model =
                 , Attr.style "width" "140px"
                 ]
                 []
-            , span [ Attr.style "min-width" "32px", Attr.style "text-align" "right" ] [ text (String.fromInt (round rpm)) ]
+            , span [ Attr.attribute "aria-hidden" "true", Attr.style "min-width" "64px", Attr.style "text-align" "right", Attr.style "color" Theme.textPrimary, Attr.style "font-variant-numeric" "tabular-nums" ] [ text (String.fromInt (round rpm) ++ " RPM") ]
             ]
 
 

@@ -26,6 +26,7 @@ press key =
     , repeat = False
     , targetTag = "CANVAS"
     , targetEditable = False
+    , targetRole = ""
     }
 
 
@@ -138,6 +139,25 @@ suite =
                     -- handling it again toggled playback twice.
                     Shortcuts.actionFor orbiting (pressOn "BUTTON" " ")
                         |> Expect.equal Nothing
+            , test "still fires letter shortcuts while a button has focus" <|
+                \_ ->
+                    -- Regression: clicking a toolbar button focuses it, and every
+                    -- shortcut used to go dead until the canvas was clicked.
+                    Shortcuts.actionFor orbiting (pressOn "BUTTON" "f")
+                        |> Expect.equal (Just Shortcuts.FitView)
+            , test "leaves Enter to a focused button" <|
+                \_ ->
+                    Shortcuts.isWidgetKey (pressOn "BUTTON" "Enter")
+                        |> Expect.equal True
+            , test "leaves arrow keys to composite widgets" <|
+                \_ ->
+                    [ "radio", "treeitem", "option", "tab", "slider" ]
+                        |> List.map (\role -> Shortcuts.isWidgetKey (pressWith (\e -> { e | targetRole = role }) "ArrowLeft"))
+                        |> Expect.equal [ True, True, True, True, True ]
+            , test "arrow keys on a plain button still orbit" <|
+                \_ ->
+                    Shortcuts.isWidgetKey (pressOn "BUTTON" "ArrowLeft")
+                        |> Expect.equal False
             , test "ignores contenteditable regions" <|
                 \_ ->
                     Shortcuts.actionFor orbiting (pressWith (\e -> { e | targetEditable = True }) "g")

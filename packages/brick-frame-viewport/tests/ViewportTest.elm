@@ -50,6 +50,7 @@ keyEvent key =
     , repeat = False
     , targetTag = "BODY"
     , targetEditable = False
+    , targetRole = ""
     }
 
 
@@ -281,6 +282,7 @@ suite =
                             , repeat = False
                             , targetTag = "INPUT"
                             , targetEditable = False
+                            , targetRole = ""
                             }
                     in
                     update (KeyPressed typing) idle

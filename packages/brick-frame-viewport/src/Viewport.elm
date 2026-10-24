@@ -814,10 +814,12 @@ updateInner msg model =
             ( { model | renderStyle = Style.fromQuality quality }, Cmd.none, [] )
 
         KeyPressed event ->
-            if Shortcuts.isTextEntryTarget event then
-                -- Someone is typing into a host page's form field. The keydown
-                -- subscription is document-global, so without this a space in a
-                -- URL box toggles playback in the embedded viewer.
+            if Shortcuts.isTextEntryTarget event || Shortcuts.isWidgetKey event then
+                -- Someone is typing into a host page's form field, or the focused
+                -- control handles the key itself (Space on a button, arrows in a
+                -- swatch grid). The keydown subscription is document-global, so
+                -- without this a space in a URL box toggles playback in the
+                -- embedded viewer.
                 ( model, Cmd.none, [] )
 
             else
