@@ -952,4 +952,71 @@ documentSuite =
                     , \_ -> Expect.equal Nothing backToTop.activeSources
                     ]
                     ()
+        , test "pickSurfaceExcluding hits placement when not excluded" <|
+            \_ ->
+                let
+                    triangleGeom =
+                        "3 16 -50 0 -50 50 0 -50 0 0 50\n2 16 -50 -50 -50 50 50 50"
+
+                    customCache =
+                        Dict.fromList [ ( "plate.dat", Loaded (Parser.parseFile triangleGeom) ) ]
+
+                    doc =
+                        Document.empty
+                            |> Document.addPlacement "" { part = "plate.dat", color = 4, matrix = Mat4.makeTranslate3 0 -24 0 }
+                            |> Tuple.first
+
+                    ( model, _, _ ) =
+                        Viewport.loadDocument doc { studio | partCache = customCache, width = 800, height = 600 }
+                in
+                case Viewport.pickSurfaceExcluding Set.empty 400 300 model of
+                    Just hit ->
+                        Expect.all
+                            [ \_ -> Expect.equal 0 hit.source
+                            , \_ -> Expect.within (Expect.Absolute 1.0) -24.0 hit.topY
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "expected hit on placement"
+        , test "pickSurfaceExcluding falls back to ground plane (source = -1, topY = 0) when hit placement is excluded" <|
+            \_ ->
+                let
+                    triangleGeom =
+                        "3 16 -50 0 -50 50 0 -50 0 0 50\n2 16 -50 -50 -50 50 50 50"
+
+                    customCache =
+                        Dict.fromList [ ( "plate.dat", Loaded (Parser.parseFile triangleGeom) ) ]
+
+                    doc =
+                        Document.empty
+                            |> Document.addPlacement "" { part = "plate.dat", color = 4, matrix = Mat4.makeTranslate3 0 -24 0 }
+                            |> Tuple.first
+
+                    ( model, _, _ ) =
+                        Viewport.loadDocument doc { studio | partCache = customCache, width = 800, height = 600 }
+                in
+                case Viewport.pickSurfaceExcluding (Set.singleton 0) 400 300 model of
+                    Just hit ->
+                        Expect.all
+                            [ \_ -> Expect.equal -1 hit.source
+                            , \_ -> Expect.within (Expect.Absolute 1.0e-5) 0.0 hit.topY
+                            , \_ -> Expect.within (Expect.Absolute 1.0e-5) 0.0 (Vec3.getY hit.point)
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "expected ground plane hit when placement is excluded"
+        , test "groundIntersection intersects horizontal plane at Y = 0" <|
+            \_ ->
+                let
+                    ( model, _, _ ) =
+                        Viewport.loadDocument Document.empty { studio | width = 800, height = 600 }
+                in
+                case Viewport.groundIntersection 400 300 model of
+                    Just pt ->
+                        Expect.within (Expect.Absolute 1.0e-5) 0.0 (Vec3.getY pt)
+
+                    Nothing ->
+                        Expect.fail "expected ground intersection"
         ]

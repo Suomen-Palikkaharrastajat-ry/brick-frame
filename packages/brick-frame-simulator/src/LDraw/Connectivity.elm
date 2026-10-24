@@ -17,7 +17,10 @@ module LDraw.Connectivity exposing
     , isCompatible
     , knownCatalogPart
     , setGuideColliding
+    , snapEnterDistance
+    , snapReleaseDistance
     , solveSnap
+    , solveSnapWithHysteresis
     , testOBB
     , toOBB
     , transformDirection
@@ -141,6 +144,20 @@ type alias SnapCandidate =
 defaultSnapDistance : Float
 defaultSnapDistance =
     12.0
+
+
+{-| Entry threshold for magnetic snapping in LDU.
+-}
+snapEnterDistance : Float
+snapEnterDistance =
+    12.0
+
+
+{-| Release threshold for magnetic snapping hysteresis in LDU.
+-}
+snapReleaseDistance : Float
+snapReleaseDistance =
+    18.0
 
 
 
@@ -412,6 +429,67 @@ solveSnap maxDist rotationIndex currentMatrix draggedPoints targetPoints =
                 |> List.sortBy Tuple.first
     in
     List.head candidates |> Maybe.map Tuple.second
+
+
+{-| Solve snap with magnetic hysteresis latching:
+If an active snap candidate is provided, the connection remains latched as long as
+the dragged connection point stays within `releaseDist` (default 18.0 LDU) of the target.
+If the distance exceeds `releaseDist` or no active snap is present, candidates are
+searched within `enterDist` (default 12.0 LDU).
+-}
+solveSnapWithHysteresis :
+    Float
+    -> Float
+    -> Maybe SnapCandidate
+    -> Int
+    -> Mat4
+    -> List ConnectionPoint
+    -> List WorldConnectionPoint
+    -> Maybe SnapCandidate
+solveSnapWithHysteresis enterDist releaseDist maybeActive rotationIndex currentMatrix draggedPoints targetPoints =
+    case maybeActive of
+        Just active ->
+            let
+                draggedPos =
+                    Mat4.transform currentMatrix active.draggedPoint.localPosition
+
+                dist =
+                    Vec3.distance draggedPos active.targetPoint.worldPosition
+            in
+            if dist <= releaseDist then
+                let
+                    draggedWorldNormal =
+                        transformDirection currentMatrix active.draggedPoint.normal
+
+                    desiredNormal =
+                        targetDesiredNormal active.draggedPoint.connType draggedWorldNormal active.targetPoint.worldNormal
+
+                    cosAngle =
+                        Vec3.dot draggedWorldNormal desiredNormal
+                in
+                if isDirectional active.draggedPoint.connType && cosAngle < -0.2 then
+                    solveSnap enterDist rotationIndex currentMatrix draggedPoints targetPoints
+
+                else
+                    let
+                        snapMat =
+                            computeSnapMatrix rotationIndex active.draggedPoint active.targetPoint desiredNormal
+
+                        guide =
+                            makeGuide active.draggedPoint.connType active.targetPoint.worldPosition active.targetPoint.worldNormal False
+                    in
+                    Just
+                        { active
+                            | snapMatrix = snapMat
+                            , distance = dist
+                            , guide = guide
+                        }
+
+            else
+                solveSnap enterDist rotationIndex currentMatrix draggedPoints targetPoints
+
+        Nothing ->
+            solveSnap enterDist rotationIndex currentMatrix draggedPoints targetPoints
 
 
 isDirectional : ConnectionType -> Bool

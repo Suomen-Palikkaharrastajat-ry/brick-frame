@@ -6,6 +6,7 @@ module Studio.Workspace exposing
     , currentArcHandles
     , currentHandles
     , init
+    , placeArmedPart
     , restore
     , subscriptions
     , update
@@ -177,6 +178,8 @@ type alias Model =
     , activeSnap : Maybe SnapCandidate
     , collidingPlacements : Set Int
     , altHeld : Bool
+    , shiftHeld : Bool
+    , inFlightRotationStep : Int
     , announcement : String
     , descriptions : Dict String String
     , treeFocus : Maybe String
@@ -245,6 +248,7 @@ type Msg
     | PaletteRotateTurntable Float
     | ThumbnailLoaded { file : String, color : Int, url : String }
     | ArmPart Part
+    | StartDragPart Part
     | AddArmedPart
     | ManualPart String
     | AddManualPart
@@ -347,6 +351,8 @@ init flags =
             , activeSnap = Nothing
             , collidingPlacements = Set.empty
             , altHeld = False
+            , shiftHeld = False
+            , inFlightRotationStep = 0
             , announcement = ""
             , descriptions = Dict.empty
             , treeFocus = Nothing
@@ -1026,6 +1032,18 @@ updatePage msg model =
                     Nothing ->
                         ( nextModel, Cmd.none )
 
+            else if key == "Shift" then
+                let
+                    nextModel =
+                        { model | shiftHeld = False }
+                in
+                case nextModel.drag of
+                    Just d ->
+                        moveDrag d d.lastPoint nextModel
+
+                    Nothing ->
+                        ( nextModel, Cmd.none )
+
             else
                 ( model, Cmd.none )
 
@@ -1338,6 +1356,49 @@ updatePage msg model =
         ArmPart part ->
             armPart part.file model
                 |> (\( m, cmd ) -> ( withArmed (Just part) m, cmd ))
+
+        StartDragPart part ->
+            let
+                ( armedModel, armCmd ) =
+                    armPart part.file model
+                        |> (\( m, cmd ) -> ( withArmed (Just part) m, cmd ))
+
+                newId =
+                    armedModel.document.nextId
+
+                initialPos =
+                    vec3 0 0 0
+
+                tempPlacement =
+                    { part = part.file
+                    , color = armedModel.activeColour
+                    , matrix = Mat4.makeTranslate initialPos
+                    }
+
+                ( docWithPart, _ ) =
+                    Edit.apply (AddIn armedModel.context.activeSubmodel [ tempPlacement ]) armedModel.document
+
+                drag =
+                    { kind = PlaneDrag initialPos
+                    , ids = [ newId ]
+                    , start = ( 0, 0 )
+                    , lastPoint = ( 0, 0 )
+                    , original = armedModel.document
+                    , amount = 0
+                    }
+
+                ( synced, syncCmd ) =
+                    syncDocumentLive
+                        { armedModel
+                            | document = docWithPart
+                            , viewport = Viewport.captureDrag armedModel.viewport
+                            , drag = Just drag
+                            , selection = Set.singleton newId
+                            , inFlightRotationStep = 0
+                            , snapRotationStep = 0
+                        }
+            in
+            ( synced, Cmd.batch [ armCmd, syncCmd ] )
 
         ManualPart text ->
             let
@@ -1778,6 +1839,159 @@ addPart file model =
                     }
         in
         ( synced, Cmd.batch [ syncCmd, Ports.saveRecents newRecents ] )
+
+
+{-| Place an armed part on surface contact at the clicked canvas point (x, y).
+-}
+placeArmedPart : PartIndex.Part -> ( Float, Float ) -> Model -> ( Model, Cmd Msg )
+placeArmedPart part ( x, y ) model =
+    if model.drag /= Nothing then
+        ( model, Cmd.none )
+
+    else
+        let
+            resolveLines name =
+                case Dict.get name model.viewport.partCache of
+                    Just (Resolve.Loaded lines) ->
+                        Just lines
+
+                    _ ->
+                        Nothing
+
+            conn =
+                Connectivity.extractPartConnectivity part.file resolveLines
+
+            rawBox =
+                List.head conn.boundingBoxes
+                    |> Maybe.withDefault { min = vec3 -10 -4 -10, max = vec3 10 24 10 }
+
+            box =
+                Connectivity.effectiveEnvelope rawBox conn.connections
+
+            bottomExtent =
+                case model.viewport.instancedScene |> Maybe.andThen (\s -> Dict.get part.file s.parts) of
+                    Just m ->
+                        Vec3.getY m.boundsMax
+
+                    Nothing ->
+                        Vec3.getY box.max
+
+            surfaceHit =
+                Viewport.pickSurfaceExcluding Set.empty x y model.viewport
+        in
+        case surfaceHit of
+            Just hit ->
+                let
+                    targetY =
+                        hit.topY - bottomExtent
+
+                    docHit =
+                        Gizmo.toRender hit.point
+
+                    docHitX =
+                        Vec3.getX docHit
+
+                    docHitZ =
+                        Vec3.getZ docHit
+
+                    step =
+                        toFloat (max 1 model.gridStep)
+
+                    targetX =
+                        toFloat (round (docHitX / step)) * step
+
+                    targetZ =
+                        toFloat (round (docHitZ / step)) * step
+
+                    targetPos =
+                        vec3 targetX targetY targetZ
+
+                    effectivePos =
+                        if not (List.isEmpty model.context.path) then
+                            case List.reverse model.context.path of
+                                head :: _ ->
+                                    case Mat4.inverse head.accumulatedTransform of
+                                        Just inv ->
+                                            Mat4.transform inv targetPos
+
+                                        Nothing ->
+                                            targetPos
+
+                                [] ->
+                                    targetPos
+
+                        else
+                            targetPos
+
+                    surfaceMatrix =
+                        Mat4.makeTranslate effectivePos
+
+                    otherPlacements =
+                        Document.placementsOf model.context.activeSubmodel model.document
+
+                    targetWorldPoints =
+                        otherPlacements
+                            |> List.concatMap
+                                (\targetP ->
+                                    let
+                                        pConn =
+                                            Connectivity.extractPartConnectivity targetP.part resolveLines
+                                    in
+                                    List.map (Connectivity.transformPoint targetP.matrix targetP.id) pConn.connections
+                                )
+
+                    maybeSnap =
+                        if model.altHeld || model.snapDistance <= 0 then
+                            Nothing
+
+                        else
+                            Connectivity.solveSnap
+                                Connectivity.snapEnterDistance
+                                model.snapRotationStep
+                                surfaceMatrix
+                                conn.connections
+                                targetWorldPoints
+
+                    finalMatrix =
+                        case maybeSnap of
+                            Just snap ->
+                                snap.snapMatrix
+
+                            Nothing ->
+                                surfaceMatrix
+
+                    newId =
+                        model.document.nextId
+
+                    ( document, history ) =
+                        Edit.record
+                            (AddIn model.context.activeSubmodel [ { part = part.file, color = model.activeColour, matrix = finalMatrix } ])
+                            model.document
+                            model.history
+
+                    newRecents =
+                        part.file
+                            :: List.filter (\f -> f /= part.file) model.palette.recentParts
+                            |> List.take 20
+
+                    palette =
+                        model.palette
+
+                    ( synced, syncCmd ) =
+                        syncDocument
+                            { model
+                                | document = document
+                                , history = history
+                                , selection = Set.singleton newId
+                                , palette =
+                                    Palette.refreshFiltered model.activeColour
+                                        { palette | recentParts = newRecents }
+                            }
+                in
+                ( synced, Cmd.batch [ syncCmd, Ports.saveRecents newRecents ] )
+
+            Nothing ->
+                ( model, Cmd.none )
 
 
 {-| Request on-demand thumbnails for currently visible parts in the palette.
@@ -2329,13 +2543,30 @@ handleEvent event ( model, cmds ) =
                     ( model, cmds )
 
         Viewport.Tapped x y ->
-            ( select x y False model, cmds )
+            case model.palette.armed of
+                Just armedPart ->
+                    let
+                        ( placedModel, placeCmd ) =
+                            placeArmedPart armedPart ( x, y ) model
+                    in
+                    ( placedModel, cmds ++ [ placeCmd ] )
+
+                Nothing ->
+                    ( select x y False model, cmds )
 
         Viewport.PressStarted x y ->
             case startDrag ( x, y ) model of
                 Just drag ->
                     -- Grabbing a part by its body makes it the selection.
-                    ( { model | viewport = Viewport.captureDrag model.viewport, drag = Just drag, selection = Set.fromList drag.ids }, cmds )
+                    ( { model
+                        | viewport = Viewport.captureDrag model.viewport
+                        , drag = Just drag
+                        , selection = Set.fromList drag.ids
+                        , inFlightRotationStep = 0
+                        , snapRotationStep = 0
+                      }
+                    , cmds
+                    )
 
                 Nothing ->
                     ( model, cmds )
@@ -2361,8 +2592,11 @@ handleEvent event ( model, cmds ) =
 
         Viewport.KeyAccepted keyEvent ->
             let
-                withAlt =
-                    { model | altHeld = keyEvent.alt || keyEvent.key == "Alt" }
+                withMods =
+                    { model
+                        | altHeld = keyEvent.alt || keyEvent.key == "Alt"
+                        , shiftHeld = keyEvent.shift || keyEvent.key == "Shift"
+                    }
 
                 handleShortcut m =
                     case StudioShortcuts.actionFor (shortcutContext m) keyEvent of
@@ -2385,67 +2619,55 @@ handleEvent event ( model, cmds ) =
                                 Nothing ->
                                     ( m, cmds )
             in
-            if model.drag /= Nothing && model.activeSnap /= Nothing then
-                let
-                    isRotLeft =
-                        keyEvent.key == "ArrowLeft" || keyEvent.key == "ArrowDown"
+            case withMods.drag of
+                Just d ->
+                    let
+                        isRotLeft =
+                            keyEvent.key == "ArrowLeft" || keyEvent.key == "ArrowDown" || keyEvent.key == "["
 
-                    isRotRight =
-                        keyEvent.key == "ArrowRight" || keyEvent.key == "ArrowUp" || keyEvent.key == "r" || keyEvent.key == "R"
-                in
-                if isRotLeft then
-                    case withAlt.drag of
-                        Just d ->
-                            let
-                                ( next, cmd ) =
-                                    moveDrag d d.lastPoint { withAlt | snapRotationStep = model.snapRotationStep - 1 }
-                            in
-                            ( next, cmds ++ [ cmd ] )
-
-                        Nothing ->
-                            ( withAlt, cmds )
-
-                else if isRotRight then
-                    case withAlt.drag of
-                        Just d ->
-                            let
-                                ( next, cmd ) =
-                                    moveDrag d d.lastPoint { withAlt | snapRotationStep = model.snapRotationStep + 1 }
-                            in
-                            ( next, cmds ++ [ cmd ] )
-
-                        Nothing ->
-                            ( withAlt, cmds )
-
-                else if keyEvent.key == "Alt" then
-                    case withAlt.drag of
-                        Just d ->
-                            let
-                                ( next, cmd ) =
-                                    moveDrag d d.lastPoint withAlt
-                            in
-                            ( next, cmds ++ [ cmd ] )
-
-                        Nothing ->
-                            ( withAlt, cmds )
-
-                else
-                    handleShortcut withAlt
-
-            else if model.drag /= Nothing && keyEvent.key == "Alt" then
-                case withAlt.drag of
-                    Just d ->
+                        isRotRight =
+                            keyEvent.key == "ArrowRight" || keyEvent.key == "ArrowUp" || keyEvent.key == "r" || keyEvent.key == "R" || keyEvent.key == "]"
+                    in
+                    if isRotLeft then
                         let
+                            updated =
+                                if withMods.activeSnap /= Nothing then
+                                    { withMods | snapRotationStep = model.snapRotationStep - 1 }
+
+                                else
+                                    { withMods | inFlightRotationStep = model.inFlightRotationStep - 1 }
+
                             ( next, cmd ) =
-                                moveDrag d d.lastPoint withAlt
+                                moveDrag d d.lastPoint updated
                         in
                         ( next, cmds ++ [ cmd ] )
 
-                    Nothing ->
-                        ( withAlt, cmds )
+                    else if isRotRight then
+                        let
+                            updated =
+                                if withMods.activeSnap /= Nothing then
+                                    { withMods | snapRotationStep = model.snapRotationStep + 1 }
 
-            else
-                handleShortcut withAlt
+                                else
+                                    { withMods | inFlightRotationStep = model.inFlightRotationStep + 1 }
+
+                            ( next, cmd ) =
+                                moveDrag d d.lastPoint updated
+                        in
+                        ( next, cmds ++ [ cmd ] )
+
+                    else if keyEvent.key == "Alt" || keyEvent.key == "Shift" then
+                        let
+                            ( next, cmd ) =
+                                moveDrag d d.lastPoint withMods
+                        in
+                        ( next, cmds ++ [ cmd ] )
+
+                    else
+                        handleShortcut withMods
+
+                Nothing ->
+                    handleShortcut withMods
 
         Viewport.LoadStarted ->
             ( model, cmds )
@@ -2785,52 +3007,281 @@ moveLinearDrag drag handle point model =
     applyDragDelta drag amount point (Vec3.scale amount (Edit.axisVector handle.axis)) model
 
 
-{-| Slide a grabbed part over the horizontal plane through the grab point, so
-the spot first pressed stays under the pointer, snapped to the move step. A ray
-nearly parallel to the plane (a view from the horizon) holds the part still
-rather than flinging it to the horizon.
+{-| Slide a grabbed part over surfaces under the cursor: dynamically raycasts
+the scene excluding dragged parts, auto-elevating the part bottom onto the hit
+surface or ground plane Y = 0 (unless Shift is held to lock elevation).
+From this surface-aligned pose, magnetic snapping with hysteresis is evaluated.
 -}
 movePlaneDrag : Drag -> Vec3.Vec3 -> ( Float, Float ) -> Model -> ( Model, Cmd Msg )
 movePlaneDrag drag grab ( x, y ) model =
     let
-        planeHit =
-            Pick.screenRay model.viewport.camera model.viewport.width model.viewport.height x y
-                |> Maybe.andThen
-                    (\( origin, direction ) ->
-                        let
-                            dy =
-                                Vec3.getY direction
+        draggedIds =
+            Set.fromList drag.ids
 
-                            t =
-                                (Vec3.getY grab - Vec3.getY origin) / dy
-                        in
-                        if abs dy < 0.05 || t <= 0 then
+        surfaceHit =
+            Viewport.pickSurfaceExcluding draggedIds x y model.viewport
+
+        originalPlacements =
+            drag.ids
+                |> List.filterMap
+                    (\id ->
+                        case Document.getPlacement id drag.original of
+                            Just p ->
+                                Just p
+
+                            Nothing ->
+                                Document.getPlacement id model.document
+                    )
+    in
+    case ( surfaceHit, originalPlacements ) of
+        ( Just hit, leadP :: _ ) ->
+            let
+                resolveLines name =
+                    case Dict.get name model.viewport.partCache of
+                        Just (Resolve.Loaded lines) ->
+                            Just lines
+
+                        _ ->
                             Nothing
 
-                        else
-                            Just (Vec3.add origin (Vec3.scale t direction))
-                    )
+                leadConn =
+                    Connectivity.extractPartConnectivity leadP.part resolveLines
 
-        snapped value =
-            let
+                leadRawBox =
+                    List.head leadConn.boundingBoxes
+                        |> Maybe.withDefault { min = vec3 -10 -4 -10, max = vec3 10 24 10 }
+
+                leadBox =
+                    Connectivity.effectiveEnvelope leadRawBox leadConn.connections
+
+                bottomExtent =
+                    case model.viewport.instancedScene |> Maybe.andThen (\s -> Dict.get leadP.part s.parts) of
+                        Just m ->
+                            Vec3.getY m.boundsMax
+
+                        Nothing ->
+                            Vec3.getY leadBox.max
+
+                origPos =
+                    Transform.position leadP.matrix
+
+                targetY =
+                    if model.shiftHeld then
+                        Vec3.getY origPos
+
+                    else
+                        hit.topY - bottomExtent
+
+                docHit =
+                    Gizmo.toRender hit.point
+
+                docHitX =
+                    Vec3.getX docHit
+
+                docHitZ =
+                    Vec3.getZ docHit
+
                 step =
                     toFloat (max 1 model.gridStep)
-            in
-            toFloat (round (value / step)) * step
-    in
-    case planeHit of
-        Just hit ->
-            let
-                moved =
-                    Vec3.sub hit grab
 
-                -- Render space is LDraw with Y negated; the plane keeps Y fixed.
-                delta =
-                    vec3 (snapped (Vec3.getX moved)) 0 (snapped (Vec3.getZ moved))
-            in
-            applyDragDelta drag 0 ( x, y ) delta model
+                targetX =
+                    toFloat (round (docHitX / step)) * step
 
-        Nothing ->
+                targetZ =
+                    toFloat (round (docHitZ / step)) * step
+
+                targetPos =
+                    vec3 targetX targetY targetZ
+
+                effectiveTargetPos =
+                    if not (List.isEmpty model.context.path) then
+                        case List.reverse model.context.path of
+                            head :: _ ->
+                                case Mat4.inverse head.accumulatedTransform of
+                                    Just inv ->
+                                        Mat4.transform inv targetPos
+
+                                    Nothing ->
+                                        targetPos
+
+                            [] ->
+                                targetPos
+
+                    else
+                        targetPos
+
+                inFlightAngle =
+                    toFloat model.inFlightRotationStep * (pi / 2)
+
+                leadSurfaceMatrix =
+                    Mat4.mul
+                        (Mat4.makeTranslate effectiveTargetPos)
+                        (Mat4.mul
+                            (Mat4.makeRotate inFlightAngle (vec3 0 1 0))
+                            (Mat4.mul
+                                (Mat4.makeTranslate (Vec3.negate origPos))
+                                leadP.matrix
+                            )
+                        )
+
+                deltaMat =
+                    Mat4.mul leadSurfaceMatrix (Connectivity.invertRigid leadP.matrix)
+
+                draggedSurfaceUpdates =
+                    originalPlacements
+                        |> List.map (\p -> ( p.id, Mat4.mul deltaMat p.matrix ))
+
+                ( gizmoMovedDoc, _ ) =
+                    Edit.apply (SetMatrix draggedSurfaceUpdates) drag.original
+
+                effectiveBoxOf placement =
+                    let
+                        pConn =
+                            Connectivity.extractPartConnectivity placement.part resolveLines
+
+                        rawBox =
+                            List.head pConn.boundingBoxes
+                                |> Maybe.withDefault { min = vec3 -10 -4 -10, max = vec3 10 24 10 }
+                    in
+                    Connectivity.effectiveEnvelope rawBox pConn.connections
+
+                otherPlacements =
+                    Document.placementsOf model.context.activeSubmodel gizmoMovedDoc
+                        |> List.filter (\p -> not (List.member p.id drag.ids))
+
+                sceneBoxes =
+                    List.map (\p -> ( p.id, p.matrix, effectiveBoxOf p )) otherPlacements
+
+                currentDraggedPlacements =
+                    drag.ids
+                        |> List.filterMap (\id -> Document.getPlacement id gizmoMovedDoc)
+            in
+            if model.altHeld || model.snapDistance <= 0 then
+                let
+                    draggedBoxes =
+                        List.map (\p -> ( p.id, p.matrix, effectiveBoxOf p )) currentDraggedPlacements
+
+                    collidingPairs =
+                        Connectivity.checkCollisions 0.5 draggedBoxes sceneBoxes
+
+                    collidingIds =
+                        Set.fromList (List.map Tuple.first collidingPairs)
+
+                    ( next, cmd ) =
+                        syncDocumentLive
+                            { model
+                                | document = gizmoMovedDoc
+                                , drag = Just { drag | amount = 0, lastPoint = ( x, y ) }
+                                , activeSnap = Nothing
+                                , collidingPlacements =
+                                    if model.collisionMode == Connectivity.CollisionOff then
+                                        Set.empty
+
+                                    else
+                                        collidingIds
+                            }
+                in
+                ( next, cmd )
+
+            else
+                let
+                    targetWorldPoints =
+                        otherPlacements
+                            |> List.concatMap
+                                (\targetP ->
+                                    let
+                                        pConn =
+                                            Connectivity.extractPartConnectivity targetP.part resolveLines
+                                    in
+                                    List.map (Connectivity.transformPoint targetP.matrix targetP.id) pConn.connections
+                                )
+
+                    maybeSnap =
+                        Connectivity.solveSnapWithHysteresis
+                            model.snapDistance
+                            (model.snapDistance * 1.5)
+                            model.activeSnap
+                            model.snapRotationStep
+                            leadSurfaceMatrix
+                            leadConn.connections
+                            targetWorldPoints
+                in
+                case maybeSnap of
+                    Just snap ->
+                        let
+                            snapDeltaMat =
+                                Mat4.mul snap.snapMatrix (Connectivity.invertRigid leadP.matrix)
+
+                            draggedSnapUpdates =
+                                originalPlacements
+                                    |> List.map (\p -> ( p.id, Mat4.mul snapDeltaMat p.matrix ))
+
+                            ( snappedDoc, _ ) =
+                                Edit.apply (SetMatrix draggedSnapUpdates) drag.original
+
+                            snappedDraggedPlacements =
+                                drag.ids
+                                    |> List.filterMap (\id -> Document.getPlacement id snappedDoc)
+
+                            draggedBoxes =
+                                List.map (\p -> ( p.id, p.matrix, effectiveBoxOf p )) snappedDraggedPlacements
+
+                            collidingPairs =
+                                Connectivity.checkCollisions 0.5 draggedBoxes sceneBoxes
+
+                            isColliding =
+                                not (List.isEmpty collidingPairs)
+
+                            collidingIds =
+                                Set.fromList (List.map Tuple.first collidingPairs)
+
+                            guideWithCol =
+                                Connectivity.setGuideColliding isColliding snap.guide
+
+                            finalCandidate =
+                                { snap | guide = guideWithCol }
+                        in
+                        syncDocumentLive
+                            { model
+                                | document = snappedDoc
+                                , drag = Just { drag | amount = 0, lastPoint = ( x, y ) }
+                                , activeSnap = Just finalCandidate
+                                , collidingPlacements =
+                                    if model.collisionMode == Connectivity.CollisionOff then
+                                        Set.empty
+
+                                    else
+                                        collidingIds
+                            }
+
+                    Nothing ->
+                        let
+                            draggedBoxes =
+                                List.map (\p -> ( p.id, p.matrix, effectiveBoxOf p )) currentDraggedPlacements
+
+                            collidingPairs =
+                                Connectivity.checkCollisions 0.5 draggedBoxes sceneBoxes
+
+                            collidingIds =
+                                Set.fromList (List.map Tuple.first collidingPairs)
+
+                            ( next, cmd ) =
+                                syncDocumentLive
+                                    { model
+                                        | document = gizmoMovedDoc
+                                        , drag = Just { drag | amount = 0, lastPoint = ( x, y ) }
+                                        , activeSnap = Nothing
+                                        , collidingPlacements =
+                                            if model.collisionMode == Connectivity.CollisionOff then
+                                                Set.empty
+
+                                            else
+                                                collidingIds
+                                    }
+                        in
+                        ( next, cmd )
+
+        _ ->
             ( model, Cmd.none )
 
 
@@ -2936,8 +3387,10 @@ applyDragDelta drag amount point delta model =
                         Connectivity.extractPartConnectivity leadPlacement.part resolveLines
 
                     maybeSnap =
-                        Connectivity.solveSnap
+                        Connectivity.solveSnapWithHysteresis
                             model.snapDistance
+                            (model.snapDistance * 1.5)
+                            model.activeSnap
                             model.snapRotationStep
                             leadPlacement.matrix
                             leadConn.connections
@@ -3045,6 +3498,8 @@ endDrag model =
                                 | document = drag.original
                                 , drag = Nothing
                                 , activeSnap = Nothing
+                                , inFlightRotationStep = 0
+                                , snapRotationStep = 0
                                 , collidingPlacements = Set.empty
                             }
                 in
@@ -3060,6 +3515,9 @@ endDrag model =
                         drag.ids
                             |> List.filterMap (\id -> Document.getPlacement id drag.original)
 
+                    anyNew =
+                        List.any (\id -> Document.getPlacement id drag.original == Nothing) drag.ids
+
                     hasMoved =
                         List.any
                             (\p ->
@@ -3068,12 +3526,85 @@ endDrag model =
                                         p.matrix /= origP.matrix
 
                                     Nothing ->
-                                        False
+                                        True
                             )
                             currentPlacements
                 in
-                if not hasMoved then
-                    ( { model | drag = Nothing, activeSnap = Nothing, collidingPlacements = Set.empty }, Cmd.none )
+                if anyNew && not hasMoved then
+                    syncDocumentLive
+                        { model
+                            | document = drag.original
+                            , drag = Nothing
+                            , activeSnap = Nothing
+                            , inFlightRotationStep = 0
+                            , snapRotationStep = 0
+                            , collidingPlacements = Set.empty
+                        }
+
+                else if not hasMoved then
+                    ( { model
+                        | drag = Nothing
+                        , activeSnap = Nothing
+                        , inFlightRotationStep = 0
+                        , snapRotationStep = 0
+                        , collidingPlacements = Set.empty
+                      }
+                    , Cmd.none
+                    )
+
+                else if anyNew then
+                    let
+                        newParts =
+                            currentPlacements
+                                |> List.map (\p -> { part = p.part, color = p.color, matrix = p.matrix })
+
+                        ( newDoc, newHistory ) =
+                            Edit.record (AddIn model.context.activeSubmodel newParts) drag.original model.history
+
+                        firstFile =
+                            List.head currentPlacements |> Maybe.map .part |> Maybe.withDefault ""
+
+                        newRecents =
+                            if firstFile /= "" then
+                                firstFile
+                                    :: List.filter (\f -> f /= firstFile) model.palette.recentParts
+                                    |> List.take 20
+
+                            else
+                                model.palette.recentParts
+
+                        palette =
+                            model.palette
+
+                        updated =
+                            { model
+                                | document = newDoc
+                                , history = newHistory
+                                , drag = Nothing
+                                , activeSnap = Nothing
+                                , inFlightRotationStep = 0
+                                , snapRotationStep = 0
+                                , collidingPlacements =
+                                    if model.collisionMode == Connectivity.CollisionOff then
+                                        Set.empty
+
+                                    else
+                                        model.collidingPlacements
+                                , palette =
+                                    Palette.refreshFiltered model.activeColour
+                                        { palette | recentParts = newRecents }
+                            }
+
+                        ( withTimer, hintCmd ) =
+                            scheduleHints updated
+                    in
+                    ( withTimer
+                    , Cmd.batch
+                        [ hintCmd
+                        , Ports.saveDraft (Writer.writeDocument updated.document)
+                        , Ports.saveRecents newRecents
+                        ]
+                    )
 
                 else
                     let
@@ -3084,6 +3615,8 @@ endDrag model =
                             { model
                                 | drag = Nothing
                                 , activeSnap = Nothing
+                                , inFlightRotationStep = 0
+                                , snapRotationStep = 0
                                 , collidingPlacements =
                                     if model.collisionMode == Connectivity.CollisionOff then
                                         Set.empty
@@ -3543,6 +4076,7 @@ viewPalette model =
         , onGroupAndFocus = PaletteGroupAndFocus
         , onCategory = PaletteCategory
         , onArm = ArmPart
+        , onStartDrag = StartDragPart
         , onAdd = AddArmedPart
         , onManual = ManualPart
         , onAddManual = AddManualPart

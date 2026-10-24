@@ -12,11 +12,13 @@ module Viewport exposing
     , cameraChangedPayload
     , cameraMoved
     , captureDrag
+    , groundIntersection
     , init
     , loadDocument
     , needsAnimationFrame
     , pickPoint
     , pickSource
+    , pickSurfaceExcluding
     , setActivePath
     , setActiveSources
     , setCanvasOrigin
@@ -2009,6 +2011,236 @@ pickPoint x y model =
                 |> Maybe.map (\( t, p ) -> { source = p.source, point = Vec3.add origin (Vec3.scale t direction) })
 
         _ ->
+            Nothing
+
+
+{-| World-space intersection of the screen ray with the horizontal ground plane Y = 0.
+-}
+groundIntersection : Float -> Float -> Model -> Maybe Vec3.Vec3
+groundIntersection x y model =
+    Pick.screenRay model.camera model.width model.height x y
+        |> Maybe.andThen (\( origin, direction ) -> Pick.rayGroundHit origin direction)
+        |> Maybe.map Tuple.second
+
+
+{-| Intersect the screen ray with scene geometry, excluding placements whose
+`source` is in `excludedIds`. When geometry is hit, returns the hit source ID,
+the world point under the pointer (render space, Y up), and the top bounding
+elevation of the hit placement in LDraw coordinates (`topY`).
+When no placements are hit, falls back to the horizontal ground plane (Y = 0)
+with source -1 and topY 0.0.
+-}
+pickSurfaceExcluding : Set Int -> Float -> Float -> Model -> Maybe { source : Int, point : Vec3.Vec3, topY : Float }
+pickSurfaceExcluding excludedIds x y model =
+    case Pick.screenRay model.camera model.width model.height x y of
+        Just ( origin, direction ) ->
+            let
+                nearPlane =
+                    Camera.nearPlane model.camera
+
+                eye =
+                    Camera.position model.camera
+
+                isPickable p =
+                    p.source
+                        >= 0
+                        && not (Set.member p.source excludedIds)
+                        && (case model.activeSources of
+                                Just sources ->
+                                    Set.member p.source sources
+
+                                Nothing ->
+                                    True
+                           )
+
+                boxCandidate scene p =
+                    Pick.raySphereHit origin direction p.center p.radius
+                        |> Maybe.andThen
+                            (\_ ->
+                                case ( Dict.get p.part scene.parts, Mat4.inverse p.matrix ) of
+                                    ( Just mesh, Just inv ) ->
+                                        let
+                                            localOrigin =
+                                                Mat4.transform inv origin
+
+                                            localDir =
+                                                Vec3.sub (Mat4.transform inv (Vec3.add origin direction)) localOrigin
+                                        in
+                                        Pick.rayAabbHitFrom nearPlane localOrigin localDir mesh.boundsMin mesh.boundsMax
+                                            |> Maybe.map
+                                                (\boxT ->
+                                                    let
+                                                        diameter =
+                                                            2
+                                                                * Instanced.projectedRadiusPx (toFloat model.height)
+                                                                    (Vec3.distance eye p.center)
+                                                                    p.radius
+
+                                                        isFar =
+                                                            Instanced.detailFor diameter == Instanced.Far
+                                                    in
+                                                    { boxT = boxT
+                                                    , placement = p
+                                                    , kind =
+                                                        MeshCandidate
+                                                            { mesh = mesh
+                                                            , localOrigin = localOrigin
+                                                            , localDir = localDir
+                                                            , isFar = isFar
+                                                            }
+                                                    }
+                                                )
+
+                                    _ ->
+                                        let
+                                            rVec =
+                                                Vec3.vec3 p.radius p.radius p.radius
+
+                                            boxMin =
+                                                Vec3.sub p.center rVec
+
+                                            boxMax =
+                                                Vec3.add p.center rVec
+                                        in
+                                        Pick.rayAabbHitFrom nearPlane origin direction boxMin boxMax
+                                            |> Maybe.map
+                                                (\boxT ->
+                                                    { boxT = boxT
+                                                    , placement = p
+                                                    , kind = FallbackCandidate
+                                                    }
+                                                )
+                            )
+
+                surfaceHit c =
+                    case c.kind of
+                        FallbackCandidate ->
+                            Just c.boxT
+
+                        MeshCandidate m ->
+                            if m.isFar then
+                                Just c.boxT
+
+                            else if List.isEmpty m.mesh.surface then
+                                Just c.boxT
+
+                            else
+                                Pick.nearestTriangleHitByFrom nearPlane .position m.localOrigin m.localDir m.mesh.surface
+
+                closer c best =
+                    case best of
+                        Just ( bestT, bestPlacement ) ->
+                            if c.boxT > bestT + pickDepthTolerance then
+                                best
+
+                            else
+                                case surfaceHit c of
+                                    Just t ->
+                                        if t >= nearPlane && t < bestT - pickDepthTolerance then
+                                            Just ( t, c.placement )
+
+                                        else if t >= nearPlane && t <= bestT + pickDepthTolerance && c.placement.radius < bestPlacement.radius then
+                                            Just ( t, c.placement )
+
+                                        else
+                                            best
+
+                                    Nothing ->
+                                        best
+
+                        Nothing ->
+                            case surfaceHit c of
+                                Just t ->
+                                    if t >= nearPlane then
+                                        Just ( t, c.placement )
+
+                                    else
+                                        Nothing
+
+                                Nothing ->
+                                    Nothing
+
+                placementTopY scene p =
+                    case Dict.get p.part scene.parts of
+                        Just mesh ->
+                            let
+                                minY =
+                                    if Vec3.getY mesh.boundsMin < -0.1 then
+                                        0
+
+                                    else
+                                        Vec3.getY mesh.boundsMin
+
+                                minX =
+                                    Vec3.getX mesh.boundsMin
+
+                                maxX =
+                                    Vec3.getX mesh.boundsMax
+
+                                maxY =
+                                    Vec3.getY mesh.boundsMax
+
+                                minZ =
+                                    Vec3.getZ mesh.boundsMin
+
+                                maxZ =
+                                    Vec3.getZ mesh.boundsMax
+
+                                corners =
+                                    [ Vec3.vec3 minX minY minZ
+                                    , Vec3.vec3 minX minY maxZ
+                                    , Vec3.vec3 minX maxY minZ
+                                    , Vec3.vec3 minX maxY maxZ
+                                    , Vec3.vec3 maxX minY minZ
+                                    , Vec3.vec3 maxX minY maxZ
+                                    , Vec3.vec3 maxX maxY minZ
+                                    , Vec3.vec3 maxX maxY maxZ
+                                    ]
+
+                                worldCorners =
+                                    List.map (Mat4.transform p.matrix) corners
+
+                                maxRenderY =
+                                    List.foldl (\pt acc -> max acc (Vec3.getY pt)) -1.0e30 worldCorners
+                            in
+                            -maxRenderY
+
+                        Nothing ->
+                            -(Vec3.getY p.center)
+
+                maybeSceneHit =
+                    model.instancedScene
+                        |> Maybe.andThen
+                            (\scene ->
+                                scene.placements
+                                    |> List.filter isPickable
+                                    |> List.filterMap (boxCandidate scene)
+                                    |> List.sortBy .boxT
+                                    |> List.foldl closer Nothing
+                                    |> Maybe.map
+                                        (\( t, p ) ->
+                                            { source = p.source
+                                            , point = Vec3.add origin (Vec3.scale t direction)
+                                            , topY = placementTopY scene p
+                                            }
+                                        )
+                            )
+            in
+            case maybeSceneHit of
+                Just hit ->
+                    Just hit
+
+                Nothing ->
+                    Pick.rayGroundHit origin direction
+                        |> Maybe.map
+                            (\( _, groundPt ) ->
+                                { source = -1
+                                , point = groundPt
+                                , topY = 0.0
+                                }
+                            )
+
+        Nothing ->
             Nothing
 
 

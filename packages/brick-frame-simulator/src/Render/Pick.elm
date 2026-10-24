@@ -5,6 +5,8 @@ module Render.Pick exposing
     , nearestTriangleHitByFrom
     , rayAabbHit
     , rayAabbHitFrom
+    , rayGroundHit
+    , rayPlaneHit
     , raySphereHit
     , rayTriangleHit
     , screenRay
@@ -241,6 +243,39 @@ raySphereHit rayOrigin rayDir center radius =
 
         else
             Nothing
+
+
+{-| Intersection of a ray (origin, direction) with an infinite plane defined by
+a point on the plane and a plane normal. Returns distance `t >= 0` and the
+world-space intersection point, or `Nothing` if the ray is parallel or points away.
+-}
+rayPlaneHit : Vec3.Vec3 -> Vec3.Vec3 -> Vec3.Vec3 -> Vec3.Vec3 -> Maybe ( Float, Vec3.Vec3 )
+rayPlaneHit rayOrigin rayDir planePoint planeNormal =
+    let
+        denom =
+            Vec3.dot rayDir planeNormal
+    in
+    if abs denom < 1.0e-7 then
+        Nothing
+
+    else
+        let
+            t =
+                Vec3.dot (Vec3.sub planePoint rayOrigin) planeNormal / denom
+        in
+        if t >= 0 then
+            Just ( t, Vec3.add rayOrigin (Vec3.scale t rayDir) )
+
+        else
+            Nothing
+
+
+{-| Intersection of a ray (origin, direction) with the horizontal ground plane Y = 0.
+Returns distance `t >= 0` and the world-space intersection point.
+-}
+rayGroundHit : Vec3.Vec3 -> Vec3.Vec3 -> Maybe ( Float, Vec3.Vec3 )
+rayGroundHit rayOrigin rayDir =
+    rayPlaneHit rayOrigin rayDir (Vec3.vec3 0 0 0) (Vec3.vec3 0 1 0)
 
 
 {-| Intersection of a ray (origin, direction) with an axis-aligned bounding box (min, max).

@@ -190,4 +190,42 @@ suite =
                         [ ( vec3 -1 -1 5, vec3 1 -1 5, vec3 0 1 5 ) ]
                         |> Expect.equal Nothing
             ]
+        , describe "rayPlaneHit"
+            [ test "hits a plane directly along normal" <|
+                \_ ->
+                    case Pick.rayPlaneHit (vec3 0 10 0) (vec3 0 -1 0) (vec3 0 0 0) (vec3 0 1 0) of
+                        Just ( t, pt ) ->
+                            Expect.all
+                                [ \_ -> Expect.within (Expect.Absolute 1.0e-5) 10.0 t
+                                , \_ -> Expect.within (Expect.Absolute 1.0e-5) 0.0 (Vec3.getY pt)
+                                ]
+                                ()
+
+                        Nothing ->
+                            Expect.fail "expected plane hit at t=10"
+            , test "misses plane when pointing away" <|
+                \_ ->
+                    Pick.rayPlaneHit (vec3 0 10 0) (vec3 0 1 0) (vec3 0 0 0) (vec3 0 1 0)
+                        |> Expect.equal Nothing
+            , test "misses plane when ray is parallel" <|
+                \_ ->
+                    Pick.rayPlaneHit (vec3 0 10 0) (vec3 1 0 0) (vec3 0 0 0) (vec3 0 1 0)
+                        |> Expect.equal Nothing
+            ]
+        , describe "rayGroundHit"
+            [ test "hits ground plane at Y = 0" <|
+                \_ ->
+                    case Pick.rayGroundHit (vec3 5 25 10) (vec3 0 -1 0) of
+                        Just ( t, pt ) ->
+                            Expect.all
+                                [ \_ -> Expect.within (Expect.Absolute 1.0e-5) 25.0 t
+                                , \_ -> Expect.within (Expect.Absolute 1.0e-5) 5.0 (Vec3.getX pt)
+                                , \_ -> Expect.within (Expect.Absolute 1.0e-5) 0.0 (Vec3.getY pt)
+                                , \_ -> Expect.within (Expect.Absolute 1.0e-5) 10.0 (Vec3.getZ pt)
+                                ]
+                                ()
+
+                        Nothing ->
+                            Expect.fail "expected ground plane hit at t=25"
+            ]
         ]

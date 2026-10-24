@@ -17,7 +17,10 @@ import LDraw.Connectivity as Connectivity
         , extractConnections
         , isCompatible
         , knownCatalogPart
+        , snapEnterDistance
+        , snapReleaseDistance
         , solveSnap
+        , solveSnapWithHysteresis
         , testOBB
         , toOBB
         , transformPoint
@@ -430,4 +433,85 @@ collisionSATTests =
                     , \b -> Expect.equal 24 (Vec3.getY b.max)
                     ]
                     effective
+        , describe "solveSnapWithHysteresis"
+            [ test "enters snap within snapEnterDistance (12 LDU)" <|
+                \_ ->
+                    let
+                        dragged =
+                            [ { id = 1, connType = AntiStud, localPosition = vec3 0 24 0, normal = vec3 0 1 0, tangent = vec3 1 0 0 } ]
+
+                        target =
+                            [ { pointId = 10, placementId = 1, connType = Stud, worldPosition = vec3 0 24 0, worldNormal = vec3 0 -1 0, worldTangent = vec3 1 0 0 } ]
+
+                        result =
+                            solveSnapWithHysteresis snapEnterDistance snapReleaseDistance Nothing 0 (Mat4.makeTranslate3 8 0 0) dragged target
+                    in
+                    Expect.notEqual Nothing result
+            , test "rejects snap at 15 LDU when not already snapped (enter = 12 LDU)" <|
+                \_ ->
+                    let
+                        dragged =
+                            [ { id = 1, connType = AntiStud, localPosition = vec3 0 24 0, normal = vec3 0 1 0, tangent = vec3 1 0 0 } ]
+
+                        target =
+                            [ { pointId = 10, placementId = 1, connType = Stud, worldPosition = vec3 0 24 0, worldNormal = vec3 0 -1 0, worldTangent = vec3 1 0 0 } ]
+
+                        result =
+                            solveSnapWithHysteresis snapEnterDistance snapReleaseDistance Nothing 0 (Mat4.makeTranslate3 15 0 0) dragged target
+                    in
+                    Expect.equal Nothing result
+            , test "maintains latch at 15 LDU when already active (release = 18 LDU)" <|
+                \_ ->
+                    let
+                        draggedPt =
+                            { id = 1, connType = AntiStud, localPosition = vec3 0 24 0, normal = vec3 0 1 0, tangent = vec3 1 0 0 }
+
+                        targetPt =
+                            { pointId = 10, placementId = 1, connType = Stud, worldPosition = vec3 0 24 0, worldNormal = vec3 0 -1 0, worldTangent = vec3 1 0 0 }
+
+                        activeSnap =
+                            solveSnap snapEnterDistance 0 (Mat4.makeTranslate3 5 0 0) [ draggedPt ] [ targetPt ]
+
+                        result =
+                            solveSnapWithHysteresis snapEnterDistance snapReleaseDistance activeSnap 0 (Mat4.makeTranslate3 15 0 0) [ draggedPt ] [ targetPt ]
+                    in
+                    Expect.notEqual Nothing result
+            , test "breaks latch when pulled beyond release distance (20 LDU > 18 LDU)" <|
+                \_ ->
+                    let
+                        draggedPt =
+                            { id = 1, connType = AntiStud, localPosition = vec3 0 24 0, normal = vec3 0 1 0, tangent = vec3 1 0 0 }
+
+                        targetPt =
+                            { pointId = 10, placementId = 1, connType = Stud, worldPosition = vec3 0 24 0, worldNormal = vec3 0 -1 0, worldTangent = vec3 1 0 0 }
+
+                        activeSnap =
+                            solveSnap snapEnterDistance 0 (Mat4.makeTranslate3 5 0 0) [ draggedPt ] [ targetPt ]
+
+                        result =
+                            solveSnapWithHysteresis snapEnterDistance snapReleaseDistance activeSnap 0 (Mat4.makeTranslate3 20 0 0) [ draggedPt ] [ targetPt ]
+                    in
+                    Expect.equal Nothing result
+            , test "directional connections unlatch if rotated away even within hysteresis distance" <|
+                \_ ->
+                    let
+                        draggedPt =
+                            { id = 1, connType = AntiStud, localPosition = vec3 0 0 0, normal = vec3 0 1 0, tangent = vec3 1 0 0 }
+
+                        targetPt =
+                            { pointId = 10, placementId = 1, connType = Stud, worldPosition = vec3 0 0 0, worldNormal = vec3 0 -1 0, worldTangent = vec3 1 0 0 }
+
+                        activeSnap =
+                            solveSnap snapEnterDistance 0 (Mat4.makeTranslate3 5 0 0) [ draggedPt ] [ targetPt ]
+
+                        -- Rotated 180 degrees around Z axis (normal inverted to 0, -1, 0, facing away from desired normal 0, 1, 0)
+                        -- at distance 10 LDU (well within release distance 18 LDU)
+                        rotatedMatrix =
+                            Mat4.mul (Mat4.makeTranslate3 10 0 0) (Mat4.makeRotate (degrees 180) (vec3 0 0 1))
+
+                        result =
+                            solveSnapWithHysteresis snapEnterDistance snapReleaseDistance activeSnap 0 rotatedMatrix [ draggedPt ] [ targetPt ]
+                    in
+                    Expect.equal Nothing result
+            ]
         ]

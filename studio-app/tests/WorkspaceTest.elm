@@ -2070,4 +2070,154 @@ snappingSuite =
                         mouseMove 100 100 modelDuringDrag
                 in
                 Expect.equal (Set.fromList [ 0 ]) moved.collidingPlacements
+        , test "Shift key press and release toggles shiftHeld" <|
+            \_ ->
+                let
+                    dummyKeyWithShift key shift =
+                        { key = key
+                        , shift = shift
+                        , ctrl = False
+                        , meta = False
+                        , alt = False
+                        , repeat = False
+                        , targetTag = "BODY"
+                        , targetEditable = False
+                        , targetRole = ""
+                        }
+
+                    mShiftPressed =
+                        step (ViewportMsg (Viewport.KeyPressed (dummyKeyWithShift "Shift" True))) start
+
+                    mShiftReleased =
+                        step (KeyUp "Shift") mShiftPressed
+                in
+                Expect.all
+                    [ \_ -> Expect.equal True mShiftPressed.shiftHeld
+                    , \_ -> Expect.equal False mShiftReleased.shiftHeld
+                    ]
+                    ()
+        , test "Arrow, 'r', and bracket keys cycle inFlightRotationStep when not snapped during drag" <|
+            \_ ->
+                let
+                    dummyKey key =
+                        { key = key
+                        , shift = False
+                        , ctrl = False
+                        , meta = False
+                        , alt = False
+                        , repeat = False
+                        , targetTag = "BODY"
+                        , targetEditable = False
+                        , targetRole = ""
+                        }
+
+                    readyWithoutSnap =
+                        { start
+                            | drag =
+                                Just
+                                    { kind = Gizmo.PlaneDrag (vec3 0 0 0)
+                                    , ids = [ 0 ]
+                                    , start = ( 100, 100 )
+                                    , lastPoint = ( 100, 100 )
+                                    , original = start.document
+                                    , amount = 0
+                                    }
+                            , activeSnap = Nothing
+                            , inFlightRotationStep = 0
+                        }
+
+                    stepRight =
+                        step (ViewportMsg (Viewport.KeyPressed (dummyKey "ArrowRight"))) readyWithoutSnap
+
+                    stepR =
+                        step (ViewportMsg (Viewport.KeyPressed (dummyKey "r"))) stepRight
+
+                    stepBracketClose =
+                        step (ViewportMsg (Viewport.KeyPressed (dummyKey "]"))) stepR
+
+                    stepLeft =
+                        step (ViewportMsg (Viewport.KeyPressed (dummyKey "ArrowLeft"))) stepBracketClose
+
+                    stepBracketOpen =
+                        step (ViewportMsg (Viewport.KeyPressed (dummyKey "["))) stepLeft
+                in
+                Expect.all
+                    [ \_ -> Expect.equal 1 stepRight.inFlightRotationStep
+                    , \_ -> Expect.equal 2 stepR.inFlightRotationStep
+                    , \_ -> Expect.equal 3 stepBracketClose.inFlightRotationStep
+                    , \_ -> Expect.equal 2 stepLeft.inFlightRotationStep
+                    , \_ -> Expect.equal 1 stepBracketOpen.inFlightRotationStep
+                    ]
+                    ()
+        , test "StartDragPart initiates drag session with temporary placement and selection" <|
+            \_ ->
+                let
+                    testPart =
+                        PartIndex.makePart "3001.dat" "Brick 2 x 4" "Brick" ""
+
+                    ( draggedModel, _ ) =
+                        Workspace.update (StartDragPart testPart) start
+                in
+                Expect.all
+                    [ \m -> Expect.notEqual Nothing m.drag
+                    , \m -> Expect.equal False (Set.isEmpty m.selection)
+                    , \m -> Expect.equal (Just testPart) m.palette.armed
+                    , \m -> Expect.equal True m.viewport.captured
+                    ]
+                    draggedModel
+        , test "StartDragPart sets viewport.captured to True for gesture capture" <|
+            \_ ->
+                let
+                    testPart =
+                        PartIndex.makePart "3001.dat" "Brick 2 x 4" "Brick" ""
+
+                    ( draggedModel, _ ) =
+                        Workspace.update (StartDragPart testPart) start
+                in
+                Expect.equal True draggedModel.viewport.captured
+        , test "placeArmedPart in a submodel with LocalFrame correctly transforms coordinates via Mat4.inverse" <|
+            \_ ->
+                let
+                    testPart =
+                        PartIndex.makePart "3001.dat" "Brick 2 x 4" "Brick" ""
+
+                    -- Placement 1 in loaded is at (300, 0, 0)
+                    grouped =
+                        loaded
+                            |> step (SelectPlacement 1 False)
+                            |> step GroupSelection
+
+                    entered =
+                        step EnterSubmodel grouped
+
+                    ( rootPlaced, _ ) =
+                        Workspace.placeArmedPart testPart ( 400, 300 ) loaded
+
+                    ( submodelPlaced, _ ) =
+                        Workspace.placeArmedPart testPart ( 400, 300 ) entered
+
+                    rootPos =
+                        Document.placements rootPlaced.document
+                            |> List.filter (\p -> p.id == rootPlaced.document.nextId - 1)
+                            |> List.head
+                            |> Maybe.map (\p -> Mat4.transform p.matrix (vec3 0 0 0))
+
+                    submodelPos =
+                        Document.placementsOf entered.context.activeSubmodel submodelPlaced.document
+                            |> List.filter (\p -> p.id == submodelPlaced.document.nextId - 1)
+                            |> List.head
+                            |> Maybe.map (\p -> Mat4.transform p.matrix (vec3 0 0 0))
+                in
+                case ( rootPos, submodelPos ) of
+                    ( Just r, Just s ) ->
+                        Expect.all
+                            [ \_ -> Expect.equal LocalFrame entered.context.coordinateFrame
+                            , \_ -> Expect.equal (Vec3.getX r - 300) (Vec3.getX s)
+                            , \_ -> Expect.equal (Vec3.getY r) (Vec3.getY s)
+                            , \_ -> Expect.equal (Vec3.getZ r) (Vec3.getZ s)
+                            ]
+                            ()
+
+                    _ ->
+                        Expect.fail "Failed to find placed parts in root or submodel"
         ]

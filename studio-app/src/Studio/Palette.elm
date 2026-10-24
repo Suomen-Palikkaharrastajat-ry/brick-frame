@@ -96,6 +96,7 @@ type alias Config msg =
     , onGroupAndFocus : Maybe String -> String -> msg
     , onCategory : Maybe String -> msg
     , onArm : Part -> msg
+    , onStartDrag : Part -> msg
     , onAdd : msg
     , onManual : String -> msg
     , onAddManual : msg
@@ -1028,6 +1029,7 @@ cardPickButton : Config msg -> Part -> String -> Bool -> Html msg
 cardPickButton config part name isArmed =
     button
         [ Html.Events.onClick (config.onArm part)
+        , Html.Events.on "mousedown" (Decode.succeed (config.onStartDrag part))
         , Html.Events.on "dblclick" (Decode.succeed config.onAdd)
         , Attr.class "palette-item"
         , Attr.attribute "aria-pressed" (ariaBool isArmed)
