@@ -40,6 +40,7 @@ import Render.Style as Style
 import Simulation
 import UI.Button as Button
 import UI.FileUpload as FileUpload
+import UI.Focus as Focus
 import UI.ShortcutHelp as ShortcutHelp
 import UI.Status as Status
 import UI.Theme as Theme
@@ -192,6 +193,7 @@ type Msg
     | RequestFileUpload
     | ToggleControlsPanel
     | ToggleShortcutHelp
+    | NoOp
 
 
 runtimeEventCmd : String -> List ( String, Encode.Value ) -> Cmd Msg
@@ -314,6 +316,9 @@ updateInner msg model =
 
         ToggleShortcutHelp ->
             ( { model | showShortcutHelp = not model.showShortcutHelp }, Cmd.none )
+
+        NoOp ->
+            ( model, Cmd.none )
 
 
 {-| Turn what the viewport reported into model changes and commands, in order.
@@ -564,7 +569,7 @@ viewShortcutHelp =
 
 viewPad : Model -> Html Msg
 viewPad model =
-    ViewPad.view
+    ViewPad.viewKeepingFocus NoOp
         { walking = model.viewport.camera.navigation == Camera.Walk
         , helpOpen = model.showShortcutHelp
         , play =
@@ -761,6 +766,7 @@ viewGearPanel model =
                                         ]
                                     , button
                                         [ Html.Events.onClick ToggleControlsPanel
+                                        , Focus.keepFocusOnCanvas NoOp
                                         , Touch.onTap ToggleControlsPanel
                                         , Attr.style "padding" "2px 8px"
                                         , Attr.style "background" Theme.panelSubtleBackground
@@ -901,6 +907,7 @@ viewGearRow model graph ratios inst =
         , if not isMotor then
             button
                 [ Html.Events.onClick (SimulationMsg (Simulation.SetMotorGear inst.id))
+                , Focus.keepFocusOnCanvas NoOp
                 , Touch.onTap (SimulationMsg (Simulation.SetMotorGear inst.id))
                 , Attr.style "margin-top" "3px"
                 , Attr.style "padding" "2px 8px"
@@ -947,6 +954,7 @@ viewMotorControls model =
             ]
             [ button
                 [ Html.Events.onClick (SimulationMsg Simulation.ToggleMotor)
+                , Focus.keepFocusOnCanvas NoOp
                 , Touch.onTap (SimulationMsg Simulation.ToggleMotor)
                 , Attr.style "flex" "1"
                 , Attr.style "padding" "5px 0"
@@ -980,6 +988,7 @@ viewMotorControls model =
                 ]
             , button
                 [ Html.Events.onClick (SimulationMsg Simulation.Stop)
+                , Focus.keepFocusOnCanvas NoOp
                 , Touch.onTap (SimulationMsg Simulation.Stop)
                 , Attr.style "padding" "5px 8px"
                 , Attr.style "background" Theme.panelSubtleBackground

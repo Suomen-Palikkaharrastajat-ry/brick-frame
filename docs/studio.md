@@ -81,13 +81,14 @@ apply.
 Clicking picks a placement (`Viewport.pickSource`); shift-click extends the
 selection. The gizmo captures the drag (`Viewport.captureDrag`), so the camera
 holds still. With the select or move tool (as in BrickLink Studio), a part can
-also be dragged by its body (`Viewport.pickPoint`), the whole selection if the
+also be dragged by its body (`Viewport.pickBodyPoint`, which adds the axle-hole fallback), the whole selection if the
 part is in it, snapping to the move step and to studs like a handle drag, one
 undo step per drag (see "Dragging a part by its body" below). A select-tool
 press that never moves the part is a click and selects that part alone. The gizmo arrows
 and rings stay the move and rotate tools' own. An armed palette part is placed
-by the click rather than grabbing the part under it. Empty space still orbits
-the camera, and Shift-drag pans it. Translation snaps to a grid of 20/8/4/1 LDU; rotation is in 90° or
+by the click rather than grabbing the part under it. Empty space pans the camera
+with a left drag (right drag orbits it), and Shift + drag on a part moves it
+finely. Translation snaps to a grid of 20/8/4/1 LDU; rotation is in 90° or
 15° steps; the inspector accepts exact position and Euler angles. Selected parts
 get outlines from `Studio.Overlay`, and at rest nothing else is outlined: gear
 hints (meshed / cannot turn) appear only in the status summary, and red
@@ -122,9 +123,10 @@ plane, or one meeting it behind the eye, leaves the part where it is. Then come
 the move-step grid (X and Z), the wheel lift (plate, Shift brick, Alt 1 LDU),
 stud snapping (`Connectivity.solveSnapWithHysteresis`, off with Alt), collision
 marking, and the rest of the selection follows rigidly. In the workspace, holding
-Shift (or the Y axis lock) holds X and Z and lifts or lowers the parts with the
-cursor's vertical movement, without any support search; the X and Z locks hold
-the height and the other ground axis. Inside a submodel the plane and supports
+Shift moves on a 1 LDU grid instead of the move step (`dragGridStep`); the Y axis
+lock holds X and Z and lifts or lowers the parts with the cursor's vertical
+movement, without any support search; the X and Z locks hold the height and the
+other ground axis. Inside a submodel the plane and supports
 are in world coordinates and the result goes back through the submodel's
 transform. A part dragged in from the palette has no grab point and slides over
 the ground, resting on what is under it.
@@ -348,10 +350,18 @@ The mouse:
   palette part, a click places it on the surface under the point.
 - Left drag on a part moves or turns it (through the gizmo, or the body drag of
   the select and move tools, which follows the cursor relative to the view);
-  left drag on empty space orbits.
+  Shift + left drag on a part moves it finely, on a 1 LDU grid, and a Shift +
+  press on a part that is released without moving toggles it in the selection.
+- Left drag on empty space pans the camera (`Viewport.panCurrentGesture`); a click
+  on empty space still clears the selection.
 - Right drag orbits, around the selection once something has been selected (F
-  recentres on the model). Middle drag, Shift + drag and Space + drag pan. Wheel zooms.
+  recentres on the model). Middle drag, Shift + drag on empty space and Space +
+  drag pan. Wheel zooms, and while dragging a part it raises or lowers it (a plate;
+  Shift three plates; Alt 1 LDU). Right click during a drag cancels it.
   Space is pan-while-held in the workspace, not play/pause.
+- Gear tooth alignment: a committed move, turn or add that meshes gears turns the
+  gears on that axle line so the teeth interlock (`Studio.GearAlign`). The turns
+  are recorded in the same history entry, so one undo restores both.
 
 The guard (`Viewport.Shortcuts.isTextEntryTarget` and `isWidgetKey`) leaves
 typing in form fields alone, and leaves Space/Enter to a focused button and the

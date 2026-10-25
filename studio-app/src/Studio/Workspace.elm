@@ -24,8 +24,9 @@ tools are explicit modes. A click selects. In the move tool, pressing on a
 gizmo handle takes that gesture away from the camera (`Viewport.captureDrag`)
 and turns it into a move along one axis, snapped to the grid; pressing on a part
 itself (select or move tool) grabs it and slides it relative to the view, the
-grabbed point staying under the cursor (`Studio.DragPlane`). Empty space and
-Shift-drag stay with the camera.
+grabbed point staying under the cursor (`Studio.DragPlane`). Empty space stays
+with the camera: a left drag there pans it, a right drag orbits it, and Shift +
+drag on a part moves it on a 1 LDU grid.
 
 The camera orbits around the part the user last clicked or tapped: an explicit
 click/tap selection of a part slides the view onto it (`Viewport.pivotOn` — a
@@ -78,6 +79,8 @@ import Studio.BuildGroups as BuildGroups
 import Studio.Colours as Colours
 import Studio.DragPlane as DragPlane
 import Studio.Edit as Edit exposing (Axis(..), Command(..), History)
+import Studio.GearAlign as GearAlign
+import Studio.GearFeedback as GearFeedback
 import Studio.Gizmo as Gizmo exposing (ArcHandle, DragHandle(..), Handle)
 import Studio.Hints as Hints
 import Studio.Inspector as Inspector
@@ -224,6 +227,11 @@ type alias Drag =
     , axisLock : Maybe Axis
     , modeAnchor : ( Float, Float )
     , baseElevation : Float
+
+    -- A Shift + left press on a part that starts a body drag: the part and the
+    -- selection before the press. Released without moving, it toggles that part
+    -- in that selection, as Shift + click does.
+    , shiftToggle : Maybe ( Int, Set Int )
     }
 
 
@@ -339,7 +347,7 @@ init flags =
 
         ( viewport, viewportCmd ) =
             Viewport.init viewportConfig
-                |> Tuple.mapFirst (Viewport.setSpacePan True)
+                |> Tuple.mapFirst (Viewport.setSpacePan True >> Viewport.setShiftPressGrabs True)
 
         ( preview, previewCmd ) =
             Viewport.init { viewportConfig | initialHash = "" }
@@ -1545,6 +1553,7 @@ updatePage msg model =
                     , axisLock = Nothing
                     , modeAnchor = ( 0, 0 )
                     , baseElevation = 0.0
+                    , shiftToggle = Nothing
                     }
 
                 -- The press was on a palette card, not the canvas, so the
@@ -2007,37 +2016,26 @@ addPart file model =
 
     else
         let
-            -- The camera looks at a render-space (Y up) point; the document is Y down.
-            target =
-                Gizmo.toRender model.viewport.camera.target
-
-            snap v =
-                Edit.snap (toFloat model.gridStep) v
-
-            targetPos =
-                Vec3.vec3 (snap (Vec3.getX target)) (snap (Vec3.getY target)) (snap (Vec3.getZ target))
-
-            localPos =
+            -- The free spot is in document space; a placement inside a
+            -- submodel is stored in that submodel's frame.
+            placement =
                 case List.reverse model.context.path of
                     head :: _ ->
                         case Mat4.inverse head.accumulatedTransform of
                             Just inv ->
-                                Mat4.transform inv targetPos
+                                Mat4.mul inv (freeSpotMatrix file model)
 
                             Nothing ->
-                                targetPos
+                                freeSpotMatrix file model
 
                     [] ->
-                        targetPos
-
-            placement =
-                Mat4.makeTranslate localPos
+                        freeSpotMatrix file model
 
             newId =
                 model.document.nextId
 
             ( document, history ) =
-                Edit.record (AddIn model.context.activeSubmodel [ { part = file, color = model.activeColour, matrix = placement } ]) model.document model.history
+                recordAligned model.viewport.partCache (AddIn model.context.activeSubmodel [ { part = file, color = model.activeColour, matrix = placement } ]) model.document model.history
 
             newRecents =
                 file
@@ -2184,7 +2182,7 @@ placeArmedPart part ( x, y ) model =
                         model.document.nextId
 
                     ( document, history ) =
-                        Edit.record
+                        recordAligned model.viewport.partCache
                             (AddIn model.context.activeSubmodel [ { part = part.file, color = model.activeColour, matrix = finalMatrix } ])
                             model.document
                             model.history
@@ -2369,6 +2367,92 @@ whenSelected edit model =
                 edit ids model
 
 
+{-| Where a part added from the palette goes, in document space: the nearest
+grid spot to the selection (or the camera target) that no placed part overlaps
+(`DragPlane.freeSpotPlacement`). The part rests on whatever is under that spot:
+the search starts at the height of the support under the start point, and the
+final spot is lowered or raised to the top of its own support.
+-}
+freeSpotMatrix : String -> Model -> Mat4
+freeSpotMatrix file model =
+    let
+        resolveLines name =
+            case Dict.get name model.viewport.partCache of
+                Just (Resolve.Loaded lines) ->
+                    Just lines
+
+                _ ->
+                    Nothing
+
+        box =
+            partLocalBox resolveLines file model
+
+        bottom =
+            Vec3.getY box.max
+
+        others =
+            Document.placements model.document
+                |> List.map (\p -> DragPlane.worldBox p.matrix (partLocalBox resolveLines p.part model))
+
+        -- The camera target is render space; `Gizmo.toRender` takes it to document space.
+        start =
+            case Edit.selectionCenter (Set.toList model.selection) model.document of
+                Just centre ->
+                    ( Vec3.getX centre, Vec3.getZ centre )
+
+                Nothing ->
+                    let
+                        target =
+                            Gizmo.toRender model.viewport.camera.target
+                    in
+                    ( Vec3.getX target, Vec3.getZ target )
+
+        supportAt ( x, z ) =
+            DragPlane.supportTop
+                (DragPlane.worldBox (Mat4.makeTranslate3 x -bottom z) box)
+                others
+
+        -- Bottom of the part on the support under the start point.
+        startLift =
+            supportAt start
+
+        placed =
+            DragPlane.freeSpotPlacement
+                { box = box
+                , matrix = Mat4.makeTranslate3 0 (startLift - bottom) 0
+                , start = start
+                , gridStep = toFloat (max 1 model.gridStep)
+                , others = others
+                }
+
+        -- The support under the spot it found, which may be lower or higher.
+        spotLift =
+            DragPlane.supportTop (DragPlane.worldBox placed box) others
+    in
+    Mat4.mul (Mat4.makeTranslate3 0 (spotLift - startLift) 0) placed
+
+
+{-| Record a committed edit as one history entry. The tooth-alignment turns that
+close the gear meshes it creates (see `Studio.GearAlign`) join the same entry, so
+one undo restores both the move and the turns.
+-}
+recordAligned : Resolve.PartCache -> Command -> Document -> History -> ( Document, History )
+recordAligned cache command document history =
+    let
+        ( edited, _ ) =
+            Edit.apply command document
+
+        rotations =
+            GearAlign.alignmentCommands cache { before = document, after = edited }
+    in
+    case rotations of
+        [] ->
+            Edit.record command document history
+
+        _ ->
+            Edit.record (Group (command :: rotations)) document history
+
+
 {-| Do an edit: record it for undo, then bring the viewport and draft up to date.
 -}
 commit : Command -> Model -> ( Model, Cmd Msg )
@@ -2379,7 +2463,7 @@ commit command model =
     else
         let
             ( document, history ) =
-                Edit.record command model.document model.history
+                recordAligned model.viewport.partCache command model.document model.history
         in
         syncDocument { model | document = document, history = history }
 
@@ -2404,7 +2488,7 @@ duplicate ids model =
                     )
 
         ( document, history ) =
-            Edit.record (AddIn model.context.activeSubmodel parts) model.document model.history
+            recordAligned model.viewport.partCache (AddIn model.context.activeSubmodel parts) model.document model.history
 
         -- Added placements take consecutive ids from the document's counter.
         newIds =
@@ -2784,10 +2868,33 @@ handleEvent event ( model, cmds ) =
                     ( select x y False model, cmds )
 
         Viewport.PressStarted x y ->
-            case startDrag ( x, y ) model of
-                Just drag ->
+            let
+                -- A Shift + left press (offered by `Viewport.setShiftPressGrabs`)
+                -- counts as Shift held from the first move on, whatever the key
+                -- tracking saw.
+                shiftPress =
+                    Viewport.pressedWithShift model.viewport
+
+                pressModel =
+                    if shiftPress then
+                        { model | shiftHeld = True }
+
+                    else
+                        model
+            in
+            case startDrag ( x, y ) pressModel of
+                Just drag0 ->
+                    let
+                        drag =
+                            case ( shiftPress, drag0.kind, Viewport.pickSource x y model.viewport ) of
+                                ( True, PlaneDrag _, Just hit ) ->
+                                    { drag0 | shiftToggle = Just ( hit, model.selection ) }
+
+                                _ ->
+                                    drag0
+                    in
                     -- Grabbing a part by its body makes it the selection.
-                    ( { model
+                    ( { pressModel
                         | viewport = Viewport.captureDrag model.viewport
                         , drag = Just drag
                         , selection = Set.fromList drag.ids
@@ -2798,7 +2905,9 @@ handleEvent event ( model, cmds ) =
                     )
 
                 Nothing ->
-                    ( model, cmds )
+                    -- Nothing to grab: a left drag on empty space pans the camera,
+                    -- as Shift + drag always did. A click still clears the selection.
+                    ( { pressModel | viewport = Viewport.panCurrentGesture pressModel.viewport }, cmds )
 
         Viewport.DragMoved x y ->
             case model.drag of
@@ -2819,7 +2928,11 @@ handleEvent event ( model, cmds ) =
             in
             case model.drag of
                 Just drag ->
-                    if model.tool == SelectTool && model.document == drag.original then
+                    if model.document == drag.original && drag.shiftToggle /= Nothing then
+                        -- A Shift press on a part released in place is a Shift + click.
+                        ( shiftClicked drag next, cmds ++ [ endCmd ] )
+
+                    else if model.tool == SelectTool && model.document == drag.original then
                         -- A select-tool press that never moved the part was a
                         -- click: it selects that part alone, as a click does.
                         ( select (Tuple.first drag.start) (Tuple.second drag.start) False next, cmds ++ [ endCmd ] )
@@ -3061,6 +3174,19 @@ handleEvent event ( model, cmds ) =
             ( model, cmds )
 
 
+{-| A Shift press on a part that was released without moving: the click
+`select` would have made, toggling the part in the selection from before the press.
+-}
+shiftClicked : Drag -> Model -> Model
+shiftClicked drag model =
+    case drag.shiftToggle of
+        Just ( _, before ) ->
+            select (Tuple.first drag.start) (Tuple.second drag.start) True { model | selection = before }
+
+        Nothing ->
+            model
+
+
 {-| Select what is under a point. Shift toggles it in or out of the selection;
 a plain click on nothing clears it. A click on a part slides the view onto the
 selection (`pivotOnSelection`).
@@ -3258,6 +3384,7 @@ startDrag point model =
                     , axisLock = Nothing
                     , modeAnchor = point
                     , baseElevation = 0.0
+                    , shiftToggle = Nothing
                     }
 
             Nothing ->
@@ -3278,6 +3405,7 @@ startDrag point model =
                     , axisLock = Nothing
                     , modeAnchor = point
                     , baseElevation = 0.0
+                    , shiftToggle = Nothing
                     }
                 )
 
@@ -3301,7 +3429,7 @@ grabPart ( x, y ) model =
         Nothing
 
     else
-        Viewport.pickPoint x y model.viewport
+        Viewport.pickBodyPoint x y model.viewport
             |> Maybe.map
                 (\hit ->
                     { kind = PlaneDrag hit.point
@@ -3320,6 +3448,7 @@ grabPart ( x, y ) model =
                     , axisLock = Nothing
                     , modeAnchor = ( x, y )
                     , baseElevation = 0.0
+                    , shiftToggle = Nothing
                     }
                 )
 
@@ -3462,6 +3591,18 @@ projectedVerticalDelta camera width height leadPos ( anchorX, anchorY ) ( curren
             currentY - anchorY
 
 
+{-| The grid step of a body drag on the working plane: 1 LDU while Shift is
+held (the fine move), else the move step.
+-}
+dragGridStep : Model -> Float
+dragGridStep model =
+    if model.shiftHeld then
+        1
+
+    else
+        toFloat (max 1 model.gridStep)
+
+
 {-| Slide a grabbed part with the cursor, relative to the view (see
 `Studio.DragPlane`): the screen ray meets the working plane fixed at press time,
 and the lead part moves by how far that point is from the grab point, so the
@@ -3470,10 +3611,11 @@ horizontal plane the parts rest on whatever their footprint overlaps; on the
 camera-facing plane the height follows the cursor. The wheel offset is added
 last.
 
-Shift (or the Y axis lock) holds X and Z where the cursor was when it began and
-lifts or lowers the parts with the screen's vertical movement instead: no
-support search, the height is held apart from that lift. The X and Z axis locks
-keep the height and the other ground axis from that moment too.
+Shift moves on a 1 LDU grid instead (`dragGridStep`), the fine move. The Y axis
+lock holds X and Z where the cursor was when it began and lifts or lowers the
+parts with the screen's vertical movement: no support search, the height is held
+apart from that lift. The X and Z axis locks keep the height and the other ground
+axis from that moment too; the wheel lifts in steps.
 
 A ray that misses the plane (parallel, or behind the eye) leaves the parts
 where they are. From this pose, magnetic snapping with hysteresis is evaluated.
@@ -3502,7 +3644,7 @@ movePlaneDrag initialDrag grab ( x, y ) model =
                 |> Maybe.andThen (DragPlane.intersect plane)
 
         verticalOnly =
-            model.shiftHeld || drag.axisLock == Just AxisY
+            drag.axisLock == Just AxisY
 
         anchorCursor =
             cursorAt drag.modeAnchor
@@ -3584,7 +3726,7 @@ movePlaneDrag initialDrag grab ( x, y ) model =
                         { plane = plane
                         , cursor = point
                         , original = origWorld
-                        , gridStep = toFloat (max 1 model.gridStep)
+                        , gridStep = dragGridStep model
                         , elevationOffset = offset
                         , footprint = footprint
                         , others = otherBoxes
@@ -4132,8 +4274,20 @@ finishDrag model =
                                 , snapRotationStep = 0
                                 , collidingPlacements = Set.empty
                             }
+
+                    -- Say why nothing moved: strict collision refuses the drop.
+                    nextTimerId =
+                        model.toastCounter + 1
                 in
-                ( reverted, cmd )
+                ( { reverted
+                    | toast = Just { message = "Move refused: the part would overlap another. Collision is Strict.", timerId = nextTimerId }
+                    , toastCounter = nextTimerId
+                  }
+                , Cmd.batch
+                    [ cmd
+                    , Process.sleep 3000 |> Task.perform (\_ -> ClearToast nextTimerId)
+                    ]
+                )
 
             else
                 let
@@ -4189,7 +4343,7 @@ finishDrag model =
                                 |> List.map (\p -> { part = p.part, color = p.color, matrix = p.matrix })
 
                         ( newDoc, newHistory ) =
-                            Edit.record (AddIn model.context.activeSubmodel newParts) drag.original model.history
+                            recordAligned model.viewport.partCache (AddIn model.context.activeSubmodel newParts) drag.original model.history
 
                         firstFile =
                             List.head currentPlacements |> Maybe.map .part |> Maybe.withDefault ""
@@ -4227,10 +4381,14 @@ finishDrag model =
 
                         ( withTimer, hintCmd ) =
                             scheduleHints updated
+
+                        ( synced, syncCmd ) =
+                            syncDocumentLive withTimer
                     in
-                    ( withTimer
+                    ( synced
                     , Cmd.batch
                         [ hintCmd
+                        , syncCmd
                         , Ports.saveDraft (Writer.writeDocument updated.document)
                         , Ports.saveRecents newRecents
                         ]
@@ -4240,6 +4398,22 @@ finishDrag model =
                     let
                         inversePairs =
                             List.map (\p -> ( p.id, p.matrix )) originalPlacements
+
+                        -- The turns that close the new gear meshes go in the same undo step.
+                        rotations =
+                            GearAlign.alignmentCommands model.viewport.partCache
+                                { before = drag.original, after = model.document }
+
+                        ( aligned, rotationUndo ) =
+                            Edit.apply (Group rotations) model.document
+
+                        undoCommand =
+                            case rotations of
+                                [] ->
+                                    SetMatrix inversePairs
+
+                                _ ->
+                                    Group [ rotationUndo, SetMatrix inversePairs ]
 
                         updated =
                             { model
@@ -4255,16 +4429,25 @@ finishDrag model =
                                         model.collidingPlacements
                                 , history =
                                     Edit.pushApplied
-                                        (SetMatrix inversePairs)
+                                        undoCommand
                                         model.history
+                                , document = aligned
                             }
 
                         ( withTimer, hintCmd ) =
                             scheduleHints updated
+
+                        ( synced, syncCmd ) =
+                            if List.isEmpty rotations then
+                                ( withTimer, Cmd.none )
+
+                            else
+                                syncDocumentLive withTimer
                     in
-                    ( withTimer
+                    ( synced
                     , Cmd.batch
                         [ hintCmd
+                        , syncCmd
                         , Ports.saveDraft (Writer.writeDocument updated.document)
                         ]
                     )
@@ -4372,9 +4555,9 @@ the arrows orbit), so the workspace lists its controls itself, then the editing 
 helpRows : List ( String, List ( String, String ) )
 helpRows =
     [ ( "Camera"
-      , [ ( "Drag empty space", "Orbit" )
+      , [ ( "Drag empty space, Middle drag, Space + drag", "Pan" )
         , ( "Right drag", "Orbit" )
-        , ( "Middle drag, Shift + drag, Space + drag", "Pan" )
+        , ( "Shift + drag empty space", "Pan" )
         , ( "Wheel, + -", "Zoom" )
         , ( "W A S D Q E", "Walk or pan the camera, when nothing is selected" )
         , ( "Arrows", "Orbit, when nothing is selected" )
@@ -4681,7 +4864,7 @@ canvasArea model =
             , Attr.style "inset" "0"
             ]
             [ span [ Attr.id "canvas-help", Attr.class "sr-only" ]
-                [ text "Drag a part to move it, drag empty space to orbit, Shift and drag to pan, scroll to zoom. Arrow keys orbit the camera, or turn the selected parts. Clicking a part slides the view to centre it. Press question mark for all keyboard shortcuts." ]
+                [ text "Drag a part to move it, drag empty space to pan, right drag to orbit, Shift and drag a part to move it finely, scroll to zoom. Arrow keys orbit the camera, or turn the selected parts. Clicking a part slides the view to centre it. Press question mark for all keyboard shortcuts." ]
             , canvasView model
             ]
         , overlay model
@@ -4880,10 +5063,13 @@ viewColours model =
         }
 
 
+{-| The inspector, and under it the gear mesh status when exactly one gear is
+selected (`Studio.GearFeedback`).
+-}
 viewInspector : Model -> Html Msg
 viewInspector model =
     div [ keepFocusOnCanvas, Attr.style "display" "contents" ]
-        [ Inspector.viewWithCollisions
+        (Inspector.viewWithCollisions
             model.collidingPlacements
             { describe = partDescription model
             , onPosition = SetPosition
@@ -4898,7 +5084,20 @@ viewInspector model =
             }
             model.document
             model.selection
-        ]
+            :: gearStatus model
+        )
+
+
+gearStatus : Model -> List (Html Msg)
+gearStatus model =
+    case GearFeedback.gearFeedback (Set.toList model.selection) model.document of
+        Just feedback ->
+            [ div [ Attr.style "display" "flex", Attr.style "justify-content" "center", Attr.style "padding" "0.5rem 0.75rem" ]
+                [ GearFeedback.pill feedback ]
+            ]
+
+        Nothing ->
+            []
 
 
 viewTree : Model -> Html Msg

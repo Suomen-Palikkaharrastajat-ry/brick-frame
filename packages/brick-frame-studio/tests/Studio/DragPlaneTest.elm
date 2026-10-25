@@ -161,6 +161,40 @@ suite =
                     DragPlane.freeSpot { box = brick, start = ( 0, 0 ), step = 20, others = [ at 0 -100 0 brick ] }
                         |> Expect.equal ( 0, 0 )
             ]
+        , describe "freeSpotPlacement"
+            [ test "keeps the placement's height, moving only X and Z" <|
+                \_ ->
+                    let
+                        placed =
+                            DragPlane.freeSpotPlacement
+                                { box = brick
+                                , matrix = Mat4.makeTranslate3 0 -60 0
+                                , start = ( 0, 0 )
+                                , gridStep = 20
+                                , others = []
+                                }
+
+                        origin =
+                            Mat4.transform placed (vec3 0 0 0)
+                    in
+                    Expect.equal ( 0, -60, 0 ) ( Vec3.getX origin, Vec3.getY origin, Vec3.getZ origin )
+            , test "finds the same free grid spot as freeSpot" <|
+                \_ ->
+                    let
+                        placed =
+                            DragPlane.freeSpotPlacement
+                                { box = brick
+                                , matrix = Mat4.makeTranslate3 0 -24 0
+                                , start = ( 0, 0 )
+                                , gridStep = 20
+                                , others = [ brick ]
+                                }
+
+                        origin =
+                            Mat4.transform placed (vec3 0 0 0)
+                    in
+                    Expect.equal ( 20, 0 ) ( Vec3.getX origin, Vec3.getZ origin )
+            ]
         , describe "supportTop"
             [ test "nothing below rests on the ground" <|
                 \_ -> DragPlane.supportTop (at 0 -24 0 brick) [] |> Expect.equal 0

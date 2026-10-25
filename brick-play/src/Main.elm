@@ -37,8 +37,7 @@ import Browser.Events
 import Dict exposing (Dict)
 import Html exposing (Html, button, div, h1, header, span, text)
 import Html.Attributes as Attr
-import Html.Events exposing (onClick, preventDefaultOn)
-import Json.Decode as Decode
+import Html.Events exposing (onClick)
 import LDraw.Colors as Colors
 import LDraw.Document as Document
 import Ports
@@ -48,6 +47,7 @@ import Studio.Core as Core
 import Studio.Shortcuts as StudioShortcuts exposing (TurnDirection(..))
 import Studio.UrlPayload as UrlPayload exposing (PartKitItem)
 import Task
+import UI.Focus as Focus
 import UI.HamburgerMenu as HamburgerMenu
 import UI.Icon as Icon
 import UI.PartCard as PartCard
@@ -543,12 +543,14 @@ helpRows =
       , [ ( "Menu, top right", "Undo, redo, delete, clear, fit view, and this list" )
         , ( "Drag a brick", "Move it as seen from the camera (snaps to studs)" )
         , ( "Shift + drag a brick", "Fine move: 1 LDU steps (Shift held during a drag works too)" )
-        , ( "Wheel while dragging", "Raise / lower the brick" )
+        , ( "Wheel while dragging", "Raise / lower (Shift: coarser, Alt: finer)" )
+        , ( "Right click mid-drag", "Cancel the drag" )
         , ( "Action bar (above the dock)", "Turn left / right, tip, raise, lower or remove the selected brick" )
         , ( "W A S D  Q E", "Move the selected brick (Shift: fine steps)" )
         , ( "← → ↑ ↓", "Turn the selected brick (Shift: 45°)" )
         , ( "Delete", "Remove the selected brick" )
-        , ( "Ctrl + Z", "Undo  (Ctrl + Shift + Z: redo)" )
+        , ( "Ctrl + Z", "Undo" )
+        , ( "Ctrl + Shift + Z  Ctrl + Y", "Redo" )
         , ( "Ctrl + A", "Select all" )
         , ( "Ctrl + click  Shift + click", "Add to or remove from the selection" )
         , ( "Esc", "Cancel a drag, or deselect" )
@@ -577,7 +579,7 @@ for itself.
 -}
 keepFocusOnCanvas : Html.Attribute Msg
 keepFocusOnCanvas =
-    preventDefaultOn "mousedown" (Decode.succeed ( NoOp, True ))
+    Focus.keepFocusOnCanvas NoOp
 
 
 addPartItem : PartKitItem -> Model -> ( Model, Cmd Msg )

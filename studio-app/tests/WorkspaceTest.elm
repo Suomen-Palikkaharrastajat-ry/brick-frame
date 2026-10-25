@@ -4,8 +4,13 @@ module WorkspaceTest exposing (suite)
 and what the page does with the viewport's events.
 -}
 
+import Data
 import Dict
 import Expect
+import Gear.Detect as Detect
+import Gear.Phase as Phase
+import Gear.Types exposing (GearInstance)
+import Html.Attributes as HtmlAttr
 import Http
 import LDraw.Connectivity as Connectivity exposing (CollisionMode(..))
 import LDraw.Document as Document
@@ -17,6 +22,7 @@ import Render.Camera as Camera
 import Render.Style as Style
 import Set
 import Studio.BOM as BOM
+import Studio.DragPlane as DragPlane
 import Studio.Edit as Edit exposing (Axis(..))
 import Studio.Gizmo as Gizmo
 import Studio.Layout as Layout
@@ -26,6 +32,8 @@ import Studio.Shortcuts as Shortcuts exposing (Tool(..))
 import Studio.Transform as Transform
 import Studio.Workspace as Workspace exposing (CoordinateFrame(..), Msg(..))
 import Test exposing (Test, describe, test)
+import Test.Html.Query as Query
+import Test.Html.Selector as Selector
 import Time
 import Viewport
 import Viewport.Shortcuts as ViewportShortcuts
@@ -77,6 +85,7 @@ suite =
         , snappingSuite
         , threeAxisMovementSuite
         , viewDragSuite
+        , commitSuite
         , test "starts with an empty document that is ready to show" <|
             \_ ->
                 Expect.all
@@ -177,6 +186,17 @@ mouseDown x y shift model =
             model.viewport.canvasOrigin
     in
     step (ViewportMsg (Viewport.MouseButtonDown (x + left) (y + top) 0 shift False)) model
+
+
+{-| Press the right button at a point: a right drag orbits the camera.
+-}
+rightMouseDown : Float -> Float -> Workspace.Model -> Workspace.Model
+rightMouseDown x y model =
+    let
+        ( left, top ) =
+            model.viewport.canvasOrigin
+    in
+    step (ViewportMsg (Viewport.MouseButtonDown (x + left) (y + top) 2 False False)) model
 
 
 mouseMove : Float -> Float -> Workspace.Model -> Workspace.Model
@@ -589,7 +609,7 @@ editingSuite =
                         , \m -> Expect.equal (groundOf 0 ready) (groundOf 0 (step Undo m))
                         ]
                         moved
-            , test "shift-dragging a part pans the camera instead of moving the part" <|
+            , test "shift-dragging a part moves it finely, on a 1 LDU grid, and keeps the camera" <|
                 \_ ->
                     let
                         ready =
@@ -598,18 +618,40 @@ editingSuite =
                         ( x, y ) =
                             screenOf 0 ready
 
-                        panned =
+                        fine =
                             ready
                                 |> mouseDown x y True
                                 |> mouseMove (x + 60) (y + 20)
                                 |> mouseUp (x + 60) (y + 20)
+
+                        coarse =
+                            ready
+                                |> mouseDown x y False
+                                |> mouseMove (x + 60) (y + 20)
+                                |> mouseUp (x + 60) (y + 20)
                     in
                     Expect.all
-                        [ \m -> Expect.equal (groundOf 0 ready) (groundOf 0 m)
-                        , \m -> Expect.notEqual ready.viewport.camera.target m.viewport.camera.target
+                        [ \m -> Expect.notEqual (groundOf 0 ready) (groundOf 0 m)
+                        , \m -> Expect.notEqual (groundOf 0 coarse) (groundOf 0 m)
+                        , \m -> Expect.equal ready.viewport.camera.target m.viewport.camera.target
+                        ]
+                        fine
+            , test "shift-dragging empty space pans the camera and moves no part" <|
+                \_ ->
+                    let
+                        panned =
+                            loaded
+                                |> step (UseTool MoveTool)
+                                |> mouseDown 5 5 True
+                                |> mouseMove 65 25
+                                |> mouseUp 65 25
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal loaded.document m.document
+                        , \m -> Expect.notEqual loaded.viewport.camera.target m.viewport.camera.target
                         ]
                         panned
-            , test "pressing away from the handles still orbits the camera" <|
+            , test "left-dragging empty space pans the camera, not orbits it" <|
                 \_ ->
                     let
                         ready =
@@ -618,6 +660,24 @@ editingSuite =
                         moved =
                             ready
                                 |> mouseDown 100 500 False
+                                |> mouseMove 160 500
+                                |> mouseUp 160 500
+                    in
+                    Expect.all
+                        [ \m -> Expect.within (Expect.Absolute 1.0e-9) ready.viewport.camera.azimuth m.viewport.camera.azimuth
+                        , \m -> Expect.notEqual ready.viewport.camera.target m.viewport.camera.target
+                        , \m -> Expect.equal (Just 0) (positionOf 0 m)
+                        ]
+                        moved
+            , test "right-dragging empty space orbits the camera" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded |> click (screenOf 0 loaded) |> step (UseTool MoveTool)
+
+                        moved =
+                            ready
+                                |> rightMouseDown 100 500
                                 |> mouseMove 160 500
                                 |> mouseUp 160 500
                     in
@@ -1042,12 +1102,12 @@ editingSuite =
                         , \m -> Expect.equal True (Edit.canUndo m.history)
                         ]
                         dragged
-            , test "with the select tool, dragging empty space orbits and moves no part" <|
+            , test "with the select tool, right-dragging empty space orbits and moves no part" <|
                 \_ ->
                     let
                         orbited =
                             loaded
-                                |> mouseDown 5 5 False
+                                |> rightMouseDown 5 5
                                 |> mouseMove 65 25
                                 |> mouseUp 65 25
                     in
@@ -1739,7 +1799,9 @@ panelSuite =
                         |> Document.placements
                         |> List.head
                         |> Maybe.map (\p -> Mat4.transform p.matrix (vec3 0 0 0) |> Vec3.toRecord)
-                        |> Expect.equal (Just { x = 20, y = 20, z = 40 })
+                        -- The grid spot nearest the camera target, on the ground: the
+                        -- part's origin sits 24 LDU above its bottom (the fallback box).
+                        |> Expect.equal (Just { x = 20, y = -24, z = 40 })
             , test "toggling a favorite adds and removes it" <|
                 \_ ->
                     let
@@ -2208,6 +2270,7 @@ snappingSuite =
                                     , axisLock = Nothing
                                     , modeAnchor = ( 100, 100 )
                                     , baseElevation = 0.0
+                                    , shiftToggle = Nothing
                                     }
                             , activeSnap = Just dummyCandidate
                             , snapRotationStep = 0
@@ -2263,6 +2326,7 @@ snappingSuite =
                                     , axisLock = Nothing
                                     , modeAnchor = ( 100, 100 )
                                     , baseElevation = 0.0
+                                    , shiftToggle = Nothing
                                     }
                         }
 
@@ -2322,6 +2386,7 @@ snappingSuite =
                                     , axisLock = Nothing
                                     , modeAnchor = ( 100, 100 )
                                     , baseElevation = 0.0
+                                    , shiftToggle = Nothing
                                     }
                         }
 
@@ -2372,6 +2437,7 @@ snappingSuite =
                                     , axisLock = Nothing
                                     , modeAnchor = ( 100, 100 )
                                     , baseElevation = 0.0
+                                    , shiftToggle = Nothing
                                     }
                             , altHeld = False
                         }
@@ -2427,6 +2493,7 @@ snappingSuite =
                                     , axisLock = Nothing
                                     , modeAnchor = ( 100, 100 )
                                     , baseElevation = 0.0
+                                    , shiftToggle = Nothing
                                     }
                             , altHeld = True
                         }
@@ -2475,6 +2542,7 @@ snappingSuite =
                                     , axisLock = Nothing
                                     , modeAnchor = ( 100, 100 )
                                     , baseElevation = 0.0
+                                    , shiftToggle = Nothing
                                     }
                             , altHeld = False
                             , snapDistance = 15.0
@@ -2545,6 +2613,7 @@ snappingSuite =
                                     , axisLock = Nothing
                                     , modeAnchor = ( 100, 100 )
                                     , baseElevation = 0.0
+                                    , shiftToggle = Nothing
                                     }
                             , activeSnap = Nothing
                             , inFlightRotationStep = 0
@@ -3148,7 +3217,7 @@ viewDragSuite =
                     , \_ -> check -1.9
                     ]
                     ()
-        , test "with Shift held the part keeps its height and place while the cursor moves sideways" <|
+        , test "with Shift held the part moves finely over the ground, at the same height" <|
             \_ ->
                 let
                     ( x, y ) =
@@ -3169,7 +3238,7 @@ viewDragSuite =
                 Expect.all
                     [ \_ -> Expect.equal True sideways.shiftHeld
                     , \_ -> Expect.within (Expect.Absolute 1.0e-6) (Maybe.withDefault 0 (elevationOf 0 held)) (Maybe.withDefault 1 (elevationOf 0 sideways))
-                    , \_ -> Expect.equal (groundOf 0 held) (groundOf 0 sideways)
+                    , \_ -> Expect.notEqual (groundOf 0 held) (groundOf 0 sideways)
                     ]
                     ()
         , test "a part dragged in from the palette onto empty ground rests on the ground" <|
@@ -3324,3 +3393,232 @@ viewDragSuite =
                     ]
                     ()
         ]
+
+
+
+-- ── Committed drags and gear alignment ────────────────────────────────────────
+
+
+commitSuite : Test
+commitSuite =
+    describe "Committed drags and gear alignment"
+        [ test "a plain left drag of a free brick commits one undo step" <|
+            \_ ->
+                let
+                    ( x, y ) =
+                        screenOf 0 rawDrag
+
+                    dragged =
+                        rawDrag
+                            |> mouseDown x y False
+                            |> mouseMove (x + 40) y
+                            |> mouseUp (x + 40) y
+                in
+                Expect.all
+                    [ \_ -> Expect.equal True (Edit.canUndo dragged.history)
+                    , \_ -> Expect.notEqual (groundOf 0 rawDrag) (groundOf 0 dragged)
+                    , \_ -> Expect.equal Nothing dragged.drag
+                    ]
+                    ()
+        , test "a Shift drag of a free brick commits one undo step" <|
+            \_ ->
+                let
+                    ( x, y ) =
+                        screenOf 0 rawDrag
+
+                    dragged =
+                        rawDrag
+                            |> mouseDown x y True
+                            |> mouseMove (x + 40) y
+                            |> mouseUp (x + 40) y
+                in
+                Expect.all
+                    [ \_ -> Expect.equal True (Edit.canUndo dragged.history)
+                    , \_ -> Expect.notEqual (groundOf 0 rawDrag) (groundOf 0 dragged)
+                    ]
+                    ()
+        , test "a drop that would overlap another brick is refused with a message and records no undo step" <|
+            \_ ->
+                let
+                    ( x, y ) =
+                        screenOf 0 rawDrag
+
+                    ( tx, ty ) =
+                        screenOf 1 rawDrag
+
+                    dropped =
+                        rawDrag
+                            |> mouseDown x y False
+                            |> mouseMove tx ty
+                            |> mouseUp tx ty
+                in
+                Expect.all
+                    [ \_ -> Expect.equal False (Edit.canUndo dropped.history)
+                    , \_ -> Expect.equal (groundOf 0 rawDrag) (groundOf 0 dropped)
+                    , \_ -> Expect.equal (Just True) (Maybe.map (.message >> String.startsWith "Move refused") dropped.toast)
+                    ]
+                    ()
+        , describe "Palette add lands on a free spot"
+            [ test "an added part rests on the top of the selected brick when that spot is free" <|
+                \_ ->
+                    let
+                        added =
+                            addArmed (selectOnly 0 loaded)
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal 3 (List.length (Document.placements added.document))
+                        , \_ -> Expect.equal (Just -20) (elevationOf 2 added)
+                        , \_ -> Expect.equal 0 (overlappingPairs added)
+                        ]
+                        ()
+            , test "adds in a row never overlap a placed part" <|
+                \_ ->
+                    let
+                        added =
+                            loaded
+                                |> selectOnly 0
+                                |> addArmed
+                                |> addArmed
+                                |> addArmed
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal 5 (List.length (Document.placements added.document))
+                        , \_ -> Expect.equal 0 (overlappingPairs added)
+                        ]
+                        ()
+            ]
+        , describe "Gear status"
+            [ test "one selected gear shows the mesh status" <|
+                \_ ->
+                    gearPair
+                        |> step (WindowSized 1280 800)
+                        |> Workspace.view
+                        |> Query.fromHtml
+                        |> Query.has [ Selector.attribute (HtmlAttr.attribute "data-gear-feedback" "") ]
+            , test "two selected gears show no mesh status" <|
+                \_ ->
+                    { gearPair | selection = Set.fromList [ 0, 1 ] }
+                        |> step (WindowSized 1280 800)
+                        |> Workspace.view
+                        |> Query.fromHtml
+                        |> Query.hasNot [ Selector.attribute (HtmlAttr.attribute "data-gear-feedback" "") ]
+            ]
+        , describe "Gear alignment on a nudge"
+            [ test "a nudge that meshes a misaligned gear turns it until the teeth interlock" <|
+                \_ ->
+                    let
+                        back =
+                            gearPair |> nudgeBy Shortcuts.Left |> nudgeBy Shortcuts.Right
+                    in
+                    Expect.all
+                        [ \_ -> Expect.greaterThan 0.1 (gearPairWorst gearPair)
+                        , \_ -> Expect.lessThan 0.01 (gearPairWorst back)
+                        ]
+                        ()
+            , test "one undo restores both the nudge and the gear turn" <|
+                \_ ->
+                    let
+                        moved =
+                            gearPair |> nudgeBy Shortcuts.Left
+
+                        back =
+                            nudgeBy Shortcuts.Right moved
+
+                        undone =
+                            step Undo back
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal (List.length moved.history.undo + 1) (List.length back.history.undo)
+                        , \_ -> Expect.equal moved.document undone.document
+                        ]
+                        ()
+            ]
+        ]
+
+
+{-| Two 24T gears on one line, the second 3 degrees out of mesh, with
+collision off so the mesh distance is allowed. Gear 1 is selected.
+-}
+gearPair : Workspace.Model
+gearPair =
+    let
+        loadedGears =
+            start
+                |> step (FileTextReceived "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3648.dat\n1 14 60 0 0 0.99863 -0.05234 0 0.05234 0.99863 0 0 0 1 3648.dat\n")
+    in
+    { loadedGears | collisionMode = CollisionOff, selection = Set.singleton 1 }
+
+
+nudgeBy : Shortcuts.NudgeDirection -> Workspace.Model -> Workspace.Model
+nudgeBy direction model =
+    step (NudgeSelection (Shortcuts.Nudge { direction = direction, fine = False })) model
+
+
+{-| The worst tooth fraction of the mesh between the two gears of a model; 1
+when they do not form a pair.
+-}
+gearPairWorst : Workspace.Model -> Float
+gearPairWorst model =
+    let
+        gears : List GearInstance
+        gears =
+            Detect.extractGears Data.gearParts (Document.toLines model.document) model.viewport.partCache
+    in
+    case gears of
+        [ a, b ] ->
+            let
+                ( fixed, moving ) =
+                    if Vec3.length (Vec3.sub (Phase.gearFrame a).centre (vec3 0 -24 0)) < 1 then
+                        ( a, b )
+
+                    else
+                        ( b, a )
+            in
+            Phase.meshConstraints { fixed = fixed, moving = moving }
+                |> Maybe.andThen
+                    (\options ->
+                        options
+                            |> List.map (\c -> max c.fixedFraction (abs c.movingResidual / c.movingPitch))
+                            |> List.minimum
+                    )
+                |> Maybe.withDefault 1
+
+        _ ->
+            1
+
+
+selectOnly : Int -> Workspace.Model -> Workspace.Model
+selectOnly id model =
+    { model | selection = Set.singleton id }
+
+
+{-| Arm a 3001 brick from the palette and add it, as the Add button does.
+-}
+addArmed : Workspace.Model -> Workspace.Model
+addArmed model =
+    model
+        |> step (ArmPart (PartIndex.makePart "3001.dat" "Brick 2 x 4" "Brick" ""))
+        |> step AddArmedPart
+
+
+{-| How many pairs of placements have overlapping world boxes, using the
+brick's local box from `brickPart`.
+-}
+overlappingPairs : Workspace.Model -> Int
+overlappingPairs model =
+    let
+        boxes =
+            Document.placements model.document
+                |> List.map (\p -> DragPlane.worldBox p.matrix { min = vec3 -10 -20 -10, max = vec3 10 0 10 })
+
+        pairs xs =
+            case xs of
+                [] ->
+                    []
+
+                x :: rest ->
+                    List.map (\y -> ( x, y )) rest ++ pairs rest
+    in
+    pairs boxes
+        |> List.filter (\( a, b ) -> DragPlane.boxesOverlap a b)
+        |> List.length

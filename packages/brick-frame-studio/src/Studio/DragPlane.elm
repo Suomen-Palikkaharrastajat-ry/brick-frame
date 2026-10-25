@@ -7,6 +7,7 @@ module Studio.DragPlane exposing
     , choose
     , footprintOverlaps
     , freeSpot
+    , freeSpotPlacement
     , intersect
     , steepElevation
     , supportTop
@@ -258,6 +259,58 @@ freeSpot { box, start, step, others } =
                         search (r + 1)
     in
     search 0
+
+
+{-| `freeSpot` for a whole placement: a new part given by its matrix, with its
+height and orientation kept and only its X and Z moved to the nearest free grid
+position. Pure and model-free, so any host can place a part without a
+`Studio.Core.Model`.
+
+  - `box` — the part's local box (LDraw) in the frame of `matrix`, as
+    `worldBox` takes it.
+  - `matrix` — the placement the part would have; its translation's X and Z
+    are the only things replaced.
+  - `start` — where to search from (X, Z), e.g. the selection's centre or the
+    camera target's ground position.
+  - `gridStep` — the grid step, in LDU (at least 1).
+  - `others` — world boxes (LDraw) of the parts already placed.
+
+Returns the placement matrix to add the part with (`Edit`/`addPartAt`-style).
+
+    freeSpotPlacement
+        { box = localBox
+        , matrix = Mat4.makeTranslate3 0 -bottom 0
+        , start = ( 0, 0 )
+        , gridStep = 20
+        , others = []
+        }
+
+-}
+freeSpotPlacement :
+    { box : Box
+    , matrix : Mat4
+    , start : ( Float, Float )
+    , gridStep : Float
+    , others : List Box
+    }
+    -> Mat4
+freeSpotPlacement { box, matrix, start, gridStep, others } =
+    let
+        origin =
+            Mat4.transform matrix (vec3 0 0 0)
+
+        atOrigin =
+            Mat4.mul (Mat4.makeTranslate3 -(Vec3.getX origin) 0 -(Vec3.getZ origin)) matrix
+
+        ( x, z ) =
+            freeSpot
+                { box = worldBox atOrigin box
+                , start = start
+                , step = gridStep
+                , others = others
+                }
+    in
+    Mat4.mul (Mat4.makeTranslate3 x 0 z) atOrigin
 
 
 {-| The Y (LDraw, up is negative) a footprint would rest on: the highest top

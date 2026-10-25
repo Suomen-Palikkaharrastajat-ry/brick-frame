@@ -57,7 +57,6 @@ import Gear.Placements as Placements
 import Html exposing (Html, button, div, h1, header, span, text)
 import Html.Attributes as Attr
 import Html.Events exposing (onClick)
-import Json.Decode as Decode
 import LDraw.Colors as Colors
 import LDraw.Document as Document
 import Ports
@@ -65,9 +64,11 @@ import Render.Camera as Camera
 import Set
 import Simulation
 import Studio.Core as Core
+import Studio.GearFeedback as GearFeedback
 import Studio.Shortcuts as StudioShortcuts exposing (TurnDirection(..))
 import Studio.UrlPayload as UrlPayload
 import Task
+import UI.Focus as Focus
 import UI.HamburgerMenu as HamburgerMenu
 import UI.Icon as Icon
 import UI.PartCard as PartCard
@@ -937,8 +938,8 @@ view model =
              ]
                 ++ dockPlacement model.windowWidth
             )
-            [ Machine.gearFeedback (Set.toList model.studio.selection) model.studio.document
-                |> Maybe.map gearFeedbackPill
+            [ GearFeedback.gearFeedback (Set.toList model.studio.selection) model.studio.document
+                |> Maybe.map GearFeedback.pill
                 |> Maybe.withDefault (text "")
             , if Core.hasSelection model.studio then
                 selectionBar
@@ -1073,49 +1074,6 @@ viewCanvas model =
                         ++ Simulation.drivenEntitiesFor animated.gears camera studio.viewport.renderStyle aspect model.simulation
         }
         shown
-
-
-{-| Status pill telling how the one selected gear sits against its nearest
-other gear (see `Machine.gearFeedback`). Yellow border once it meshes.
--}
-gearFeedbackPill : Machine.GearFeedback -> Html Msg
-gearFeedbackPill feedback =
-    let
-        meshes =
-            feedback.relation == Machine.Meshes
-    in
-    div
-        [ Attr.attribute "role" "status"
-        , Attr.attribute "aria-live" "polite"
-        , Attr.attribute "data-gear-feedback" ""
-        , Attr.style "align-self" "center"
-        , Attr.style "max-width" "100%"
-        , Attr.style "padding" "0.3125rem 0.875rem"
-        , Attr.style "background" "rgba(5, 19, 29, 0.85)"
-        , Attr.style "backdrop-filter" "blur(8px)"
-        , Attr.style "border-radius" "9999px"
-        , Attr.style "border"
-            (if meshes then
-                "1px solid var(--color-brand-yellow)"
-
-             else
-                "1px solid rgba(255, 255, 255, 0.15)"
-            )
-        , Attr.style "color"
-            (if meshes then
-                "var(--color-brand-yellow)"
-
-             else
-                "var(--color-text-on-dark)"
-            )
-        , Attr.style "font-size" "0.8125rem"
-        , Attr.style "font-weight" "600"
-        , Attr.style "white-space" "nowrap"
-        , Attr.style "overflow" "hidden"
-        , Attr.style "text-overflow" "ellipsis"
-        , Attr.style "font-variant-numeric" "tabular-nums"
-        ]
-        [ text (Machine.feedbackText feedback) ]
 
 
 {-| Buttons for the selection, the touch- and mouse-friendly stand-in for an
@@ -1359,7 +1317,7 @@ playing and pausing.
 -}
 keepFocusOnCanvas : Html.Attribute Msg
 keepFocusOnCanvas =
-    Html.Events.preventDefaultOn "mousedown" (Decode.succeed ( NoOp, True ))
+    Focus.keepFocusOnCanvas NoOp
 
 
 {-| The shortcut list for this app. A left drag (or one finger) on empty canvas

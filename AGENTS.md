@@ -92,7 +92,7 @@ In-depth documentation for agents and contributors:
 ## Current Runtime Notes
 
 - **Controls panel:** Gear/motor controls are collapsible via a `Minimize` / `Maximize` toggle in the top-right panel.
-- **Desktop camera controls** (per host; wheel = zoom everywhere). Right drag = orbit, Ctrl/Cmd + drag = orbit, middle drag = pan, Shift + drag = pan. Only a plain left press emits `PressStarted` (a Shift + left press too, when `Viewport.setShiftPressGrabs` is on); right/middle/modified presses never grab parts. Space + drag pans only when `Viewport.setSpacePan True`.
+- **Desktop camera controls** (per host; wheel = zoom everywhere). Right drag = orbit, Ctrl/Cmd + drag = orbit, middle drag = pan, Shift + drag = pan; the Studio workspace also pans on a plain left drag of empty canvas (Shift + drag on a part moves it finely there). Only a plain left press emits `PressStarted` (a Shift + left press too, when `Viewport.setShiftPressGrabs` is on); right/middle/modified presses never grab parts. Space + drag pans only when `Viewport.setSpacePan True`.
   - Viewer and studio (`DragPartsOrOrbit`, the default): left drag on empty canvas orbits; in the studio, left drag on a part moves it.
   - Brick Play and Brick Contraptions (`DragPartsOrPan`): left drag on empty canvas pans; left drag on a part moves it. Shift + left press on a part grabs it for a fine move (1 LDU, also when Shift is held during a drag); Shift + press on empty canvas pans. `Core.setDragMode` switches the Shift grab on.
   See docs/rendering.md § Interaction controls.

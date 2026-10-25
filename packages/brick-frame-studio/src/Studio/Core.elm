@@ -910,12 +910,6 @@ freeSpotForPlacement part matrix model =
         resolveLines =
             resolvedLines model
 
-        origin =
-            Transform.position matrix
-
-        atOrigin =
-            Mat4.mul (Mat4.makeTranslate3 -(Vec3.getX origin) 0 -(Vec3.getZ origin)) matrix
-
         start =
             case Edit.selectionCenter (Set.toList model.selection) model.document of
                 Just centre ->
@@ -924,18 +918,16 @@ freeSpotForPlacement part matrix model =
                 Nothing ->
                     -- Render space negates Z as well as Y; LDraw Z is −render Z.
                     ( Vec3.getX model.viewport.camera.target, -(Vec3.getZ model.viewport.camera.target) )
-
-        ( x, z ) =
-            DragPlane.freeSpot
-                { box = DragPlane.worldBox atOrigin (partLocalBox resolveLines part model)
-                , start = start
-                , step = toFloat (max 1 model.gridStep)
-                , others =
-                    Document.placements model.document
-                        |> List.map (\p -> DragPlane.worldBox p.matrix (partLocalBox resolveLines p.part model))
-                }
     in
-    Mat4.mul (Mat4.makeTranslate3 x 0 z) atOrigin
+    DragPlane.freeSpotPlacement
+        { box = partLocalBox resolveLines part model
+        , matrix = matrix
+        , start = start
+        , gridStep = toFloat (max 1 model.gridStep)
+        , others =
+            Document.placements model.document
+                |> List.map (\p -> DragPlane.worldBox p.matrix (partLocalBox resolveLines p.part model))
+        }
 
 
 {-| Helper to generate a GeometryFlattened message from external port.

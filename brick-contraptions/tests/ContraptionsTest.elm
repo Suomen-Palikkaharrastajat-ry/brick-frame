@@ -26,6 +26,7 @@ import Set
 import Studio.Core as Core
 import Studio.DragPlane as DragPlane
 import Studio.Edit as Edit exposing (NewPart)
+import Studio.GearFeedback as GearFeedback
 import Studio.Shortcuts exposing (TurnDirection(..))
 import Test exposing (Test, describe, test)
 import Test.Html.Event as Event
@@ -810,21 +811,21 @@ gearFeedbackTests =
                 ( doc, a, _ ) =
                     pairWith part matrix
             in
-            Machine.gearFeedback [ a ] doc |> Maybe.map .relation
+            GearFeedback.gearFeedback [ a ] doc |> Maybe.map .relation
     in
     describe "Gear positioning feedback"
         [ test "two 24T 40 LDU apart are too close: need 60" <|
             \_ ->
                 relationFor "3648.dat" (Mat4.makeTranslate (vec3 40 0 0))
-                    |> Expect.equal (Just (Machine.TooClose { distance = 40, required = 60 }))
+                    |> Expect.equal (Just (GearFeedback.TooClose { distance = 40, required = 60 }))
         , test "two 24T 80 LDU apart are too far" <|
             \_ ->
                 relationFor "3648.dat" (Mat4.makeTranslate (vec3 80 0 0))
-                    |> Expect.equal (Just (Machine.TooFar { distance = 80, required = 60 }))
+                    |> Expect.equal (Just (GearFeedback.TooFar { distance = 80, required = 60 }))
         , test "two 24T 60 LDU apart mesh" <|
             \_ ->
                 relationFor "3648.dat" (Mat4.makeTranslate (vec3 60 0 0))
-                    |> Expect.equal (Just Machine.Meshes)
+                    |> Expect.equal (Just GearFeedback.Meshes)
         , test "8T and 24T mesh at 40 LDU, matching the gear graph" <|
             \_ ->
                 let
@@ -832,26 +833,26 @@ gearFeedbackTests =
                         pairWith "3647.dat" (Mat4.makeTranslate (vec3 0 40 0))
                 in
                 Expect.all
-                    [ \_ -> Expect.equal (Just Machine.Meshes) (Machine.gearFeedback [ a ] doc |> Maybe.map .relation)
+                    [ \_ -> Expect.equal (Just GearFeedback.Meshes) (GearFeedback.gearFeedback [ a ] doc |> Maybe.map .relation)
                     , \_ -> Expect.equal True (Machine.isAccomplished (Machine.analyseMachine doc EmbeddedParts.cache))
                     ]
                     ()
         , test "an axial offset reports not in the same plane" <|
             \_ ->
                 relationFor "3648.dat" (Mat4.makeTranslate (vec3 60 0 20))
-                    |> Expect.equal (Just (Machine.NotSamePlane { offset = 20 }))
+                    |> Expect.equal (Just (GearFeedback.NotSamePlane { offset = 20 }))
         , test "crossed spur axles are not parallel" <|
             \_ ->
                 relationFor "3648.dat" (Mat4.mul (Mat4.makeTranslate (vec3 60 0 0)) (Mat4.makeRotate (pi / 2) (vec3 0 1 0)))
-                    |> Expect.equal (Just Machine.NotParallel)
+                    |> Expect.equal (Just GearFeedback.NotParallel)
         , test "a lone gear has no other gear" <|
             \_ ->
                 let
                     ( doc, a ) =
                         place "3648.dat" Mat4.identity Document.empty
                 in
-                Machine.gearFeedback [ a ] doc
-                    |> Expect.equal (Just { gear = "24T", other = Nothing, relation = Machine.NoOtherGear })
+                GearFeedback.gearFeedback [ a ] doc
+                    |> Expect.equal (Just { gear = "24T", other = Nothing, relation = GearFeedback.NoOtherGear })
         , test "a meshing partner wins over a nearer gear on the same axle" <|
             \_ ->
                 let
@@ -861,8 +862,8 @@ gearFeedbackTests =
                     ( doc, _ ) =
                         place "3647.dat" (Mat4.makeTranslate (vec3 40 0 0)) doc1
                 in
-                Machine.gearFeedback [ a ] doc
-                    |> Expect.equal (Just { gear = "24T", other = Just "8T", relation = Machine.Meshes })
+                GearFeedback.gearFeedback [ a ] doc
+                    |> Expect.equal (Just { gear = "24T", other = Just "8T", relation = GearFeedback.Meshes })
         , test "a crown gear with a parallel spur needs right angles" <|
             \_ ->
                 let
@@ -872,8 +873,8 @@ gearFeedbackTests =
                     ( doc, _ ) =
                         place "3647.dat" (Mat4.makeTranslate (vec3 40 0 0)) doc1
                 in
-                Machine.gearFeedback [ crown ] doc
-                    |> Expect.equal (Just { gear = "24T crown", other = Just "8T", relation = Machine.NotPerpendicular })
+                GearFeedback.gearFeedback [ crown ] doc
+                    |> Expect.equal (Just { gear = "24T crown", other = Just "8T", relation = GearFeedback.NotPerpendicular })
         , test "no feedback for a non-gear, an empty or a multiple selection" <|
             \_ ->
                 let
@@ -881,9 +882,9 @@ gearFeedbackTests =
                         pairWith "3713.dat" Mat4.identity
                 in
                 Expect.all
-                    [ \_ -> Expect.equal Nothing (Machine.gearFeedback [ b ] doc)
-                    , \_ -> Expect.equal Nothing (Machine.gearFeedback [] doc)
-                    , \_ -> Expect.equal Nothing (Machine.gearFeedback [ a, b ] doc)
+                    [ \_ -> Expect.equal Nothing (GearFeedback.gearFeedback [ b ] doc)
+                    , \_ -> Expect.equal Nothing (GearFeedback.gearFeedback [] doc)
+                    , \_ -> Expect.equal Nothing (GearFeedback.gearFeedback [ a, b ] doc)
                     ]
                     ()
         , test "pill text reads distance and requirement" <|
@@ -894,10 +895,10 @@ gearFeedbackTests =
                     , "24T ↔ 24T: not in the same plane (offset 20)"
                     , "24T crown ↔ 8T: axles must be at right angles"
                     ]
-                    [ Machine.feedbackText { gear = "24T", other = Just "24T", relation = Machine.TooFar { distance = 40, required = 60 } }
-                    , Machine.feedbackText { gear = "24T", other = Just "8T", relation = Machine.Meshes }
-                    , Machine.feedbackText { gear = "24T", other = Just "24T", relation = Machine.NotSamePlane { offset = 20 } }
-                    , Machine.feedbackText { gear = "24T crown", other = Just "8T", relation = Machine.NotPerpendicular }
+                    [ GearFeedback.feedbackText { gear = "24T", other = Just "24T", relation = GearFeedback.TooFar { distance = 40, required = 60 } }
+                    , GearFeedback.feedbackText { gear = "24T", other = Just "8T", relation = GearFeedback.Meshes }
+                    , GearFeedback.feedbackText { gear = "24T", other = Just "24T", relation = GearFeedback.NotSamePlane { offset = 20 } }
+                    , GearFeedback.feedbackText { gear = "24T crown", other = Just "8T", relation = GearFeedback.NotPerpendicular }
                     ]
         ]
 
@@ -1011,9 +1012,9 @@ dockPlacementTests =
                 in
                 Expect.all
                     [ \_ ->
-                        Machine.gearFeedback (Set.toList model.studio.selection) model.studio.document
+                        GearFeedback.gearFeedback (Set.toList model.studio.selection) model.studio.document
                             |> Maybe.map .relation
-                            |> Expect.equal (Just Machine.Meshes)
+                            |> Expect.equal (Just GearFeedback.Meshes)
                     , \_ ->
                         worst
                             |> Maybe.map (\v -> Expect.within (Expect.Absolute 1.0e-6) 0 v)
@@ -1043,9 +1044,9 @@ dockPlacementTests =
                     [ \m -> Expect.within (Expect.Absolute 1.0e-6) 60 (centreDistance m)
                     , \m -> Expect.equal True (Machine.isAccomplished m.machine)
                     , \m ->
-                        Machine.gearFeedback (Set.toList m.studio.selection) m.studio.document
+                        GearFeedback.gearFeedback (Set.toList m.studio.selection) m.studio.document
                             |> Maybe.map .relation
-                            |> Expect.equal (Just Machine.Meshes)
+                            |> Expect.equal (Just GearFeedback.Meshes)
                     ]
                     brought
         , test "axles, beams and pins go on the axle line too; nothing new overlaps an earlier part" <|
