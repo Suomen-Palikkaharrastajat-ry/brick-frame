@@ -6,7 +6,7 @@ module PlayTest exposing (suite)
 import Dict
 import Expect
 import Html.Attributes as Attr
-import Main exposing (Flags, Model, Msg(..), helpRows, init, kitItemName, remainingCount, thumbnailRequests, update, view)
+import Main exposing (Flags, Model, Msg(..), helpRows, init, kitItemName, remainingCount, shareHash, thumbnailRequests, update, view, viewToast)
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (vec3)
 import Set
@@ -24,6 +24,7 @@ suite : Test
 suite =
     describe "Brick Play"
         [ menuTests
+        , sharingAndToastTests
         , touchTests
         , fineTests
         , test "initial inventory has 10 bricks available" <|
@@ -599,7 +600,7 @@ menuTests =
                     |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Keyboard shortcuts (?)") ]
                     |> Event.simulate Event.click
                     |> Event.expect ToggleHelp
-        , test "the open menu lists its four actions with their shortcuts" <|
+        , test "the open menu lists its actions with their shortcuts" <|
             \_ ->
                 let
                     ( model0, _ ) =
@@ -610,7 +611,8 @@ menuTests =
                 in
                 Query.fromHtml (view opened)
                     |> Expect.all
-                        [ Query.findAll [ Selector.attribute (Attr.attribute "role" "menuitem") ] >> Query.count (Expect.equal 4)
+                        [ Query.findAll [ Selector.attribute (Attr.attribute "role" "menuitem") ] >> Query.count (Expect.equal 5)
+                        , Query.has [ Selector.text "Share link" ]
                         , Query.has [ Selector.text "Ctrl+Shift+Z" ]
                         ]
         , test "the kit cards show their count on the image and name it in the accessible label" <|
@@ -624,6 +626,70 @@ menuTests =
                         [ Query.has [ Selector.text "10/10" ]
                         , Query.has [ Selector.attribute (Attr.attribute "aria-label" "Add 3001 (Yellow), 10 of 10 left") ]
                         ]
+        ]
+
+
+{-| Sharing and toast notification lifecycle tests.
+-}
+sharingAndToastTests : Test
+sharingAndToastTests =
+    let
+        ( start, _ ) =
+            init testFlags
+    in
+    describe "Sharing and toast lifecycle"
+        [ test "ShareLink sets toast state and closes menu" <|
+            \_ ->
+                let
+                    ( menuOpenModel, _ ) =
+                        update ToggleMenu start
+
+                    ( sharedModel, _ ) =
+                        update ShareLink menuOpenModel
+                in
+                Expect.all
+                    [ \m -> Expect.equal False m.menuOpen
+                    , \m -> Expect.equal (Just "Link copied to clipboard!") (Maybe.map .message m.toast)
+                    ]
+                    sharedModel
+        , test "DismissToast with matching id clears toast; mismatching id preserves toast" <|
+            \_ ->
+                let
+                    ( sharedModel, _ ) =
+                        update ShareLink start
+
+                    toastId =
+                        sharedModel.toast |> Maybe.map .id |> Maybe.withDefault 0
+
+                    ( mismatchModel, _ ) =
+                        update (DismissToast (toastId + 999)) sharedModel
+
+                    ( matchModel, _ ) =
+                        update (DismissToast toastId) sharedModel
+                in
+                Expect.all
+                    [ \_ -> Expect.notEqual Nothing mismatchModel.toast
+                    , \_ -> Expect.equal Nothing matchModel.toast
+                    ]
+                    ()
+        , test "viewToast renders message with role='status'" <|
+            \_ ->
+                Query.fromHtml (viewToast "Link copied to clipboard!")
+                    |> Expect.all
+                        [ Query.has [ Selector.attribute (Attr.attribute "role" "status") ]
+                        , Query.has [ Selector.text "Link copied to clipboard!" ]
+                        ]
+        , test "shareHash returns parts=... when no placements exist" <|
+            \_ ->
+                let
+                    hash =
+                        shareHash start
+                in
+                Expect.all
+                    [ \h -> Expect.equal True (String.startsWith "parts=" h)
+                    , \h -> Expect.equal False (String.contains "model=" h)
+                    ]
+                    hash
         ]
 
 

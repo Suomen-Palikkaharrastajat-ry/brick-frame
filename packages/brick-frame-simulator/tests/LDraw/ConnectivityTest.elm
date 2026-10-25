@@ -259,22 +259,82 @@ extractionTests =
                                 Expect.fail "Expected 1 connection point for gear"
                     ]
                     ()
-        , test "40T gear (3649) includes 4 extra pin/axle holes" <|
+        , test "40T gear (3649) includes axle holes and 12 pin holes" <|
             \_ ->
                 case knownCatalogPart "3649.dat" of
                     Just gear40 ->
                         let
-                            extraHoles =
-                                List.filter (\c -> c.id > 1) gear40.connections
+                            axleHoles =
+                                List.filter
+                                    (\c ->
+                                        case c.connType of
+                                            TechnicAxleFemale _ ->
+                                                True
+
+                                            _ ->
+                                                False
+                                    )
+                                    gear40.connections
+
+                            pinHoles =
+                                List.filter
+                                    (\c ->
+                                        case c.connType of
+                                            TechnicPinFemale _ ->
+                                                True
+
+                                            _ ->
+                                                False
+                                    )
+                                    gear40.connections
                         in
                         Expect.all
-                            [ \_ -> Expect.equal 5 (List.length gear40.connections)
-                            , \_ -> Expect.equal 4 (List.length extraHoles)
+                            [ \_ -> Expect.equal 41 (List.length gear40.connections)
+                            , \_ -> Expect.equal 5 (List.length axleHoles)
+                            , \_ -> Expect.equal 36 (List.length pinHoles)
                             ]
                             ()
 
                     Nothing ->
                         Expect.fail "Catalog part 3649.dat was not found"
+        , test "24T gear (3648b) includes central axle hole and 4 pin holes" <|
+            \_ ->
+                case knownCatalogPart "3648b.dat" of
+                    Just gear24 ->
+                        let
+                            axleHoles =
+                                List.filter
+                                    (\c ->
+                                        case c.connType of
+                                            TechnicAxleFemale _ ->
+                                                True
+
+                                            _ ->
+                                                False
+                                    )
+                                    gear24.connections
+
+                            pinHoles =
+                                List.filter
+                                    (\c ->
+                                        case c.connType of
+                                            TechnicPinFemale _ ->
+                                                True
+
+                                            _ ->
+                                                False
+                                    )
+                                    gear24.connections
+                        in
+                        Expect.all
+                            [ \_ -> Expect.equal 13 (List.length gear24.connections)
+                            , \_ -> Expect.equal 1 (List.length axleHoles)
+                            , \_ -> Expect.equal 12 (List.length pinHoles)
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "Catalog part 3648b.dat was not found"
         , test "knownCatalogPart supports classic and modern gears, axles, beams, and bushings" <|
             \_ ->
                 let
@@ -473,6 +533,41 @@ snapSolverTests =
 
                     Nothing ->
                         Expect.fail "Axle snap into gear failed"
+        , test "snaps Technic pin into 24T gear pin hole" <|
+            \_ ->
+                case ( knownCatalogPart "2780.dat", knownCatalogPart "3648b.dat" ) of
+                    ( Just pinPart, Just gearPart ) ->
+                        let
+                            gearWorldPoints =
+                                List.map
+                                    (\c ->
+                                        { placementId = 1
+                                        , pointId = c.id
+                                        , connType = c.connType
+                                        , worldPosition = c.localPosition
+                                        , worldNormal = c.normal
+                                        , worldTangent = c.tangent
+                                        }
+                                    )
+                                    gearPart.connections
+
+                            -- Hover near pin hole at (10, 10, 0)
+                            hoverMat =
+                                Mat4.makeTranslate3 10 10 -8
+                        in
+                        case solveSnap 12.0 0 hoverMat pinPart.connections gearWorldPoints of
+                            Just snap ->
+                                let
+                                    snappedPos =
+                                        Mat4.transform snap.snapMatrix snap.draggedPoint.localPosition
+                                in
+                                Expect.lessThan 0.001 (Vec3.distance snap.targetPoint.worldPosition snappedPos)
+
+                            Nothing ->
+                                Expect.fail "Pin snap into 24T gear failed"
+
+                    _ ->
+                        Expect.fail "Parts 2780.dat or 3648b.dat not found"
         , test "snaps Technic axle into beam pin hole" <|
             \_ ->
                 let

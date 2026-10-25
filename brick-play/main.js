@@ -16,11 +16,22 @@ const runtime = initBricksRuntime({
   loadModelInJs: false,
   extraFlags: {},
   initialHash: window.location.hash ?? '',
-  syncUrlHash: false,
+  syncUrlHash: true,
   useWindowResize: true,
   dragDropTarget: window,
   suppressGestureTarget: window,
 })
+
+if (runtime.app?.ports?.copyToClipboard) {
+  runtime.app.ports.copyToClipboard.subscribe((text) => {
+    const toCopy = text.startsWith('#')
+      ? new URL(text, window.location.href).href
+      : text
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(toCopy).catch(() => {})
+    }
+  })
+}
 
 // Rendered part images for the kit dock, with the parts' .dat titles as names.
 initThumbnails(runtime.app?.ports, ldrawBase, { titles: true })

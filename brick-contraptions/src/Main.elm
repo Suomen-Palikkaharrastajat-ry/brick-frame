@@ -5,10 +5,12 @@ module Main exposing
     , accomplishmentBanner
     , init
     , main
+    , shareHash
     , subscriptions
     , thumbnailRequests
     , update
     , view
+    , viewToast
     )
 
 {-| Main application for Brick Contraptions.
@@ -65,7 +67,9 @@ import Html.Events exposing (onClick)
 import Html.Keyed as Keyed
 import LDraw.Colors as Colors
 import LDraw.Document as Document
+import LDraw.Writer as Writer
 import Ports
+import Process
 import Render.Camera as Camera
 import Set
 import Simulation
@@ -80,6 +84,7 @@ import UI.HamburgerMenu as HamburgerMenu
 import UI.Icon as Icon
 import UI.PartCard as PartCard
 import UI.ShortcutHelp as ShortcutHelp
+import Url
 import Viewport
 import Viewport.Framing exposing (ViewPreset(..))
 import Viewport.Shortcuts as ViewportShortcuts
@@ -115,6 +120,8 @@ type alias Model =
     , windowWidth : Int
     , windowHeight : Int
     , thumbnails : Dict String Thumbnail
+    , toast : Maybe { message : String, id : Int }
+    , toastCounter : Int
     }
 
 
@@ -142,6 +149,8 @@ type Msg
     | ToggleHelp
     | ToggleMenu
     | CloseMenu
+    | ShareLink
+    | DismissToast Int
     | MenuPicked Msg
     | NoOp
     | SetCategory Category
@@ -242,6 +251,8 @@ init flags =
             , windowWidth = 1280
             , windowHeight = 800
             , thumbnails = Dict.empty
+            , toast = Nothing
+            , toastCounter = 0
             }
 
         fetchViewportSize =
@@ -374,6 +385,62 @@ startPlaying model =
         }
 
 
+{-| Encode current document and project parts into a shareable URL hash.
+-}
+shareHash : Model -> String
+shareHash model =
+    let
+        doc =
+            model.studio.document
+
+        modelStr =
+            Writer.writeDocument doc
+
+        partsStr =
+            model.projectParts
+                |> List.map (\p -> { part = p.file, color = p.color, count = 1 })
+                |> UrlPayload.encodeParts
+
+        hasModel =
+            not (List.isEmpty (Document.mainPlacements doc))
+
+        hasParts =
+            not (String.isEmpty (String.trim partsStr))
+    in
+    case ( hasModel, hasParts ) of
+        ( True, True ) ->
+            "model=" ++ Url.percentEncode modelStr ++ "&parts=" ++ Url.percentEncode partsStr
+
+        ( True, False ) ->
+            "model=" ++ Url.percentEncode modelStr
+
+        ( False, True ) ->
+            "parts=" ++ Url.percentEncode partsStr
+
+        ( False, False ) ->
+            ""
+
+
+{-| Update URL hash if the given core events contain a document change.
+-}
+syncDocHash : Model -> List Core.Event -> Cmd Msg
+syncDocHash model events =
+    let
+        hasDocChange ev =
+            case ev of
+                Core.DocumentChanged _ ->
+                    True
+
+                _ ->
+                    False
+    in
+    if List.any hasDocChange events then
+        Ports.setUrlHash (shareHash model)
+
+    else
+        Cmd.none
+
+
 step : Msg -> Model -> ( Model, Cmd Msg )
 step msg model =
     case msg of
@@ -392,10 +459,16 @@ step msg model =
 
                 portCmds =
                     handleCoreEvents events
+
+                nextModel =
+                    { model | studio = nextStudio, machine = newMachine }
+
+                syncCmd =
+                    syncDocHash nextModel events
             in
             List.foldl applyShortcut
-                ( { model | studio = nextStudio, machine = newMachine }
-                , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
+                ( nextModel
+                , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncCmd ]
                 )
                 (List.filterMap extractKey events)
 
@@ -469,6 +542,33 @@ step msg model =
         CloseMenu ->
             ( syncKeyPause { model | menuOpen = False }, Cmd.none )
 
+        ShareLink ->
+            let
+                hash =
+                    shareHash model
+
+                nextId =
+                    model.toastCounter + 1
+            in
+            ( { model
+                | menuOpen = False
+                , toast = Just { message = "Link copied to clipboard!", id = nextId }
+                , toastCounter = nextId
+              }
+            , Cmd.batch
+                [ Ports.setUrlHash hash
+                , Ports.copyToClipboard ("#" ++ hash)
+                , Process.sleep 3000 |> Task.perform (\_ -> DismissToast nextId)
+                ]
+            )
+
+        DismissToast id ->
+            if Maybe.map .id model.toast == Just id then
+                ( { model | toast = Nothing }, Cmd.none )
+
+            else
+                ( model, Cmd.none )
+
         MenuPicked action ->
             -- The menu closes, then the chosen message runs as if its button were pressed.
             let
@@ -512,9 +612,12 @@ step msg model =
 
                 portCmds =
                     handleCoreEvents events
+
+                nextModel =
+                    { model | studio = nextStudio, machine = newMachine, lastTapped = Just (dockName model.thumbnails item) }
             in
-            ( { model | studio = nextStudio, machine = newMachine, lastTapped = Just (dockName model.thumbnails item) }
-            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
+            ( nextModel
+            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncDocHash nextModel events ]
             )
 
         Undo ->
@@ -527,9 +630,12 @@ step msg model =
 
                 portCmds =
                     handleCoreEvents events
+
+                nextModel =
+                    { model | studio = nextStudio, machine = newMachine }
             in
-            ( { model | studio = nextStudio, machine = newMachine }
-            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
+            ( nextModel
+            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncDocHash nextModel events ]
             )
 
         Redo ->
@@ -542,9 +648,12 @@ step msg model =
 
                 portCmds =
                     handleCoreEvents events
+
+                nextModel =
+                    { model | studio = nextStudio, machine = newMachine }
             in
-            ( { model | studio = nextStudio, machine = newMachine }
-            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
+            ( nextModel
+            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncDocHash nextModel events ]
             )
 
         Delete ->
@@ -557,9 +666,12 @@ step msg model =
 
                 portCmds =
                     handleCoreEvents events
+
+                nextModel =
+                    { model | studio = nextStudio, machine = newMachine }
             in
-            ( { model | studio = nextStudio, machine = newMachine }
-            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
+            ( nextModel
+            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncDocHash nextModel events ]
             )
 
         TurnSelection direction ->
@@ -586,9 +698,12 @@ step msg model =
 
                 portCmds =
                     handleCoreEvents events
+
+                nextModel =
+                    { model | studio = nextStudio, machine = newMachine, currentTime = 0.0 }
             in
-            ( { model | studio = nextStudio, machine = newMachine, currentTime = 0.0 }
-            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
+            ( nextModel
+            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncDocHash nextModel events ]
             )
 
         FitView ->
@@ -638,12 +753,15 @@ runCore edit model =
     let
         ( nextStudio, studioCmd, events ) =
             edit model.studio
+
+        nextModel =
+            { model
+                | studio = nextStudio
+                , machine = Machine.analyseMachine nextStudio.document nextStudio.viewport.partCache
+            }
     in
-    ( { model
-        | studio = nextStudio
-        , machine = Machine.analyseMachine nextStudio.document nextStudio.viewport.partCache
-      }
-    , Cmd.batch [ Cmd.map StudioMsg studioCmd, handleCoreEvents events ]
+    ( nextModel
+    , Cmd.batch [ Cmd.map StudioMsg studioCmd, handleCoreEvents events, syncDocHash nextModel events ]
     )
 
 
@@ -902,6 +1020,42 @@ view model =
         -- Bottom: the selection action bar floats above the Technic dock, whose
         -- bottom edge lines up with the camera globe's
         , bottomArea model
+        , case model.toast of
+            Just t ->
+                viewToast t.message
+
+            Nothing ->
+                text ""
+        ]
+
+
+{-| Toast notification overlay.
+-}
+viewToast : String -> Html Msg
+viewToast message =
+    div
+        [ Attr.attribute "role" "status"
+        , Attr.attribute "aria-live" "polite"
+        , Attr.style "position" "fixed"
+        , Attr.style "top" "1rem"
+        , Attr.style "left" "50%"
+        , Attr.style "transform" "translateX(-50%)"
+        , Attr.style "background" "rgba(5, 19, 29, 0.95)"
+        , Attr.style "color" "var(--color-text-on-dark)"
+        , Attr.style "padding" "0.625rem 1.125rem"
+        , Attr.style "border-radius" "0.5rem"
+        , Attr.style "border" "1px solid rgba(255, 255, 255, 0.2)"
+        , Attr.style "box-shadow" "0 4px 16px rgba(0, 0, 0, 0.5)"
+        , Attr.style "font-size" "0.875rem"
+        , Attr.style "font-weight" "500"
+        , Attr.style "z-index" "60"
+        , Attr.style "pointer-events" "none"
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "gap" "0.5rem"
+        ]
+        [ Icon.featherSized 16 "check"
+        , text message
         ]
 
 
@@ -1149,7 +1303,8 @@ menuConfig model =
     , onToggle = ToggleMenu
     , onClose = CloseMenu
     , items =
-        [ { label = "Undo", shortcut = "Ctrl+Z", enabled = Core.canUndo model.studio, onSelect = MenuPicked Undo }
+        [ { label = "Share link", shortcut = "", enabled = True, onSelect = MenuPicked ShareLink }
+        , { label = "Undo", shortcut = "Ctrl+Z", enabled = Core.canUndo model.studio, onSelect = MenuPicked Undo }
         , { label = "Redo", shortcut = "Ctrl+Shift+Z", enabled = Core.canRedo model.studio, onSelect = MenuPicked Redo }
         , { label = "Delete", shortcut = "Del", enabled = Core.hasSelection model.studio, onSelect = MenuPicked Delete }
         , { label = "Clear", shortcut = "", enabled = List.length (Core.getPlacements model.studio) > 0, onSelect = MenuPicked Clear }

@@ -17,7 +17,7 @@ import Gear.Placements as Placements
 import Html.Attributes as Attr
 import LDraw.Document as Document
 import LDraw.Resolve exposing (PartStatus(..))
-import Main exposing (Flags, Model, Msg(..), accomplishmentBanner, init, thumbnailRequests, update, view)
+import Main exposing (Flags, Model, Msg(..), accomplishmentBanner, init, shareHash, thumbnailRequests, update, view, viewToast)
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (vec3)
 import Render.Camera as Camera
@@ -40,6 +40,7 @@ suite : Test
 suite =
     describe "Brick Contraptions"
         [ menuTests
+        , sharingAndToastTests
         , fineTests
         , describe "Curated Catalog"
             [ test "curatedParts contains all required gears" <|
@@ -1206,7 +1207,7 @@ menuTests =
             \_ ->
                 Query.fromHtml (view start)
                     |> Query.hasNot [ Selector.attribute (Attr.attribute "role" "status") ]
-        , test "the open menu lists its four actions, and the tabs select a category" <|
+        , test "the open menu lists its actions, and the tabs select a category" <|
             \_ ->
                 let
                     ( opened, _ ) =
@@ -1214,10 +1215,82 @@ menuTests =
                 in
                 Query.fromHtml (view opened)
                     |> Expect.all
-                        [ Query.findAll [ Selector.attribute (Attr.attribute "role" "menuitem") ] >> Query.count (Expect.equal 4)
+                        [ Query.findAll [ Selector.attribute (Attr.attribute "role" "menuitem") ] >> Query.count (Expect.equal 5)
+                        , Query.has [ Selector.text "Share link" ]
                         , Query.findAll [ Selector.attribute (Attr.attribute "role" "tab") ] >> Query.count (Expect.equal 4)
                         , Query.has [ Selector.attribute (Attr.attribute "aria-orientation" "vertical") ]
                         ]
+        ]
+
+
+{-| Sharing and toast notification lifecycle tests.
+-}
+sharingAndToastTests : Test
+sharingAndToastTests =
+    let
+        start =
+            Tuple.first (init testFlags)
+    in
+    describe "Sharing and toast lifecycle"
+        [ test "ShareLink sets toast state and closes menu" <|
+            \_ ->
+                let
+                    ( menuOpenModel, _ ) =
+                        update ToggleMenu start
+
+                    ( sharedModel, _ ) =
+                        update ShareLink menuOpenModel
+                in
+                Expect.all
+                    [ \m -> Expect.equal False m.menuOpen
+                    , \m -> Expect.equal (Just "Link copied to clipboard!") (Maybe.map .message m.toast)
+                    ]
+                    sharedModel
+        , test "DismissToast with matching id clears toast; mismatching id preserves toast" <|
+            \_ ->
+                let
+                    ( sharedModel, _ ) =
+                        update ShareLink start
+
+                    toastId =
+                        sharedModel.toast |> Maybe.map .id |> Maybe.withDefault 0
+
+                    ( mismatchModel, _ ) =
+                        update (DismissToast (toastId + 999)) sharedModel
+
+                    ( matchModel, _ ) =
+                        update (DismissToast toastId) sharedModel
+                in
+                Expect.all
+                    [ \_ -> Expect.notEqual Nothing mismatchModel.toast
+                    , \_ -> Expect.equal Nothing matchModel.toast
+                    ]
+                    ()
+        , test "viewToast renders message with role='status'" <|
+            \_ ->
+                Query.fromHtml (viewToast "Link copied to clipboard!")
+                    |> Expect.all
+                        [ Query.has [ Selector.attribute (Attr.attribute "role" "status") ]
+                        , Query.has [ Selector.text "Link copied to clipboard!" ]
+                        ]
+        , test "shareHash returns empty or parts=... when no placements exist" <|
+            \_ ->
+                let
+                    emptyHash =
+                        shareHash start
+
+                    ( withPartsModel, _ ) =
+                        init { testFlags | initialHash = "#parts=3001:14:1" }
+
+                    partsHash =
+                        shareHash withPartsModel
+                in
+                Expect.all
+                    [ \_ -> Expect.equal "" emptyHash
+                    , \_ -> Expect.equal True (String.startsWith "parts=" partsHash)
+                    , \_ -> Expect.equal False (String.contains "model=" partsHash)
+                    ]
+                    ()
         ]
 
 

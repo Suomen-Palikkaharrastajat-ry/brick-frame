@@ -18,6 +18,7 @@ module LDraw.Connectivity exposing
     , knownCatalogPart
     , makeAxle
     , makeGear
+    , makeGearPinHoles
     , setGuideColliding
     , snapEnterDistance
     , snapReleaseDistance
@@ -1263,10 +1264,34 @@ knownCatalogPart name =
             Just (makeGear 20.0 20.0 "4019.dat")
 
         "3648" ->
-            Just (makeGear 30.0 20.0 "3648.dat")
+            let
+                base =
+                    makeGear 30.0 20.0 "3648.dat"
+
+                pinHoles =
+                    makeGearPinHoles 10
+                        [ ( 10, 10 )
+                        , ( -10, 10 )
+                        , ( -10, -10 )
+                        , ( 10, -10 )
+                        ]
+            in
+            Just { base | connections = base.connections ++ pinHoles }
 
         "3648b" ->
-            Just (makeGear 30.0 20.0 "3648b.dat")
+            let
+                base =
+                    makeGear 30.0 20.0 "3648b.dat"
+
+                pinHoles =
+                    makeGearPinHoles 10
+                        [ ( 10, 10 )
+                        , ( -10, 10 )
+                        , ( -10, -10 )
+                        , ( 10, -10 )
+                        ]
+            in
+            Just { base | connections = base.connections ++ pinHoles }
 
         "3649" ->
             let
@@ -1299,8 +1324,24 @@ knownCatalogPart name =
                       , tangent = vec3 1 0 0
                       }
                     ]
+
+                pinHoles =
+                    makeGearPinHoles 10
+                        [ ( 10, 10 )
+                        , ( -10, 10 )
+                        , ( -10, -10 )
+                        , ( 10, -10 )
+                        , ( 10, 30 )
+                        , ( -10, 30 )
+                        , ( 10, -30 )
+                        , ( -10, -30 )
+                        , ( 30, 10 )
+                        , ( -30, 10 )
+                        , ( 30, -10 )
+                        , ( -30, -10 )
+                        ]
             in
-            Just { base | connections = base.connections ++ extraHoles }
+            Just { base | connections = base.connections ++ extraHoles ++ pinHoles }
 
         "32198" ->
             Just (makeGear 25.0 20.0 "32198.dat")
@@ -1596,6 +1637,41 @@ makeGear radius thickness partName =
     , connections = connections
     , boundingBoxes = [ bbox ]
     }
+
+
+{-| Procedurally generate connection points for pin holes in a gear given 2D (x, y) coordinates.
+Generates center (z=0), front entrance (z=10), and back entrance (z=-10) points for each hole.
+-}
+makeGearPinHoles : Int -> List ( Float, Float ) -> List ConnectionPoint
+makeGearPinHoles startId coords =
+    coords
+        |> List.indexedMap
+            (\i ( x, y ) ->
+                let
+                    baseId =
+                        startId + i * 3
+                in
+                [ { id = baseId
+                  , connType = TechnicPinFemale { length = 20.0 }
+                  , localPosition = vec3 x y 0
+                  , normal = vec3 0 0 1
+                  , tangent = vec3 1 0 0
+                  }
+                , { id = baseId + 1
+                  , connType = TechnicPinFemale { length = 20.0 }
+                  , localPosition = vec3 x y 10
+                  , normal = vec3 0 0 1
+                  , tangent = vec3 1 0 0
+                  }
+                , { id = baseId + 2
+                  , connType = TechnicPinFemale { length = 20.0 }
+                  , localPosition = vec3 x y -10
+                  , normal = vec3 0 0 -1
+                  , tangent = vec3 1 0 0
+                  }
+                ]
+            )
+        |> List.concat
 
 
 makeTechnicBrick : Int -> String -> PartConnectivity
