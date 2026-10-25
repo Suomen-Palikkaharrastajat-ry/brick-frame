@@ -68,6 +68,7 @@ hamburgerButton config =
         [ onClick config.onToggle
         , Attr.attribute "aria-label" "Menu"
         , Attr.title "Menu"
+        , Attr.class "touch-target"
         , Attr.attribute "aria-haspopup" "menu"
         , Attr.attribute "aria-expanded"
             (if config.open then
@@ -138,6 +139,7 @@ item : Item msg -> Html msg
 item entry =
     button
         [ Attr.attribute "role" "menuitem"
+        , Attr.class "touch-target"
         , Attr.disabled (not entry.enabled)
         , onClick entry.onSelect
         , Attr.style "display" "flex"

@@ -76,6 +76,7 @@ import Render.Style as Style
 import Set exposing (Set)
 import Studio.BOM as StudioBOM
 import Studio.BuildGroups as BuildGroups
+import Studio.CameraControls as CameraControls
 import Studio.Colours as Colours
 import Studio.DragPlane as DragPlane
 import Studio.Edit as Edit exposing (Axis(..), Command(..), History)
@@ -84,6 +85,7 @@ import Studio.GearFeedback as GearFeedback
 import Studio.Gizmo as Gizmo exposing (ArcHandle, DragHandle(..), Handle)
 import Studio.Hints as Hints
 import Studio.Inspector as Inspector
+import Studio.KeyedText as KeyedText
 import Studio.Layout as Layout exposing (Layout, Panel(..))
 import Studio.Overlay as Overlay
 import Studio.Palette as Palette
@@ -94,10 +96,10 @@ import Studio.Tree as Tree
 import Studio.UrlPayload as UrlPayload
 import Task
 import UI.Button as Button
+import UI.CameraGlobe as CameraGlobe
 import UI.ShortcutHelp as ShortcutHelp
 import UI.Status as Status
 import UI.Theme as Theme
-import UI.ViewPad as ViewPad
 import Viewport
 import Viewport.Framing exposing (ViewPreset(..))
 import Viewport.Hash as Hash
@@ -202,6 +204,9 @@ type alias Model =
     , contraptionsBaseUrl : String
     , toast : Maybe { message : String, timerId : Int }
     , toastCounter : Int
+    , globeDrag : Maybe CameraGlobe.Drag
+    , cameraSheet : Bool
+    , fineMove : Bool
     }
 
 
@@ -296,6 +301,14 @@ type Msg
     | SetRotation Axis Float
     | SelectPlacement Int Bool
     | OpenPanel (Maybe Panel)
+    | ToggleCameraSheet
+    | ToggleFineMove
+    | GlobePressed ( Float, Float )
+    | GlobeMoved ( Float, Float )
+    | GlobeReleased
+    | ZoomTo Float
+    | ZoomDone
+    | ResetView
     | SimulateRequested
     | InstructionsRequested
     | HintsDue Int
@@ -405,6 +418,9 @@ init flags =
             , contraptionsBaseUrl = Maybe.withDefault "http://localhost:5176/" flags.contraptionsBaseUrl
             , toast = Nothing
             , toastCounter = 0
+            , globeDrag = Nothing
+            , cameraSheet = False
+            , fineMove = False
             }
 
         ( opened, openCmd ) =
@@ -458,6 +474,9 @@ resized width height model =
     let
         layout =
             Layout.compute width height
+
+        upright =
+            uprightPhone layout width
     in
     { model
         | layout = layout
@@ -467,12 +486,30 @@ resized width height model =
                 |> Viewport.setCanvasOrigin (toFloat layout.canvasLeft) (toFloat layout.canvasTop)
         , panel =
             -- Panels are sheets of the narrow layout; the wide one shows them all.
+            -- A phone held upright always has its bottom sheet up: the palette by default.
             if layout.mode == Layout.Wide then
                 Nothing
 
+            else if upright && model.panel == Nothing && not model.cameraSheet then
+                Just PartsPanel
+
             else
                 model.panel
+        , cameraSheet = model.cameraSheet && upright
     }
+
+
+{-| A phone held upright: the narrow layout, and narrower than 600 pixels. There
+the bottom area shows either the palette or the camera controls.
+-}
+narrowPortrait : Model -> Bool
+narrowPortrait model =
+    uprightPhone model.layout (Tuple.first model.window)
+
+
+uprightPhone : Layout -> Int -> Bool
+uprightPhone layout width =
+    layout.mode == Layout.Narrow && width < 600
 
 
 {-| Come back from the preview: the camera the preview ended on becomes the
@@ -760,14 +797,14 @@ nudgeDelta model (StudioShortcuts.Nudge nudge) =
             model.viewport.camera.azimuth
 
         horizontal =
-            if nudge.fine then
+            if nudge.fine || model.fineMove then
                 1
 
             else
                 toFloat model.gridStep
 
         vertical =
-            if nudge.fine then
+            if nudge.fine || model.fineMove then
                 1
 
             else
@@ -847,6 +884,58 @@ updatePage msg model =
                         openDocument Document.empty model
                 in
                 ( opened, Cmd.batch [ openCmd, Ports.saveDraft "" ] )
+
+        GlobePressed point ->
+            ( { model | globeDrag = Just (CameraGlobe.startDrag model.viewport.camera point) }, Cmd.none )
+
+        GlobeMoved point ->
+            case model.globeDrag of
+                Just drag ->
+                    let
+                        ( ( azimuthDelta, elevationDelta ), next ) =
+                            CameraGlobe.moveDrag drag point
+                    in
+                    update (ViewportMsg (Viewport.RotateCameraBy azimuthDelta elevationDelta))
+                        { model | globeDrag = Just next }
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        GlobeReleased ->
+            let
+                released =
+                    { model | globeDrag = Nothing }
+            in
+            case model.globeDrag |> Maybe.andThen (CameraGlobe.releaseDrag model.viewport.camera) of
+                Just ( azimuthDelta, elevationDelta ) ->
+                    update (ViewportMsg (Viewport.RotateCameraBy azimuthDelta elevationDelta)) released
+
+                Nothing ->
+                    ( released, Cmd.none )
+
+        ZoomTo level ->
+            update (ViewportMsg (Viewport.Wheel (CameraGlobe.wheelDeltaForZoom model.viewport.camera level))) model
+
+        ZoomDone ->
+            ( model, Task.attempt (\_ -> NoOp) (Browser.Dom.blur CameraGlobe.zoomSliderId) )
+
+        ResetView ->
+            let
+                ( fitted, fitCmd ) =
+                    update (ViewportMsg Viewport.FitView) model
+            in
+            ( fitted, Cmd.batch [ fitCmd, Task.attempt (\_ -> NoOp) (Browser.Dom.blur CameraGlobe.resetButtonId) ] )
+
+        ToggleCameraSheet ->
+            -- The bottom area of a phone held upright shows the palette or the camera.
+            if model.cameraSheet then
+                ( { model | cameraSheet = False, panel = Just PartsPanel }, Cmd.none )
+
+            else
+                ( { model | cameraSheet = True, panel = Nothing }, Cmd.none )
+
+        ToggleFineMove ->
+            ( { model | fineMove = not model.fineMove }, Cmd.none )
 
         ToggleHelp ->
             ( { model | helpOpen = not model.helpOpen }
@@ -1739,7 +1828,12 @@ updatePage msg model =
                 )
 
         OpenPanel panel ->
-            ( { model | panel = panel }, Cmd.none )
+            if panel == Nothing && narrowPortrait model then
+                -- On a phone held upright one of the palette or the camera is always up.
+                ( model, Cmd.none )
+
+            else
+                ( { model | panel = panel, cameraSheet = False }, Cmd.none )
 
         HintsDue generation ->
             -- Only the last edit's timer counts; earlier ones were overtaken.
@@ -3362,15 +3456,19 @@ defaultArcHandles model =
 
 {-| How close, in pixels, a press has to be to a handle to grab it.
 -}
-grabRadius : Float
-grabRadius =
-    16
+grabRadius : Model -> Float
+grabRadius model =
+    if Viewport.isTouchGesture model.viewport then
+        28
+
+    else
+        16
 
 
 startDrag : ( Float, Float ) -> Model -> Maybe Drag
 startDrag point model =
     if model.tool == MoveTool then
-        case Gizmo.hit grabRadius point (currentHandles model) of
+        case Gizmo.hit (grabRadius model) point (currentHandles model) of
             Just handle ->
                 Just
                     { kind = LinearDrag handle
@@ -3391,7 +3489,7 @@ startDrag point model =
                 grabPart point model
 
     else if model.tool == RotateTool then
-        Gizmo.hitArc grabRadius point (currentArcHandles model)
+        Gizmo.hitArc (grabRadius model) point (currentArcHandles model)
             |> Maybe.map
                 (\arcHandle ->
                     { kind = ArcDrag arcHandle
@@ -3596,7 +3694,7 @@ held (the fine move), else the move step.
 -}
 dragGridStep : Model -> Float
 dragGridStep model =
-    if model.shiftHeld then
+    if model.shiftHeld || model.fineMove then
         1
 
     else
@@ -5188,7 +5286,7 @@ viewTabs model =
         tab panel label =
             button
                 [ Attr.type_ "button"
-                , Attr.class "ui-button"
+                , Attr.class "ui-button touch-target"
                 , Html.Events.onClick
                     (OpenPanel
                         (if model.panel == Just panel then
@@ -5237,10 +5335,63 @@ viewTabs model =
         , Attr.style "background" Theme.panelSurface
         , Attr.style "border-top" ("1px solid " ++ Theme.borderDefault)
         ]
-        [ tab PartsPanel "Parts"
-        , tab ColoursPanel "Colour"
-        , tab InspectorPanel "Selection"
-        , tab TreePanel "Structure"
+        ([ tab PartsPanel "Parts"
+         , tab ColoursPanel "Colour"
+         , tab InspectorPanel "Selection"
+         , tab TreePanel "Structure"
+         ]
+            ++ (if narrowPortrait model then
+                    [ cameraToggle model ]
+
+                else
+                    []
+               )
+        )
+
+
+{-| Switches the bottom sheet between the palette and the camera controls. The
+icon shows what a press brings up: the camera from the palette, the bricks back
+from the camera.
+-}
+cameraToggle : Model -> Html Msg
+cameraToggle model =
+    button
+        [ Attr.type_ "button"
+        , Attr.class "ui-button touch-target"
+        , Html.Events.onClick ToggleCameraSheet
+        , Attr.title "Camera controls"
+        , Attr.attribute "aria-label" "Camera controls"
+        , Attr.attribute "aria-pressed" (boolAttr model.cameraSheet)
+        , Attr.style "flex" "none"
+        , Attr.style "width" "48px"
+        , Attr.style "min-height" "44px"
+        , Attr.style "border" "none"
+        , Attr.style "border-top"
+            ("3px solid "
+                ++ (if model.cameraSheet then
+                        Theme.brandYellow
+
+                    else
+                        "transparent"
+                   )
+            )
+        , Attr.style "background" "transparent"
+        , Attr.style "color"
+            (if model.cameraSheet then
+                Theme.textPrimary
+
+             else
+                Theme.textMuted
+            )
+        , Attr.style "cursor" "pointer"
+        ]
+        [ featherIcon
+            (if model.cameraSheet then
+                FeatherIcons.box
+
+             else
+                FeatherIcons.camera
+            )
         ]
 
 
@@ -5248,30 +5399,16 @@ viewTabs model =
 -}
 viewSheet : Model -> Html Msg
 viewSheet model =
-    case model.panel of
-        Nothing ->
+    case ( model.panel, model.cameraSheet ) of
+        ( Nothing, False ) ->
             text ""
 
-        Just panel ->
-            Html.section
-                [ Attr.id "panel-sheet"
-                , Attr.attribute "aria-label" (panelName panel)
-                , Attr.class "scroll-thin"
-                , Attr.style "position" "absolute"
-                , Attr.style "left" "0"
-                , Attr.style "right" "0"
-                , Attr.style "bottom" (String.fromInt Layout.tabBarHeight ++ "px")
-                , Attr.style "height" "45%"
-                , Attr.style "box-sizing" "border-box"
-                , Attr.style "padding" "12px"
-                , Attr.style "overflow-y" "auto"
-                , Attr.style "background" Theme.panelSurface
-                , Attr.style "border-top" ("1px solid " ++ Theme.borderDefault)
-                , Attr.style "border-radius" "12px 12px 0 0"
-                , Attr.style "box-shadow" "0 -8px 24px color-mix(in srgb, var(--color-brand) 12%, transparent)"
-                , Attr.style "z-index" "5"
-                ]
-                [ case panel of
+        ( Nothing, True ) ->
+            sheet "Camera" (viewCameraSheet model)
+
+        ( Just panel, _ ) ->
+            sheet (panelName panel)
+                (case panel of
                     PartsPanel ->
                         viewPalette model
 
@@ -5283,7 +5420,49 @@ viewSheet model =
 
                     TreePanel ->
                         viewTree model
-                ]
+                )
+
+
+{-| The narrow layout's bottom sheet, showing `content`.
+-}
+sheet : String -> Html Msg -> Html Msg
+sheet name content =
+    Html.section
+        [ Attr.id "panel-sheet"
+        , Attr.attribute "aria-label" name
+        , Attr.class "scroll-thin"
+        , Attr.style "position" "absolute"
+        , Attr.style "left" "0"
+        , Attr.style "right" "0"
+        , Attr.style "bottom" (String.fromInt Layout.tabBarHeight ++ "px")
+        , Attr.style "height" "45%"
+        , Attr.style "box-sizing" "border-box"
+        , Attr.style "padding" "12px"
+        , Attr.style "overflow-y" "auto"
+        , Attr.style "background" Theme.panelSurface
+        , Attr.style "border-top" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "border-radius" "12px 12px 0 0"
+        , Attr.style "box-shadow" "0 -8px 24px color-mix(in srgb, var(--color-brand) 12%, transparent)"
+        , Attr.style "z-index" "5"
+        ]
+        [ content ]
+
+
+{-| The camera controls, centred in the bottom sheet of a phone held upright.
+-}
+viewCameraSheet : Model -> Html Msg
+viewCameraSheet model =
+    div
+        [ Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "center"
+        , Attr.style "height" "100%"
+        ]
+        [ CameraControls.view cameraActions
+            { camera = model.viewport.camera
+            , helpOpen = model.helpOpen
+            }
+        ]
 
 
 panelName : Panel -> String
@@ -5317,8 +5496,8 @@ overlay model =
          , viewToolRail model
          , viewSnapBar model
          ]
-            ++ (if model.panel == Nothing then
-                    [ viewPad model ]
+            ++ (if model.panel == Nothing && not (narrowPortrait model) then
+                    [ viewCamera model ]
 
                 else
                     []
@@ -5505,7 +5684,7 @@ viewHeader model =
             , Attr.style "color" Theme.textMuted
             , Attr.style "font-size" "13px"
             ]
-            [ text (documentSummary model) ]
+            [ KeyedText.view (documentSummary model) ]
         , if narrow then
             text ""
 
@@ -5517,7 +5696,7 @@ viewHeader model =
                 , button
                     [ Attr.type_ "button"
                     , Attr.id "export-button"
-                    , Attr.class "ui-button"
+                    , Attr.class "ui-button touch-target"
                     , Html.Events.onClick ToggleExportMenu
                     , Attr.attribute "aria-expanded" (boolAttr model.exportMenuOpen)
                     , Attr.attribute "aria-haspopup" "true"
@@ -5593,7 +5772,7 @@ viewHeader model =
                 , button
                     [ Attr.type_ "button"
                     , Attr.id "export-button"
-                    , Attr.class "ui-button"
+                    , Attr.class "ui-button touch-target"
                     , Html.Events.onClick ToggleExportMenu
                     , Attr.attribute "aria-expanded" (boolAttr model.exportMenuOpen)
                     , Attr.attribute "aria-haspopup" "true"
@@ -5632,7 +5811,7 @@ simulateButton : Bool -> Html Msg
 simulateButton narrow =
     button
         [ Attr.type_ "button"
-        , Attr.class "ui-button"
+        , Attr.class "ui-button touch-target"
         , Html.Events.onClick SimulateRequested
         , Attr.title "Simulate gears (P)"
         , Attr.attribute "aria-keyshortcuts" "P"
@@ -5641,10 +5820,9 @@ simulateButton narrow =
         , Attr.style "justify-content" "center"
         , Attr.style "gap" "6px"
         , Attr.style "height" "36px"
-        , Attr.style "min-width" "36px"
         , Attr.style "padding"
             (if narrow then
-                "0"
+                "0 10px"
 
              else
                 "0 14px"
@@ -5739,7 +5917,7 @@ viewExportMenu model =
         item msg label description =
             button
                 [ Attr.type_ "button"
-                , Attr.class "ui-button"
+                , Attr.class "ui-button touch-target"
                 , Html.Events.onClick (MenuPick msg)
                 , Attr.style "display" "flex"
                 , Attr.style "flex-direction" "column"
@@ -5803,7 +5981,7 @@ viewExportMenu model =
                     ]
                 , button
                     [ Attr.type_ "button"
-                    , Attr.class "ui-button"
+                    , Attr.class "ui-button touch-target"
                     , Html.Events.onClick (MenuPick copyMsg)
                     , Attr.title "Copy link to clipboard"
                     , Attr.style "font-size" "11px"
@@ -6082,12 +6260,12 @@ viewSnapBar model =
         chip msg label value tip =
             button
                 [ Attr.type_ "button"
-                , Attr.class "ui-button"
+                , Attr.class "ui-button touch-target"
                 , Html.Events.onClick msg
                 , Attr.title tip
                 , Attr.attribute "aria-label" (label ++ ": " ++ value ++ ". " ++ tip)
                 , Attr.style "display" "inline-flex"
-                , Attr.style "align-items" "baseline"
+                , Attr.style "align-items" "center"
                 , Attr.style "gap" "6px"
                 , Attr.style "height" "30px"
                 , Attr.style "padding" "0 10px"
@@ -6097,7 +6275,7 @@ viewSnapBar model =
                 , Attr.style "color" Theme.textPrimary
                 , Attr.style "font" "inherit"
                 , Attr.style "font-size" "12px"
-                , Attr.style "line-height" "28px"
+                , Attr.style "line-height" "1.2"
                 , Attr.style "cursor" "pointer"
                 , Attr.style "flex" "none"
                 ]
@@ -6133,7 +6311,7 @@ viewSnapBar model =
                 "12px"
 
              else
-                "190px"
+                "236px"
             )
         , Attr.style "display" "flex"
         , Attr.style "align-items" "center"
@@ -6141,11 +6319,24 @@ viewSnapBar model =
         , Attr.style "overflow-x" "auto"
         , Attr.style "pointer-events" "none"
         ]
-        [ div [ Attr.style "display" "flex", Attr.style "gap" "6px", Attr.style "pointer-events" "auto", Attr.style "box-shadow" "none" ]
+        [ div
+            [ Attr.style "display" "flex"
+            , Attr.style "flex-wrap"
+                (if narrow then
+                    "wrap"
+
+                 else
+                    "nowrap"
+                )
+            , Attr.style "gap" "6px"
+            , Attr.style "pointer-events" "auto"
+            , Attr.style "box-shadow" "none"
+            ]
             [ chip NextGridStep "Move step" (String.fromInt model.gridStep ++ " LDU") "Change move step ( [ or ] )"
             , chip NextRotateStep "Turn step" (String.fromInt model.rotateStep ++ "°") "Change turn step ( , or . )"
             , chip NextSnapDistance "Snap" (snapValue model.snapDistance) "Change connection snapping distance"
             , chip NextCollisionMode "Collision" (collisionValue model.collisionMode) "Change how overlapping parts are handled"
+            , Button.toggle { active = model.fineMove, enabled = True } ToggleFineMove "Fine"
             ]
         , if hint == "" || narrow then
             text ""
@@ -6291,20 +6482,26 @@ viewStatus model =
         }
 
 
-viewPad : Model -> Html Msg
-viewPad model =
-    div [ keepFocusOnCanvas, Attr.style "display" "contents" ]
-        [ ViewPad.view
-            { walking = model.viewport.camera.navigation == Camera.Walk
-            , helpOpen = model.helpOpen
-            , play = Nothing
-            , onFit = ViewportMsg Viewport.FitView
-            , onToggleWalk = ViewportMsg Viewport.ToggleWalkMode
-            , onToggleHelp = ToggleHelp
-            , onStartRotate = \azimuth elevation -> ViewportMsg (Viewport.StartHoldRotate azimuth elevation)
-            , onEndRotate = ViewportMsg Viewport.EndHoldRotate
-            }
-        ]
+viewCamera : Model -> Html Msg
+viewCamera model =
+    CameraControls.floating cameraActions
+        { camera = model.viewport.camera
+        , helpOpen = model.helpOpen
+        }
+
+
+cameraActions : CameraControls.Actions Msg
+cameraActions =
+    { onPress = GlobePressed
+    , onMove = GlobeMoved
+    , onRelease = GlobeReleased
+    , onZoom = ZoomTo
+    , onZoomDone = ZoomDone
+    , onReset = ResetView
+    , onWalk = ViewportMsg Viewport.ToggleWalkMode
+    , onHelp = ToggleHelp
+    , noOp = NoOp
+    }
 
 
 {-| A mouse press on a toolbar, rail, pad or panel button must not leave the

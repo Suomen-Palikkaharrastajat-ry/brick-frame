@@ -24,6 +24,7 @@ import Html.Events
 import Json.Decode as Decode
 import LDraw.Document as Document exposing (Document, Entry(..))
 import Set exposing (Set)
+import Studio.KeyedText as KeyedText
 import UI.Theme as Theme
 
 
@@ -349,14 +350,14 @@ viewRow ctx row =
                     , Attr.style "white-space" "nowrap"
                     , Attr.style "text-overflow" "ellipsis"
                     ]
-                    [ text name ]
+                    [ KeyedText.view name ]
                 , span
                     [ Attr.style "color" Theme.textMuted
                     , Attr.style "font-size" "11px"
                     , Attr.style "flex-shrink" "0"
                     , Attr.style "white-space" "nowrap"
                     ]
-                    [ text (pluralParts parts) ]
+                    [ KeyedText.view (pluralParts parts) ]
                 ]
 
         StepRow n ->
@@ -446,13 +447,13 @@ viewRow ctx row =
                         [ Attr.style "font-size" "13px"
                         , Attr.style "color" Theme.textPrimary
                         ]
-                        [ text title ]
+                        [ KeyedText.view title ]
                     , span
                         [ Attr.style "font-size" "11px"
                         , Attr.style "color" Theme.textMuted
                         , Attr.style "margin-left" "6px"
                         ]
-                        [ text (stripDat file ++ " · " ++ colour) ]
+                        [ KeyedText.view (stripDat file ++ " · " ++ colour) ]
                     ]
                 ]
 

@@ -2,3 +2,32 @@
 @import "../packages/brick-frame-ui/theme.css";
 @source "./packages/ui-components/src";
 @source "./src";
+
+/* iOS Safari: a root sized to the window's height runs under the toolbar that
+   collapses and expands, so the studio fills the window with a fixed box. */
+#app {
+  position: fixed;
+  inset: 0;
+}
+
+/* The simulation preview's motor bar sits above the camera globe on a phone
+   held upright, where the two would otherwise overlap. */
+.studio-motor-bar {
+  bottom: 12px;
+}
+
+@media (max-width: 599px) {
+  .studio-motor-bar {
+    bottom: 152px;
+  }
+}
+
+/* Inline sizes beat the shared `.touch-target` rule, so on coarse pointers the
+   studio's own controls take a 44 px minimum even when they set a smaller
+   inline size. */
+@media (pointer: coarse) {
+  .touch-target {
+    min-width: 44px !important;
+    min-height: 44px !important;
+  }
+}

@@ -316,16 +316,23 @@ same figure as before.
   default autoscroll is prevented. Held movement keys do not move the camera
   while a capture is active.
 - **Touch:** 2-finger pan + pinch zoom in every host. One finger orbits in the
-  viewer, the studio and Brick Play (`OneFingerOrbits`, since touch has no right
-  button). In Brick Contraptions one finger pans (`OneFingerPans`), because the
-  camera globe below does the orbiting. A tap without travel clears the selection.
-- **Camera globe** (Brick Contraptions, `Contraption.CameraGlobe`): a globe drawn
-  from a fixed viewpoint above the horizon, with the camera's marker on it. Drag on
-  the globe to fly the camera (the marker follows the pointer, `dragOrbit`), tap a
-  point to jump straight there (`flyToDelta`), and use the reset button to fit the
-  whole model (`ResetView` → `FitView`). The zoom slider is log-scale (`zoomLevel`,
-  `wheelDeltaForZoom`), so each step zooms by the same factor. The host owns the
-  pointer state and only forwards camera messages.
+  viewer (`OneFingerOrbits`, since touch has no right button). One finger on
+  empty canvas pans in the studio, Brick Play and Brick Contraptions
+  (`OneFingerPans` in Play and Contraptions; the studio workspace's empty-press
+  handler calls `Viewport.panCurrentGesture`), because the camera globe does the
+  orbiting there. A tap without travel clears the selection.
+  Controls are finger-sized (44 px) on coarse pointers: `theme.css` `.touch-target`,
+  with icon-button sizes kept in the `.ui-icon-button` class rather than inline,
+  so the coarse rule can override them.
+- **Camera globe** (`UI.CameraGlobe`, in `packages/brick-frame-ui`, used by the
+  viewer, the studio, Brick Play and Brick Contraptions; it replaced the arrow
+  `UI.ViewPad`): a globe drawn from a fixed viewpoint above the horizon, with the
+  camera's marker on it. Drag on the globe to fly the camera (the marker follows
+  the pointer, `dragOrbit`), tap a point to jump straight there (`flyToDelta`), and
+  use the reset button to fit the whole model (`ResetView` → `FitView`). The zoom
+  slider is log-scale (`zoomLevel`, `wheelDeltaForZoom`), so each step zooms by the
+  same factor. An `extras` slot takes the host's own buttons (walk, play, help). The
+  host owns the pointer state and only forwards camera messages.
 - **Fit view:** the ⛶ button in the viewer control pad re-frames the model
   (`FitView` → `frameModelBounds`); Brick Play's toolbar Fit View and Brick
   Contraptions' globe reset do the same, and `F` works everywhere. Without it the camera was a one-way door:

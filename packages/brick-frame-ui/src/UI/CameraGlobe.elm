@@ -1,18 +1,24 @@
-module Contraption.CameraGlobe exposing
+module UI.CameraGlobe exposing
     ( Config
+    , Drag
     , directionAt
     , dragOrbit
     , facingSign
     , flyToDelta
     , markerPosition
+    , moveDrag
+    , releaseDrag
     , resetButtonId
+    , startDrag
     , view
     , wheelDeltaForZoom
     , zoomLevel
     , zoomSliderId
     )
 
-{-| On-screen camera control: a globe the camera flies around, and a zoom slider.
+{-| On-screen camera control, shared by every app: a globe the camera flies
+around, a log-scale zoom slider, a reset-view button, and an `extras` row of
+the host's own buttons (street-level walk, play/pause, help) beside them.
 
 The globe is drawn from a fixed viewpoint, slightly above the horizon and in
 front of the model, so the camera marker moves over it as the real camera orbits.
@@ -20,8 +26,9 @@ Its surface stands for every direction the camera can look at the model from:
 dragging carries the marker with the pointer, tapping flies the camera straight
 to that point.
 
-Everything here is pure; the host owns the pointer state and sends the camera
-messages.
+Everything here is pure. The host owns the pointer state: it keeps a `Drag`
+from `startDrag`, feeds each pointer move through `moveDrag` (applying the orbit
+it returns) and, on release, applies `releaseDrag` when the press was a tap.
 
 -}
 
@@ -44,6 +51,9 @@ slider is let go, so the host can hand focus back (a focused slider keeps Space
 and the other shortcuts for itself). `onReset` re-frames the whole model; the
 host should then blur `resetButtonId` for the same reason.
 
+`extras` are the host's own buttons, shown in a column beside the zoom slider.
+Hosts that have none pass `[]`.
+
 -}
 type alias Config msg =
     { camera : Camera
@@ -53,7 +63,63 @@ type alias Config msg =
     , onZoom : Float -> msg
     , onZoomDone : msg
     , onReset : msg
+    , extras : List (Html msg)
     }
+
+
+{-| A press on the globe in progress: where it started and last was (relative to
+the globe's centre), how far it has travelled, and which way a horizontal drag
+turns the camera (fixed for the whole drag, so crossing the globe's edge does not
+flip it).
+-}
+type alias Drag =
+    { start : ( Float, Float )
+    , last : ( Float, Float )
+    , travel : Float
+    , azimuthSign : Float
+    }
+
+
+{-| Begin a drag at a pointer press on the globe.
+-}
+startDrag : Camera -> ( Float, Float ) -> Drag
+startDrag camera point =
+    { start = point
+    , last = point
+    , travel = 0
+    , azimuthSign = facingSign camera
+    }
+
+
+{-| The orbit for one pointer move over the globe, and the drag carried on from it.
+-}
+moveDrag : Drag -> ( Float, Float ) -> ( ( Float, Float ), Drag )
+moveDrag drag (( x, y ) as point) =
+    let
+        ( lastX, lastY ) =
+            drag.last
+
+        orbit =
+            dragOrbit drag.azimuthSign ( x - lastX, y - lastY )
+    in
+    ( orbit
+    , { drag
+        | last = point
+        , travel = drag.travel + sqrt ((x - lastX) ^ 2 + (y - lastY) ^ 2)
+      }
+    )
+
+
+{-| The orbit for releasing a drag. A press that barely moved is a tap: it flies
+the camera to the point of the globe it was pressed on. Anything else is `Nothing`.
+-}
+releaseDrag : Camera -> Drag -> Maybe ( Float, Float )
+releaseDrag camera drag =
+    if drag.travel < 3 then
+        flyToDelta camera drag.start
+
+    else
+        Nothing
 
 
 {-| The reset button's DOM id, for giving focus back once it is clicked.
@@ -234,12 +300,31 @@ view config =
         , Attr.style "border-radius" "1rem"
         , Attr.style "pointer-events" "auto"
         ]
-        [ div
+        ([ div
             [ Attr.style "position" "relative" ]
             [ globe config
             , resetButton config.onReset
             ]
-        , zoomSlider config
+         , zoomSlider config
+         ]
+            ++ extrasColumn config.extras
+        )
+
+
+{-| The host's extra buttons, stacked beside the zoom slider. Nothing when empty.
+-}
+extrasColumn : List (Html msg) -> List (Html msg)
+extrasColumn extras =
+    if List.isEmpty extras then
+        []
+
+    else
+        [ div
+            [ Attr.style "display" "flex"
+            , Attr.style "flex-direction" "column"
+            , Attr.style "gap" "0.25rem"
+            ]
+            extras
         ]
 
 
@@ -315,6 +400,7 @@ resetButton onReset =
         , Attr.style "background" "rgba(255, 255, 255, 0.1)"
         , Attr.style "color" "var(--color-text-on-dark)"
         , Attr.style "cursor" "pointer"
+        , Attr.class "touch-target"
         ]
         [ Icon.feather "maximize" ]
 
@@ -413,6 +499,7 @@ zoomSlider config =
         , Html.input
             [ Attr.type_ "range"
             , Attr.id zoomSliderId
+            , Attr.class "touch-target"
             , Html.Events.on "change" (Decode.succeed config.onZoomDone)
             , Attr.attribute "aria-label" "Zoom"
             , Attr.title "Zoom"

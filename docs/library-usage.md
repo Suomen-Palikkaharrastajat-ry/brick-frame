@@ -10,7 +10,7 @@ directories, not published packages):
 | `packages/brick-frame-viewport/` | `Viewport`: camera, mouse/touch/keyboard input, model loading, picking, editable-document scene | yes — own `Model`/`Msg`/`update` |
 | `packages/brick-frame-simulation/` | `Simulation`: gear analysis, playback, motor, meshes of the moving parts | yes — own `Model`/`Msg`/`update` |
 | `packages/brick-frame-studio/` | `Studio.Core`: 3D building editor TEA component (selection, gizmo drag/transform, snapping, undo/redo history, overlays) + editing modules (`Edit`, `Gizmo`, `Layout`, `PartIndex`, `Shortcuts`, `Transform`, `UrlPayload`) | yes — own `Model`/`Msg`/`update`, returns `Event`s |
-| `packages/brick-frame-ui/` | Theme tokens, shared view widgets (`UI.ViewPad`, `UI.Status`, …) and `theme.css` | no |
+| `packages/brick-frame-ui/` | Theme tokens, shared view widgets (`UI.CameraGlobe`, `UI.Status`, …) and `theme.css` | no |
 | `packages/brick-frame-data/` | Generated `Data.elm` (do not edit) and `EmbeddedParts` | no |
 
 None of them has ports. A host application owns the ports and the JavaScript,
@@ -456,6 +456,11 @@ Host options. Set them on the model after `Core.init`:
   `MoveAndRotateGizmo`.
 - `Core.setDragSettles : Bool -> Model -> Model`: `False` keeps dragged parts at their
   press-time height instead of settling them onto their support.
+- `Core.setFineMove : Bool -> Model -> Model` (with `Core.fineMove : Model -> Bool`):
+  fine mode for hosts without a Shift key (touch). While on, body drags move on the
+  1 LDU grid and keyboard / action-bar nudges use the fine step, OR-ed with Shift.
+  It changes no selection or history and persists across selection changes. Bind it
+  to a toolbar toggle with `aria-pressed`.
 - `Core.setHelpVisible : Bool -> Model -> Model`: tell the studio the host's shortcut
   dialog is open, so editing keys pause and the viewport can close it.
 - `Core.setGearAlignment` (below) turns tooth alignment on.

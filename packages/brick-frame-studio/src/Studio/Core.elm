@@ -17,6 +17,7 @@ module Studio.Core exposing
     , currentArcHandles
     , currentHandles
     , deleteSelection
+    , fineMove
     , fitView
     , freeSpotFor
     , freeSpotForPlacement
@@ -36,6 +37,7 @@ module Studio.Core exposing
     , setCollisionMode
     , setDragMode
     , setDragSettles
+    , setFineMove
     , setGearAlignment
     , setGizmoStyle
     , setGridStep
@@ -245,6 +247,7 @@ type alias Model =
     , drag : Maybe Drag
     , altHeld : Bool
     , shiftHeld : Bool
+    , fineMove : Bool
     , inFlightRotationStep : Int
     , snapRotationStep : Int
     , activeColour : Int
@@ -296,9 +299,16 @@ type Event
     | KeyAccepted ViewportShortcuts.KeyEvent
 
 
-grabRadius : Float
-grabRadius =
-    16
+{-| How close (in pixels) a press must land to a gizmo handle to grab it. A
+finger is less precise than the mouse, so a touch gets the wider target.
+-}
+grabRadius : Model -> Float
+grabRadius model =
+    if Viewport.isTouchGesture model.viewport then
+        28
+
+    else
+        16
 
 
 {-| Initialize the studio component.
@@ -342,6 +352,7 @@ init config =
             , drag = Nothing
             , altHeld = False
             , shiftHeld = False
+            , fineMove = False
             , inFlightRotationStep = 0
             , snapRotationStep = 0
             , activeColour = 14
@@ -446,6 +457,41 @@ raise/lower keys are unaffected.
 setDragSettles : Bool -> Model -> Model
 setDragSettles settles model =
     { model | dragSettles = settles }
+
+
+{-| Fine mode, for hosts without a Shift key (touch): while on, body drags move on
+the 1 LDU grid and keyboard / action-bar nudges use the fine step. It is OR-ed with
+Shift and changes nothing else (no Shift-click selection toggling). It persists
+until switched off, independent of the selection.
+-}
+setFineMove : Bool -> Model -> Model
+setFineMove on model =
+    let
+        next =
+            { model | fineMove = on }
+    in
+    case next.drag of
+        Just drag ->
+            case drag.kind of
+                PlaneDrag _ ->
+                    let
+                        ( moved, _, _ ) =
+                            moveDrag drag drag.lastPoint next
+                    in
+                    moved
+
+                _ ->
+                    next
+
+        Nothing ->
+            next
+
+
+{-| Whether fine mode is on (see `setFineMove`).
+-}
+fineMove : Model -> Bool
+fineMove model =
+    model.fineMove
 
 
 {-| Tell the studio a host dialog (the shortcut list) is open: editing keys pause,
@@ -1557,14 +1603,14 @@ nudgeDelta model (StudioShortcuts.Nudge nudge) =
             model.viewport.camera.azimuth
 
         horizontal =
-            if nudge.fine then
+            if nudge.fine || model.fineMove then
                 1
 
             else
                 toFloat model.gridStep
 
         vertical =
-            if nudge.fine then
+            if nudge.fine || model.fineMove then
                 1
 
             else
@@ -1856,11 +1902,11 @@ startDrag point model =
             }
 
         arcDrag =
-            Gizmo.hitArc grabRadius point (currentArcHandles model)
+            Gizmo.hitArc (grabRadius model) point (currentArcHandles model)
                 |> Maybe.map (handleDrag << ArcDrag)
     in
     if model.tool == MoveTool then
-        case Gizmo.hit grabRadius point (currentHandles model) of
+        case Gizmo.hit (grabRadius model) point (currentHandles model) of
             Just handle ->
                 Just (handleDrag (LinearDrag handle))
 
@@ -1914,7 +1960,7 @@ held in a `DragPartsOrPan` host, else the grid.
 -}
 dragGridStep : Model -> Float
 dragGridStep model =
-    if model.shiftHeld && dragModeGrabsWithShift model.dragMode then
+    if model.fineMove || (model.shiftHeld && dragModeGrabsWithShift model.dragMode) then
         1
 
     else

@@ -35,7 +35,7 @@ packages/brick-frame-simulation/ # Simulation component (gear analysis, playback
 packages/brick-frame-studio/     # Reusable 3D studio TEA component (Core, Edit, Gizmo, Overlay, Transform, Shortcuts, UrlPayload)
   src/Studio/DragPlane.elm       # View-relative body drag: working plane, snapping, free-spot search
   src/Studio/GearAlign.elm       # Tooth alignment of gears a committed edit has just meshed
-packages/brick-frame-ui/         # Theme tokens, shared view widgets, theme.css
+packages/brick-frame-ui/         # Theme tokens, shared view widgets, theme.css; UI.CameraGlobe (globe, zoom slider, reset, extras row) used by every app
   src/UI/PartCard.elm            # Visual dock card: thumbnail, name and secondary text for a part
 packages/brick-frame-data/src/   # Data.elm (generated, never edit) + EmbeddedParts.elm
 
@@ -58,7 +58,6 @@ brick-contraptions/src/          # Brick Contraptions: Technic gear machine buil
     Machine.elm         # Technic machine analysis & accomplishment condition
     Catalog.elm         # Curated Technic parts catalog (gears, beams, axles, pins)
     Animation.elm       # Which gears and driven parts turn while playing, and their static copies to hide
-    CameraGlobe.elm     # Camera globe (drag to fly, tap to jump, reset view) and log-scale zoom slider
     Placement.elm       # Where a dock part is added: on the shared axle line, or at a free ground spot
   Ports.elm             # JS interop (file reading, geometry worker, URL hash)
 
@@ -76,6 +75,7 @@ In-depth documentation for agents and contributors:
 - [docs/physics.md](docs/physics.md) — Gear detection algorithm, adjacency graph, BFS rotation propagation, gear types, and physics limitations.
 - [docs/library-usage.md](docs/library-usage.md) — How to integrate `packages/brick-frame-simulator` into a custom Elm application, including setup, port contracts, module reference, and a step-by-step walkthrough.
 - [docs/studio.md](docs/studio.md) — The LDraw studio: architecture, document model, editing commands and history, gizmo, palette and part index, layout, draft/save, and the simulation preview.
+- [docs/examples.md](docs/examples.md) — Deep-linking examples for Brick Play and Brick Contraptions with verified model and kit hash fragments.
 
 ## Key Technical Facts
 
@@ -93,10 +93,14 @@ In-depth documentation for agents and contributors:
 
 - **Controls panel:** Gear/motor controls are collapsible via a `Minimize` / `Maximize` toggle in the top-right panel.
 - **Desktop camera controls** (per host; wheel = zoom everywhere). Right drag = orbit, Ctrl/Cmd + drag = orbit, middle drag = pan, Shift + drag = pan; the Studio workspace also pans on a plain left drag of empty canvas (Shift + drag on a part moves it finely there). Only a plain left press emits `PressStarted` (a Shift + left press too, when `Viewport.setShiftPressGrabs` is on); right/middle/modified presses never grab parts. Space + drag pans only when `Viewport.setSpacePan True`.
-  - Viewer and studio (`DragPartsOrOrbit`, the default): left drag on empty canvas orbits; in the studio, left drag on a part moves it.
+  - Viewer (`DragPartsOrOrbit`, the default): left drag on empty canvas orbits. Studio workspace (`DragPartsOrOrbit` in `Studio.Core`, but its own `PressStarted` handler pans empty-canvas drags via `panCurrentGesture`): left drag on empty canvas pans; left drag on a part moves it.
   - Brick Play and Brick Contraptions (`DragPartsOrPan`): left drag on empty canvas pans; left drag on a part moves it. Shift + left press on a part grabs it for a fine move (1 LDU, also when Shift is held during a drag); Shift + press on empty canvas pans. `Core.setDragMode` switches the Shift grab on.
   See docs/rendering.md § Interaction controls.
-- **Touch controls:** 2-finger pan + pinch (zoom engages past a 12 px dead-zone). One finger orbits in the viewer, the studio and Brick Play (`OneFingerOrbits`); in Brick Contraptions one finger pans (`OneFingerPans`), because the camera globe does the orbiting. Exactly one of the Touch or Pointer listener families is bound, chosen by the `supportsPointerEvents` flag.
+- **Touch controls:** 2-finger pan + pinch (zoom engages past a 12 px dead-zone). One finger orbits in the viewer (`OneFingerOrbits`). In the studio, Brick Play and Brick Contraptions one finger on empty canvas pans (`OneFingerPans` in Play and Contraptions; the studio workspace pans the same way), because the camera globe does the orbiting. Exactly one of the Touch or Pointer listener families is bound, chosen by the `supportsPointerEvents` flag.
+- **Camera globe everywhere:** `UI.CameraGlobe` replaces the old `UI.ViewPad` arrow pad in the viewer, the studio, Brick Play and Brick Contraptions. Its extras row carries the host's own buttons (viewer: walk, play/pause, help; studio: walk, help).
+- **iPhone portrait (width < 600 CSS px):** the bottom area shows either the brick palette / dock or the camera globe, with one toggle (brick or camera icon, `aria-pressed`, 44 px) at the bottom edge; the palette is the default. The action bar and mesh pill stay above it. Wider or landscape windows show both side by side.
+- **Fine toggle:** the selection action bar (Brick Play, Brick Contraptions; always shown, so it works with nothing selected) and Studio's snap bar have a Fine button, `aria-pressed`. While on, body drags and nudges use 1 LDU (`Core.setFineMove`, OR-ed with Shift); it persists across selection changes.
+- **Fixed roots:** Brick Play, Brick Contraptions and the studio roots are `position: fixed; inset: 0`, and the viewer root is `100dvh` with a `100vh` fallback, not a bare `100vh`: iOS Safari's collapsing toolbar otherwise leaves the bottom controls under it.
 - **Fit view:** the fit (maximize icon) button in the viewer control pad, labelled 'Fit model to view (F)', re-frames the model; in Brick Contraptions the reset-view button on the camera globe does the same, and in Brick Play it is the toolbar's Fit View. `F` fits in every host. It is the only way back to auto-fit after a manual camera move.
 - **Minimal Play / Contraptions chrome:** no title badge; a single top-right hamburger (`UI.HamburgerMenu`) holds undo, redo, delete, clear, fit view and shortcuts (Escape closes it first). Dock cards are compact pictures (`UI.PartCard.compactView`) with names in tooltips; the dock is `compactPanelHeight` (130 px), matching Contraptions' camera globe panel.
 - **Play and Contraptions editing UI:** no axis gizmo (`Core.setGizmoStyle NoGizmo`); a floating action bar above the dock (Turn left / right, Tip, Raise, Lower, Delete) mirrors the keyboard; the dock shows visual part cards (`UI.PartCard`, images from the shared thumbnail pipeline). Contraptions adds a gear mesh status pill (`Machine.gearFeedback`) and automatic tooth alignment (`Core.setGearAlignment True`), and gears and their driven parts animate while the machine plays. Space plays and pauses in Contraptions; Brick Play leaves Space unbound.

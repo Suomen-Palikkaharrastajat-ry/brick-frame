@@ -148,7 +148,7 @@ along the same screen directions. Nothing else moves the pivot: not adding a
 part, keyboard or action-bar moves and turns, a drag drop, undo/redo, Ctrl+A or
 the inspector. It never happens during a drag, in walk navigation, or on the
 Preview and Instructions pages. Deselecting keeps the last pivot; Fit View
-(`F`, the camera pad's fit button) recentres on the whole model.
+(`F`, the camera globe's reset button) recentres on the whole model.
 
 ### Host placement (Brick Play, Brick Contraptions)
 
@@ -192,8 +192,8 @@ visually hidden `h1` keeps the heading), one top-right menu, and a compact dock.
   rings. A body drag still moves a part on the view-relative plane
   (`Studio.DragPlane`), and turning, raising and lowering go through the keyboard
   or the action bar. The yellow selection box is still drawn.
-- **Drag mode.** Brick Play uses `DragPartsOrPan OneFingerOrbits`; Brick
-  Contraptions uses `DragPartsOrPan OneFingerPans` and a camera globe (see
+- **Drag mode.** Brick Play and Brick Contraptions use `DragPartsOrPan OneFingerPans`
+  and a camera globe (see
   [rendering.md](rendering.md) § Interaction controls).
 - **Shift fine moves.** In `DragPartsOrPan` a Shift + left press on a part grabs
   it (Shift + press on empty canvas pans), and holding Shift during a body drag
@@ -314,7 +314,15 @@ node and its `ResizeObserver` never fires.
 
 On the canvas: the tool rail (tools, undo/redo, edit and submodel actions) at
 the top left, the snapping buttons along the bottom (top on a phone) and the
-camera pad at the bottom right. Everything floating over the canvas is opaque.
+camera globe at the bottom right (`UI.CameraGlobe`: drag the globe to fly, tap to
+jump, reset to fit, log-scale zoom slider, with walk and help beside it). The
+snap bar holds four step chips (move step, turn step, snap distance, collision
+mode) and a **Fine** toggle (`aria-pressed`): while on, drags and nudges move
+on a 1 LDU grid, the touch alternative to Shift + drag. On a phone the chips wrap
+onto two rows rather than scrolling, so Fine is always reachable. On a phone
+held upright (under 600 px wide) the bottom area shows either the palette or the
+globe, switched by one toggle at the bottom edge; the palette is the default.
+Everything floating over the canvas is opaque.
 
 ## Keyboard and mouse
 
@@ -352,8 +360,9 @@ The mouse:
   the select and move tools, which follows the cursor relative to the view);
   Shift + left drag on a part moves it finely, on a 1 LDU grid, and a Shift +
   press on a part that is released without moving toggles it in the selection.
-- Left drag on empty space pans the camera (`Viewport.panCurrentGesture`); a click
-  on empty space still clears the selection.
+- Left drag on empty space pans the camera (`Viewport.panCurrentGesture`); one
+  finger does the same on touch, and the camera globe does the orbiting. A click
+  or tap on empty space still clears the selection.
 - Right drag orbits, around the selection once something has been selected (F
   recentres on the model). Middle drag, Shift + drag on empty space and Space +
   drag pan. Wheel zooms, and while dragging a part it raises or lowers it (a plate;
@@ -368,7 +377,7 @@ typing in form fields alone, and leaves Space/Enter to a focused button and the
 arrows to composite widgets (by ARIA role: `treeitem`, `option`, `radio`, …).
 Buttons are deliberately *not* text-entry targets: clicking a toolbar button
 focuses it, and that used to silence every shortcut. Nor do mouse clicks leave
-buttons focused: the header, tool rail, snap bar, breadcrumbs, view pad, tab bar,
+buttons focused: the header, tool rail, snap bar, breadcrumbs, camera globe, tab bar,
 export menu and inspector prevent the default of `mousedown`
 (`Workspace.keepFocusOnCanvas`), so Space + drag after clicking Undo pans instead
 of undoing again. Presses on inputs, selects and text areas are let through so

@@ -19,6 +19,7 @@ is where those become commands.
 
 import Array
 import Browser
+import Browser.Dom
 import Browser.Events
 import Data
 import Dict exposing (Dict)
@@ -38,14 +39,16 @@ import Ports
 import Render.Camera as Camera
 import Render.Style as Style
 import Simulation
+import Task
 import UI.Button as Button
+import UI.CameraGlobe as CameraGlobe
 import UI.FileUpload as FileUpload
 import UI.Focus as Focus
+import UI.Icon as Icon
 import UI.ShortcutHelp as ShortcutHelp
 import UI.Status as Status
 import UI.Theme as Theme
 import UI.Touch as Touch
-import UI.ViewPad as ViewPad
 import Url
 import Viewport
 import Viewport.Framing exposing (ViewPreset(..))
@@ -93,6 +96,7 @@ type alias Model =
     , showShortcutHelp : Bool
     , studioUrl : String
     , currentModelUrl : Maybe String
+    , globeDrag : Maybe CameraGlobe.Drag
     }
 
 
@@ -145,6 +149,7 @@ init flags =
       , showShortcutHelp = False
       , studioUrl = String.trim flags.studioUrl
       , currentModelUrl = currentModelUrl
+      , globeDrag = Nothing
       }
     , Cmd.batch
         [ Cmd.map ViewportMsg viewportCmd
@@ -193,6 +198,12 @@ type Msg
     | RequestFileUpload
     | ToggleControlsPanel
     | ToggleShortcutHelp
+    | GlobePressed ( Float, Float )
+    | GlobeMoved ( Float, Float )
+    | GlobeReleased
+    | ZoomTo Float
+    | ZoomDone
+    | ResetView
     | NoOp
 
 
@@ -316,6 +327,49 @@ updateInner msg model =
 
         ToggleShortcutHelp ->
             ( { model | showShortcutHelp = not model.showShortcutHelp }, Cmd.none )
+
+        GlobePressed point ->
+            ( { model | globeDrag = Just (CameraGlobe.startDrag model.viewport.camera point) }, Cmd.none )
+
+        GlobeMoved point ->
+            case model.globeDrag of
+                Just drag ->
+                    let
+                        ( ( azimuthDelta, elevationDelta ), next ) =
+                            CameraGlobe.moveDrag drag point
+                    in
+                    update (ViewportMsg (Viewport.RotateCameraBy azimuthDelta elevationDelta))
+                        { model | globeDrag = Just next }
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        GlobeReleased ->
+            let
+                released =
+                    { model | globeDrag = Nothing }
+            in
+            case model.globeDrag |> Maybe.andThen (CameraGlobe.releaseDrag model.viewport.camera) of
+                Just ( azimuthDelta, elevationDelta ) ->
+                    update (ViewportMsg (Viewport.RotateCameraBy azimuthDelta elevationDelta)) released
+
+                Nothing ->
+                    ( released, Cmd.none )
+
+        ZoomTo level ->
+            update (ViewportMsg (Viewport.Wheel (CameraGlobe.wheelDeltaForZoom model.viewport.camera level))) model
+
+        ZoomDone ->
+            ( model, Task.attempt (\_ -> NoOp) (Browser.Dom.blur CameraGlobe.zoomSliderId) )
+
+        ResetView ->
+            let
+                ( fitted, fitCmd ) =
+                    update (ViewportMsg Viewport.FitView) model
+            in
+            ( fitted
+            , Cmd.batch [ fitCmd, Task.attempt (\_ -> NoOp) (Browser.Dom.blur CameraGlobe.resetButtonId) ]
+            )
 
         NoOp ->
             ( model, Cmd.none )
@@ -567,26 +621,95 @@ viewShortcutHelp =
     ShortcutHelp.view { rows = Shortcuts.helpRows, onClose = ToggleShortcutHelp }
 
 
-viewPad : Model -> Html Msg
-viewPad model =
-    ViewPad.viewKeepingFocus NoOp
-        { walking = model.viewport.camera.navigation == Camera.Walk
-        , helpOpen = model.showShortcutHelp
-        , play =
-            if model.simulation.simulationAvailable then
-                Just
-                    { running = model.simulation.playback.running
-                    , onToggle = SimulationMsg Simulation.ToggleMotor
-                    }
+{-| The camera globe in the bottom-right corner, with the walk, play/pause and
+help buttons beside its zoom slider.
+-}
+viewCamera : Model -> Html Msg
+viewCamera model =
+    div
+        [ Attr.style "position" "absolute"
+        , Attr.style "right" "12px"
+        , Attr.style "bottom" "12px"
+        ]
+        [ CameraGlobe.view
+            { camera = model.viewport.camera
+            , onPress = GlobePressed
+            , onMove = GlobeMoved
+            , onRelease = GlobeReleased
+            , onZoom = ZoomTo
+            , onZoomDone = ZoomDone
+            , onReset = ResetView
+            , extras = [ extraButtons model ]
+            }
+        ]
 
-            else
-                Nothing
-        , onFit = ViewportMsg Viewport.FitView
-        , onToggleWalk = ViewportMsg Viewport.ToggleWalkMode
-        , onToggleHelp = ToggleShortcutHelp
-        , onStartRotate = \azimuth elevation -> ViewportMsg (Viewport.StartHoldRotate azimuth elevation)
-        , onEndRotate = ViewportMsg Viewport.EndHoldRotate
-        }
+
+{-| The buttons beside the globe. Clicking one must not leave it focused: a
+focused button takes Space, which the play shortcut needs.
+-}
+extraButtons : Model -> Html Msg
+extraButtons model =
+    div
+        [ Focus.keepFocusOnCanvas NoOp
+        , Attr.style "display" "contents"
+        ]
+        (Button.icon
+            { icon = Icon.feather "user"
+            , label = "Street level view"
+            , shortcut = Just "G"
+            , pressed = Just (model.viewport.camera.navigation == Camera.Walk)
+            , enabled = True
+            , showLabel = False
+            }
+            (ViewportMsg Viewport.ToggleWalkMode)
+            :: playButton model
+            ++ [ Button.icon
+                    { icon = Icon.feather "help-circle"
+                    , label = "Keyboard shortcuts"
+                    , shortcut = Just "?"
+                    , pressed = Just model.showShortcutHelp
+                    , enabled = True
+                    , showLabel = False
+                    }
+                    ToggleShortcutHelp
+               ]
+        )
+
+
+{-| The play/pause button, when there is a simulation to play.
+-}
+playButton : Model -> List (Html Msg)
+playButton model =
+    if model.simulation.simulationAvailable then
+        let
+            running =
+                model.simulation.playback.running
+        in
+        [ Button.icon
+            { icon =
+                Icon.feather
+                    (if running then
+                        "pause"
+
+                     else
+                        "play"
+                    )
+            , label =
+                if running then
+                    "Pause"
+
+                else
+                    "Play"
+            , shortcut = Just "Space"
+            , pressed = Just running
+            , enabled = True
+            , showLabel = False
+            }
+            (SimulationMsg Simulation.ToggleMotor)
+        ]
+
+    else
+        []
 
 
 viewStatus : Model -> Html Msg
@@ -624,7 +747,7 @@ viewOverlay model =
             case model.uiMode of
                 ViewerMode ->
                     if model.viewerControlsEnabled then
-                        [ viewPad model ]
+                        [ viewCamera model ]
 
                     else
                         []

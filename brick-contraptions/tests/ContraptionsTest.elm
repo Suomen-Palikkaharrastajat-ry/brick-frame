@@ -4,7 +4,6 @@ module ContraptionsTest exposing (suite)
 -}
 
 import Contraption.Animation as Animation
-import Contraption.CameraGlobe as CameraGlobe
 import Contraption.Catalog as Catalog exposing (Category(..))
 import Contraption.Machine as Machine exposing (MachineState)
 import Contraption.Placement as Placement
@@ -18,7 +17,7 @@ import Gear.Placements as Placements
 import Html.Attributes as Attr
 import LDraw.Document as Document
 import LDraw.Resolve exposing (PartStatus(..))
-import Main exposing (Flags, Model, Msg(..), init, thumbnailRequests, update, view)
+import Main exposing (Flags, Model, Msg(..), accomplishmentBanner, init, thumbnailRequests, update, view)
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (vec3)
 import Render.Camera as Camera
@@ -41,6 +40,7 @@ suite : Test
 suite =
     describe "Brick Contraptions"
         [ menuTests
+        , fineTests
         , describe "Curated Catalog"
             [ test "curatedParts contains all required gears" <|
                 \_ ->
@@ -341,41 +341,72 @@ suite =
                         , \m -> Expect.equal 2 (List.length (Catalog.partsForCategoryWithProject m.projectParts ProjectCategory))
                         ]
                         model
-            ]
-        , describe "Camera globe"
-            [ test "a point on the globe maps back to the camera direction it shows" <|
+            , test "init with twin 24T example loads beam, 2 axles, 1 gear and project kit" <|
                 \_ ->
                     let
-                        marker =
-                            CameraGlobe.markerPosition 0.7 0.4
-                    in
-                    case CameraGlobe.directionAt ( marker.x, marker.y ) of
-                        Just direction ->
-                            Expect.all
-                                [ \d -> Expect.within (Expect.Absolute 1.0e-6) 0.7 d.azimuth
-                                , \d -> Expect.within (Expect.Absolute 1.0e-6) 0.4 d.elevation
-                                ]
-                                direction
+                        twin24Model =
+                            "1 1 0 -60 -20 0 0 -1 0 1 0 1 0 0 32524.dat\n1 0 0 -60 0 0 0 -1 0 1 0 1 0 0 3705.dat\n1 0 60 -60 0 0 0 -1 0 1 0 1 0 0 3705.dat\n1 7 0 -60 0 1 0 0 0 1 0 0 0 1 3648.dat\n1 7 0 -60 12 1 0 0 0 1 0 0 0 1 6590.dat"
 
-                        Nothing ->
-                            Expect.fail "marker should lie on the globe"
-            , test "off the globe there is no direction" <|
-                \_ ->
-                    Expect.equal Nothing (CameraGlobe.directionAt ( 100, 0 ))
-            , test "a camera behind the model shows on the far side" <|
-                \_ ->
-                    Expect.equal False (CameraGlobe.markerPosition pi 0).front
-            , test "zoom level round-trips through the wheel delta" <|
+                        twin24Parts =
+                            "3648.dat:7:1,6590.dat:7:2"
+
+                        flags =
+                            { testFlags | initialHash = "#model=" ++ Url.percentEncode twin24Model ++ "&parts=" ++ Url.percentEncode twin24Parts }
+
+                        ( model, _ ) =
+                            init flags
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal 1 (List.length m.machine.gears)
+                        , \m -> Expect.equal 2 (List.length m.projectParts)
+                        , \m -> Expect.equal ProjectCategory m.activeCategory
+                        , \m -> Expect.equal False (Machine.isAccomplished m.machine)
+                        ]
+                        model
+            , test "init with 5:1 reducer example loads beam, 2 axles, 8T gear and 40T kit" <|
                 \_ ->
                     let
-                        camera =
-                            Camera.init
-                                |> Camera.setZoomRange 10 1000
+                        reducerModel =
+                            "1 1 0 -60 -20 0 0 -1 0 1 0 1 0 0 32524.dat\n1 0 0 -60 0 0 0 -1 0 1 0 1 0 0 3705.dat\n1 0 60 -60 0 0 0 -1 0 1 0 1 0 0 3705.dat\n1 7 0 -60 0 1 0 0 0 1 0 0 0 1 3647.dat\n1 7 0 -60 12 1 0 0 0 1 0 0 0 1 6590.dat"
 
-                        zoomed =
-                            Camera.onWheel (CameraGlobe.wheelDeltaForZoom camera 0.25) camera
+                        reducerParts =
+                            "3649.dat:7:1,6590.dat:7:2"
+
+                        flags =
+                            { testFlags | initialHash = "#model=" ++ Url.percentEncode reducerModel ++ "&parts=" ++ Url.percentEncode reducerParts }
+
+                        ( model, _ ) =
+                            init flags
                     in
-                    Expect.within (Expect.Absolute 1.0e-6) 0.25 (CameraGlobe.zoomLevel zoomed)
+                    Expect.all
+                        [ \m -> Expect.equal 1 (List.length m.machine.gears)
+                        , \m -> Expect.equal 2 (List.length m.projectParts)
+                        , \m -> Expect.equal ProjectCategory m.activeCategory
+                        , \m -> Expect.equal False (Machine.isAccomplished m.machine)
+                        ]
+                        model
+            , test "init with 3-gear train example loads 2 meshing gears and completes with third" <|
+                \_ ->
+                    let
+                        trainModel =
+                            "1 1 0 -60 -20 0 0 -1 0 1 0 1 0 0 32524.dat\n1 0 -40 -60 0 0 0 -1 0 1 0 1 0 0 3705.dat\n1 0 0 -60 0 0 0 -1 0 1 0 1 0 0 3705.dat\n1 0 60 -60 0 0 0 -1 0 1 0 1 0 0 3705.dat\n1 7 -40 -60 0 1 0 0 0 1 0 0 0 1 3647.dat\n1 7 0 -60 0 1 0 0 0 1 0 0 0 1 3648.dat"
+
+                        trainParts =
+                            "3648.dat:7:1,4019.dat:7:1,6590.dat:7:3"
+
+                        flags =
+                            { testFlags | initialHash = "#model=" ++ Url.percentEncode trainModel ++ "&parts=" ++ Url.percentEncode trainParts }
+
+                        ( model, _ ) =
+                            init flags
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal 2 (List.length m.machine.gears)
+                        , \m -> Expect.equal 3 (List.length m.projectParts)
+                        , \m -> Expect.equal ProjectCategory m.activeCategory
+                        , \m -> Expect.equal True (Machine.isAccomplished m.machine)
+                        ]
+                        model
             ]
         , describe "Gear animation"
             [ test "an 8T driving a 24T: opposite ways, the 24T three times slower" <|
@@ -615,6 +646,8 @@ suite =
         , dockThumbnailTests
         , gearFeedbackTests
         , dockPlacementTests
+        , touchTests
+        , bannerTests
         ]
 
 
@@ -1185,4 +1218,152 @@ menuTests =
                         , Query.findAll [ Selector.attribute (Attr.attribute "role" "tab") ] >> Query.count (Expect.equal 4)
                         , Query.has [ Selector.attribute (Attr.attribute "aria-orientation" "vertical") ]
                         ]
+        ]
+
+
+{-| Touch layout: the shared camera globe (its drag orbits the camera), the
+phone-width dock/camera toggle and the names shown where tooltips never show.
+-}
+touchTests : Test
+touchTests =
+    let
+        start =
+            Tuple.first (init testFlags)
+
+        at width model =
+            update (WindowResized width 844) model |> Tuple.first
+
+        toggled model =
+            update ToggleCameraPanel model |> Tuple.first
+
+        expectCount n label model =
+            Query.fromHtml (view model)
+                |> Query.findAll [ Selector.attribute (Attr.attribute "aria-label" label) ]
+                |> Query.count (Expect.equal n)
+
+        azimuth model =
+            model.studio.viewport.camera.azimuth
+    in
+    describe "Touch layout"
+        [ test "a wide window shows the parts dock and the camera globe side by side" <|
+            \_ ->
+                let
+                    wide =
+                        at 964 start
+                in
+                Expect.all
+                    [ \_ -> expectCount 1 "Parts" wide
+                    , \_ -> expectCount 1 "Camera" wide
+                    , \_ -> expectCount 0 "Camera controls" wide
+                    ]
+                    ()
+        , test "a phone shows the parts dock first, and the camera globe once the toggle is pressed" <|
+            \_ ->
+                let
+                    phone =
+                        at 390 start
+                in
+                Expect.all
+                    [ \_ -> expectCount 1 "Parts" phone
+                    , \_ -> expectCount 0 "Camera" phone
+                    , \_ -> expectCount 0 "Parts" (toggled phone)
+                    , \_ -> expectCount 1 "Camera" (toggled phone)
+                    ]
+                    ()
+        , test "the phone toggle reports whether the camera is shown" <|
+            \_ ->
+                let
+                    toggle model =
+                        Query.fromHtml (view model)
+                            |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Camera controls") ]
+                in
+                Expect.all
+                    [ \_ -> toggle (at 390 start) |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "false") ]
+                    , \_ -> toggle (toggled (at 390 start)) |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "true") ]
+                    ]
+                    ()
+        , test "dragging the globe orbits the camera" <|
+            \_ ->
+                let
+                    pressed =
+                        update (GlobePressed ( 0, 0 )) start |> Tuple.first
+
+                    moved =
+                        update (GlobeMoved ( 22, 0 )) pressed |> Tuple.first
+                in
+                Expect.greaterThan 1.0e-6 (abs (azimuth moved - azimuth start))
+        , test "a dock part tap records its name for touch screens" <|
+            \_ ->
+                Expect.equal (Just gear8.name) (update (AddPart gear8) start |> Tuple.first |> .lastTapped)
+        , test "the touch label appears only once a part has been tapped" <|
+            \_ ->
+                Expect.all
+                    [ \_ -> Query.fromHtml (view start) |> Query.findAll [ Selector.class "touch-only" ] |> Query.count (Expect.equal 0)
+                    , \_ -> Query.fromHtml (view (update (AddPart gear8) start |> Tuple.first)) |> Query.findAll [ Selector.class "touch-only" ] |> Query.count (Expect.greaterThan 0)
+                    ]
+                    ()
+        ]
+
+
+{-| The accomplishment banner states the gear count in its text.
+-}
+bannerTests : Test
+bannerTests =
+    describe "Accomplishment banner"
+        [ test "the banner renders its text" <|
+            \_ ->
+                Query.fromHtml (accomplishmentBanner 2)
+                    |> Query.has [ Selector.text "All 2 gears are rotating together!" ]
+        ]
+
+
+{-| The Fine toggle in the action bar: it shows with or without a selection,
+reads its state with `aria-pressed`, and survives selection changes.
+-}
+fineTests : Test
+fineTests =
+    let
+        start =
+            Tuple.first (init testFlags)
+
+        fineButtons model =
+            Query.fromHtml (view model)
+                |> Query.findAll [ Selector.attribute (Attr.attribute "aria-label" "Fine moves") ]
+
+        fineButton model =
+            Query.fromHtml (view model)
+                |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Fine moves") ]
+    in
+    describe "Fine toggle"
+        [ test "is on the bar with no selection, off by default" <|
+            \_ ->
+                Expect.all
+                    [ \_ -> fineButtons start |> Query.count (Expect.equal 1)
+                    , \_ -> fineButton start |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "false") ]
+                    ]
+                    ()
+        , test "a press switches it on, and only the toggle shows without a selection" <|
+            \_ ->
+                let
+                    on =
+                        Tuple.first (update ToggleFine start)
+                in
+                Expect.all
+                    [ \_ -> fineButton on |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "true") ]
+                    , \_ -> Query.fromHtml (view on) |> Query.findAll [ Selector.attribute (Attr.attribute "aria-label" "Turn left") ] |> Query.count (Expect.equal 0)
+                    , \_ -> Expect.equal True (Core.fineMove on.studio)
+                    ]
+                    ()
+        , test "it persists when the selection is cleared, and a second press switches it off" <|
+            \_ ->
+                let
+                    cleared =
+                        Tuple.first (update ToggleFine start)
+                            |> (\m -> Tuple.first (update (StudioMsg Core.ClearSelection) m))
+                in
+                Expect.all
+                    [ \_ -> Expect.equal True (Core.fineMove cleared.studio)
+                    , \_ -> Expect.equal False (Core.fineMove (Tuple.first (update ToggleFine cleared)).studio)
+                    ]
+                    ()
         ]

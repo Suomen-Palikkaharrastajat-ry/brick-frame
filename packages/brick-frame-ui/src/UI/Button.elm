@@ -3,7 +3,8 @@ module UI.Button exposing (IconConfig, action, icon, link, primary, secondary, t
 {-| Toolbar buttons in the panel style shared by the viewer and the studio.
 
 Every button carries the `ui-button` class, which `theme.css` uses for the
-hover state; keyboard focus gets the global `:focus-visible` ring.
+hover state, and `touch-target`, which lifts it to a finger-sized square on
+coarse pointers; keyboard focus gets the global `:focus-visible` ring.
 
 A disabled button stays opaque. These buttons float over the 3D canvas, and a
 translucent one took on the colour of whatever part was behind it.
@@ -20,7 +21,15 @@ import UI.Theme as Theme
 -}
 secondaryStyle : List (Html.Attribute msg)
 secondaryStyle =
-    [ Attr.class "ui-button"
+    secondaryStyleWith "ui-button touch-target"
+
+
+{-| `secondaryStyle` with the given classes. Sizes are never inline: an inline
+`min-width` would beat the coarse-pointer `.touch-target` rule in `theme.css`.
+-}
+secondaryStyleWith : String -> List (Html.Attribute msg)
+secondaryStyleWith classes =
+    [ Attr.class classes
     , Attr.style "padding" "8px 14px"
     , Attr.style "background" Theme.panelSubtleBackground
     , Attr.style "color" Theme.textPrimary
@@ -179,13 +188,11 @@ icon config msg =
         (Attr.type_ "button"
             :: Html.Events.onClick msg
             :: Attr.title tooltip
-            :: secondaryStyle
+            :: secondaryStyleWith "ui-button touch-target ui-icon-button"
             ++ [ Attr.style "display" "inline-flex"
                , Attr.style "align-items" "center"
                , Attr.style "justify-content" "center"
                , Attr.style "gap" "6px"
-               , Attr.style "min-width" "36px"
-               , Attr.style "height" "36px"
                , Attr.style "padding"
                     (if config.showLabel then
                         "0 12px"

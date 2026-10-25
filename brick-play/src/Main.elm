@@ -18,16 +18,20 @@ module Main exposing
 
 Provides a minimal, elegant free-building studio with kit inventory
 tracking and stud snapping. There is no axis gizmo: a drag on a brick moves it
-relative to the view, a drag on empty space pans and a right-drag orbits (one
-finger still orbits on touch, as Play has no camera globe), and while something is selected a floating action bar above
-the dock turns, tips, raises, lowers or deletes it (the same as the keyboard).
+relative to the view, a drag on empty space pans and a right-drag orbits, and
+while something is selected a floating action bar above the dock turns, tips,
+raises, lowers or deletes it (the same as the keyboard). The camera has its own
+control bottom-right, the shared camera globe (`UI.CameraGlobe`): drag it to
+orbit, tap it to fly there, and use its zoom slider and reset button. On a narrow
+portrait window (a phone) the bottom area shows either the kit or the camera
+globe, switched by a toggle button, and the kit is shown first.
 
 The dock shows each kit item as a rendered picture of the part in its colour
 (`UI.PartCard.compactView`, fed by the shared thumbnail pipeline through
 `Ports`); clicking a card adds one of that part, and its name, part number and
 count are in the tooltip and on the image corner. The top-right menu
-(`UI.HamburgerMenu`) holds undo, redo, delete, clear and fit view, beside a
-visible ? button that opens the shortcut list; Escape closes the menu first.
+(`UI.HamburgerMenu`) holds undo, redo, delete and clear, beside a visible ?
+button that opens the shortcut list; Escape closes the menu first.
 
 -}
 
@@ -35,18 +39,22 @@ import Browser
 import Browser.Dom
 import Browser.Events
 import Dict exposing (Dict)
+import FeatherIcons
 import Html exposing (Html, button, div, h1, header, span, text)
 import Html.Attributes as Attr
 import Html.Events exposing (onClick)
+import Html.Keyed as Keyed
 import LDraw.Colors as Colors
 import LDraw.Document as Document
 import Ports
 import Render.Camera as Camera
+import Set
 import Studio.Colours as Colours
 import Studio.Core as Core
 import Studio.Shortcuts as StudioShortcuts exposing (TurnDirection(..))
 import Studio.UrlPayload as UrlPayload exposing (PartKitItem)
 import Task
+import UI.CameraGlobe as CameraGlobe
 import UI.Focus as Focus
 import UI.HamburgerMenu as HamburgerMenu
 import UI.Icon as Icon
@@ -84,6 +92,9 @@ type alias Model =
     , windowWidth : Int
     , windowHeight : Int
     , thumbnails : Dict String Thumbnail
+    , globeDrag : Maybe CameraGlobe.Drag
+    , cameraShown : Bool
+    , lastTapped : Maybe String
     }
 
 
@@ -107,8 +118,16 @@ type Msg
     | TurnSelection TurnDirection
     | RaiseSelection
     | LowerSelection
+    | ToggleFine
     | Clear
     | FitView
+    | GlobePressed ( Float, Float )
+    | GlobeMoved ( Float, Float )
+    | GlobeReleased
+    | ZoomTo Float
+    | ZoomDone
+    | ResetView
+    | ToggleCameraPanel
     | ToggleHelp
     | ToggleMenu
     | CloseMenu
@@ -159,8 +178,8 @@ init flags =
                 |> Tuple.mapFirst
                     (Core.setGizmoStyle Core.NoGizmo
                         -- Mouse: left-drag empty space pans, right-drag orbits.
-                        -- Touch keeps one-finger orbit: Play has no camera globe.
-                        >> Core.setDragMode (Core.DragPartsOrPan Core.OneFingerOrbits)
+                        -- Touch: one finger on empty space pans; the globe orbits.
+                        >> Core.setDragMode (Core.DragPartsOrPan Core.OneFingerPans)
                     )
 
         initialModel =
@@ -171,6 +190,9 @@ init flags =
             , windowWidth = 1280
             , windowHeight = 800
             , thumbnails = Dict.empty
+            , globeDrag = Nothing
+            , cameraShown = False
+            , lastTapped = Nothing
             }
 
         requests =
@@ -246,6 +268,33 @@ partNumber item =
     String.replace ".dat" "" item.part
 
 
+{-| The name of the selection for the action bar: the brick's name when one
+brick is selected, else how many bricks are.
+-}
+selectionName : Model -> String
+selectionName model =
+    case Set.toList model.studio.selection of
+        [ id ] ->
+            case List.filter (\p -> p.id == id) (Core.getPlacements model.studio) of
+                placed :: _ ->
+                    case Dict.get (PartCard.thumbnailKey placed.part placed.color) model.thumbnails of
+                        Just thumb ->
+                            if String.isEmpty (String.trim thumb.title) then
+                                String.replace ".dat" "" placed.part
+
+                            else
+                                thumb.title
+
+                        Nothing ->
+                            String.replace ".dat" "" placed.part
+
+                [] ->
+                    ""
+
+        ids ->
+            String.fromInt (List.length ids) ++ " bricks"
+
+
 {-| Remaining count for a specific kit item.
 -}
 remainingForItem : Model -> PartKitItem -> Int
@@ -286,7 +335,7 @@ update msg model =
                 (List.filterMap extractKey events)
 
         AddPart item ->
-            addPartItem item model
+            addPartItem item { model | lastTapped = Just (kitItemName model item) }
 
         Undo ->
             let
@@ -333,6 +382,11 @@ update msg model =
         LowerSelection ->
             runCore Core.lowerSelected model
 
+        ToggleFine ->
+            ( { model | studio = Core.setFineMove (not (Core.fineMove model.studio)) model.studio }
+            , Cmd.none
+            )
+
         Clear ->
             let
                 ( nextStudio, studioCmd, events ) =
@@ -351,6 +405,52 @@ update msg model =
                     Core.fitView model.studio
             in
             ( { model | studio = nextStudio }, Cmd.map StudioMsg studioCmd )
+
+        GlobePressed point ->
+            ( { model | globeDrag = Just (CameraGlobe.startDrag model.studio.viewport.camera point) }, Cmd.none )
+
+        GlobeMoved point ->
+            case model.globeDrag of
+                Just drag ->
+                    let
+                        ( ( azimuthDelta, elevationDelta ), nextDrag ) =
+                            CameraGlobe.moveDrag drag point
+                    in
+                    update (viewportMsg (Viewport.RotateCameraBy azimuthDelta elevationDelta))
+                        { model | globeDrag = Just nextDrag }
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        GlobeReleased ->
+            let
+                released =
+                    { model | globeDrag = Nothing }
+            in
+            case model.globeDrag |> Maybe.andThen (CameraGlobe.releaseDrag model.studio.viewport.camera) of
+                Just ( azimuthDelta, elevationDelta ) ->
+                    update (viewportMsg (Viewport.RotateCameraBy azimuthDelta elevationDelta)) released
+
+                Nothing ->
+                    ( released, Cmd.none )
+
+        ZoomTo level ->
+            update (viewportMsg (Viewport.Wheel (CameraGlobe.wheelDeltaForZoom model.studio.viewport.camera level))) model
+
+        ZoomDone ->
+            ( model, Task.attempt (\_ -> NoOp) (Browser.Dom.blur CameraGlobe.zoomSliderId) )
+
+        ResetView ->
+            let
+                ( fitted, fitCmd ) =
+                    update FitView model
+            in
+            ( fitted
+            , Cmd.batch [ fitCmd, Task.attempt (\_ -> NoOp) (Browser.Dom.blur CameraGlobe.resetButtonId) ]
+            )
+
+        ToggleCameraPanel ->
+            ( { model | cameraShown = not model.cameraShown }, Cmd.none )
 
         ToggleHelp ->
             let
@@ -540,12 +640,12 @@ the camera.
 helpRows : List ( String, List ( String, String ) )
 helpRows =
     [ ( "Build"
-      , [ ( "Menu, top right", "Undo, redo, delete, clear, fit view, and this list" )
+      , [ ( "Menu, top right", "Undo, redo, delete, clear, and this list" )
         , ( "Drag a brick", "Move it as seen from the camera (snaps to studs)" )
-        , ( "Shift + drag a brick", "Fine move: 1 LDU steps (Shift held during a drag works too)" )
+        , ( "Fine (action bar) or Shift", "1 LDU moves for drags and W A S D Q E nudges" )
         , ( "Wheel while dragging", "Raise / lower (Shift: coarser, Alt: finer)" )
         , ( "Right click mid-drag", "Cancel the drag" )
-        , ( "Action bar (above the dock)", "Turn left / right, tip, raise, lower or remove the selected brick" )
+        , ( "Action bar (above the dock)", "Turn left / right, tip, raise, lower or remove the selected brick; Fine toggles 1 LDU moves" )
         , ( "W A S D  Q E", "Move the selected brick (Shift: fine steps)" )
         , ( "← → ↑ ↓", "Turn the selected brick (Shift: 45°)" )
         , ( "Delete", "Remove the selected brick" )
@@ -557,12 +657,15 @@ helpRows =
         ]
       )
     , ( "Camera"
-      , [ ( "Drag empty space", "Pan" )
+      , [ ( "Drag the globe, bottom right", "Orbit the camera (also by touch)" )
+        , ( "Tap the globe", "Fly to that side of the model" )
+        , ( "Zoom slider", "Zoom in and out" )
+        , ( "Reset view, or F", "Fit the whole model in view" )
+        , ( "Drag empty space", "Pan" )
         , ( "Right-drag", "Orbit" )
         , ( "Middle drag", "Pan" )
-        , ( "One finger on empty space", "Orbit (two fingers: pan and pinch-zoom)" )
+        , ( "One finger on empty space", "Pan (two fingers: pan and pinch-zoom)" )
         , ( "Wheel  + -", "Zoom" )
-        , ( "F  Home", "Fit the whole model" )
         , ( "1 2 3 4 5 6  `", "Views: front, back, left, right, top, bottom, 3/4" )
         , ( "G", "Street-level walk, on / off" )
         ]
@@ -638,9 +741,8 @@ subscriptions model =
 view : Model -> Html Msg
 view model =
     div
-        [ Attr.style "position" "relative"
-        , Attr.style "width" "100vw"
-        , Attr.style "height" "100vh"
+        [ Attr.style "position" "fixed"
+        , Attr.style "inset" "0"
         , Attr.style "overflow" "hidden"
         , Attr.style "background" "var(--color-brand)"
         , Attr.style "font-family" "var(--font-sans)"
@@ -677,25 +779,212 @@ view model =
             text ""
 
         -- Bottom: the selection action bar floats above the inventory dock
-        , div
-            [ Attr.style "position" "absolute"
-            , Attr.style "bottom" "0.75rem"
-            , Attr.style "left" "1.5rem"
-            , Attr.style "right" "1.5rem"
-            , Attr.style "display" "flex"
-            , Attr.style "flex-direction" "column"
-            , Attr.style "align-items" "center"
-            , Attr.style "gap" "0.5rem"
-            , Attr.style "z-index" "10"
-            , Attr.style "pointer-events" "none"
+        , bottomArea model
+
+        -- Wide windows: the camera globe sits beside the dock, bottom-right
+        , if isNarrow model then
+            text ""
+
+          else
+            div
+                [ Attr.style "position" "absolute"
+                , Attr.style "right" "0.75rem"
+                , Attr.style "bottom" "0.75rem"
+                , Attr.style "z-index" "10"
+                ]
+                [ globeControl model ]
+        ]
+
+
+{-| Below this window width (CSS px, a portrait phone) the bottom area shows
+either the kit or the camera globe, never both.
+-}
+narrowWidth : Int
+narrowWidth =
+    600
+
+
+isNarrow : Model -> Bool
+isNarrow model =
+    model.windowWidth < narrowWidth
+
+
+{-| The bottom area: the action bar for the selection, then the kit. On a narrow
+window the kit row also carries the camera toggle, and shows the camera globe
+instead of the kit while the toggle is on.
+-}
+bottomArea : Model -> Html Msg
+bottomArea model =
+    div
+        ([ Attr.style "position" "absolute"
+         , Attr.style "bottom" "0.75rem"
+         , Attr.style "display" "flex"
+         , Attr.style "flex-direction" "column"
+         , Attr.style "align-items" "center"
+         , Attr.style "gap" "0.5rem"
+         , Attr.style "z-index" "10"
+         , Attr.style "pointer-events" "none"
+         ]
+            ++ dockPlacement model.windowWidth
+        )
+        [ selectionBar model
+        , touchLabel model
+        , if isNarrow model then
+            narrowRow model
+
+          else
+            viewDock model
+        ]
+
+
+{-| The narrow bottom row: the kit (or the camera globe) and the toggle that
+switches between them, at a finger-sized width.
+-}
+narrowRow : Model -> Html Msg
+narrowRow model =
+    div
+        [ Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "gap" "0.5rem"
+        , Attr.style "width" "100%"
+        , Attr.style "min-width" "0"
+        ]
+        [ div
+            [ Attr.style "display" "flex"
+            , Attr.style "justify-content" "center"
+            , Attr.style "flex" "1 1 auto"
+            , Attr.style "min-width" "0"
+            , Attr.style "pointer-events" "auto"
             ]
-            [ if Core.hasSelection model.studio then
-                selectionBar
+            [ if model.cameraShown then
+                globeControl model
 
               else
-                text ""
-            , viewDock model
+                viewDock model
             ]
+        , cameraToggle model
+        ]
+
+
+{-| The toggle between the kit and the camera globe on a narrow window. Its icon
+shows what is on screen now; `aria-pressed` is on while the camera is shown.
+-}
+cameraToggle : Model -> Html Msg
+cameraToggle model =
+    let
+        icon =
+            if model.cameraShown then
+                FeatherIcons.camera
+
+            else
+                FeatherIcons.box
+    in
+    button
+        [ onClick ToggleCameraPanel
+        , Attr.attribute "aria-label" "Camera controls"
+        , Attr.attribute "aria-pressed"
+            (if model.cameraShown then
+                "true"
+
+             else
+                "false"
+            )
+        , Attr.title "Camera controls"
+        , Attr.class "touch-target"
+        , Attr.style "display" "flex"
+        , Attr.style "flex-shrink" "0"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "center"
+        , Attr.style "width" "2.75rem"
+        , Attr.style "height" "2.75rem"
+        , Attr.style "padding" "0"
+        , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
+        , Attr.style "border-radius" "0.75rem"
+        , Attr.style "background"
+            (if model.cameraShown then
+                "var(--color-brand-yellow)"
+
+             else
+                "rgba(5, 19, 29, 0.9)"
+            )
+        , Attr.style "color"
+            (if model.cameraShown then
+                "var(--color-brand)"
+
+             else
+                "var(--color-text-on-dark)"
+            )
+        , Attr.style "cursor" "pointer"
+        , Attr.style "pointer-events" "auto"
+        , keepFocusOnCanvas
+        ]
+        [ icon
+            |> FeatherIcons.withSize 20
+            |> FeatherIcons.toHtml [ Attr.attribute "aria-hidden" "true" ]
+        ]
+
+
+{-| The shared camera globe, with the zoom slider and the reset button.
+-}
+globeControl : Model -> Html Msg
+globeControl model =
+    CameraGlobe.view
+        { camera = model.studio.viewport.camera
+        , onPress = GlobePressed
+        , onMove = GlobeMoved
+        , onRelease = GlobeReleased
+        , onZoom = ZoomTo
+        , onZoomDone = ZoomDone
+        , onReset = ResetView
+        , extras = []
+        }
+
+
+{-| On touch screens, where tooltips never show: the name of the kit card last
+tapped, above the kit. Hidden while the camera globe takes the bottom row.
+-}
+touchLabel : Model -> Html Msg
+touchLabel model =
+    case model.lastTapped of
+        Just name ->
+            if isNarrow model && model.cameraShown then
+                text ""
+
+            else
+                div
+                    [ Attr.class "touch-only"
+                    , Attr.style "max-width" "100%"
+                    , Attr.style "overflow" "hidden"
+                    , Attr.style "text-overflow" "ellipsis"
+                    , Attr.style "white-space" "nowrap"
+                    , Attr.style "padding" "0.125rem 0.75rem"
+                    , Attr.style "border-radius" "9999px"
+                    , Attr.style "background" "rgba(5, 19, 29, 0.85)"
+                    , Attr.style "color" "var(--color-text-on-dark)"
+                    , Attr.style "font-size" "0.8125rem"
+                    , Attr.style "font-weight" "600"
+                    , Attr.style "pointer-events" "auto"
+                    ]
+                    [ Keyed.node "span" [] [ ( name, span [] [ text name ] ) ] ]
+
+        Nothing ->
+            text ""
+
+
+{-| Where the bottom area sits. Centred when there is room, leaving the globe its
+corner on the right; on a narrow window it spans the width.
+-}
+dockPlacement : Int -> List (Html.Attribute Msg)
+dockPlacement windowWidth =
+    if windowWidth < narrowWidth then
+        [ Attr.style "left" "0.75rem"
+        , Attr.style "right" "0.75rem"
+        ]
+
+    else
+        [ Attr.style "left" "50%"
+        , Attr.style "transform" "translateX(-50%)"
+        , Attr.style "max-width" "calc(100vw - 24rem)"
         ]
 
 
@@ -713,7 +1002,6 @@ menuConfig model =
         , { label = "Redo", shortcut = "Ctrl+Shift+Z", enabled = Core.canRedo model.studio, onSelect = MenuPicked Redo }
         , { label = "Delete", shortcut = "Del", enabled = Core.hasSelection model.studio, onSelect = MenuPicked Delete }
         , { label = "Clear", shortcut = "", enabled = List.length (Core.getPlacements model.studio) > 0, onSelect = MenuPicked Clear }
-        , { label = "Fit view", shortcut = "F", enabled = True, onSelect = MenuPicked FitView }
         ]
     }
 
@@ -739,6 +1027,7 @@ helpButton =
         , Attr.style "color" "var(--color-text-on-dark)"
         , Attr.style "cursor" "pointer"
         , Attr.style "transition" "all 150ms ease"
+        , Attr.class "touch-target"
         ]
         [ Icon.featherSized 18 "help-circle" ]
 
@@ -751,31 +1040,127 @@ menuId =
 
 
 {-| Buttons for the selected bricks, the touch- and mouse-friendly stand-in for
-an axis gizmo. Each does what its keyboard shortcut does.
+an axis gizmo. Each does what its keyboard shortcut does. The name of the
+selection is shown on touch screens, where tooltips never show. The bar wraps
+onto two rows rather than overflowing a phone. The Fine toggle is always last,
+so it can be set before anything is selected; without a selection the bar
+shows only that toggle.
 -}
-selectionBar : Html Msg
-selectionBar =
+selectionBar : Model -> Html Msg
+selectionBar model =
+    let
+        selected =
+            Core.hasSelection model.studio
+
+        label =
+            selectionName model
+
+        actions =
+            if selected then
+                [ span
+                    [ Attr.class "touch-only"
+                    , Attr.style "max-width" "9rem"
+                    , Attr.style "overflow" "hidden"
+                    , Attr.style "text-overflow" "ellipsis"
+                    , Attr.style "white-space" "nowrap"
+                    , Attr.style "padding" "0 0.5rem"
+                    , Attr.style "color" "var(--color-brand-yellow)"
+                    , Attr.style "font-size" "0.8125rem"
+                    , Attr.style "font-weight" "700"
+                    ]
+                    [ Keyed.node "span" [] [ ( label, span [] [ text label ] ) ] ]
+                , actionButton (TurnSelection TurnLeft) "rotate-ccw" "Turn left" "←"
+                , actionButton (TurnSelection TurnRight) "rotate-cw" "Turn right" "→"
+                , actionButton (TurnSelection TipForward) "corner-right-down" "Tip" "↑"
+                , actionButton RaiseSelection "arrow-up" "Raise" "E"
+                , actionButton LowerSelection "arrow-down" "Lower" "Q"
+                , actionButton Delete "trash-2" "Delete" "Delete"
+                ]
+
+            else
+                []
+    in
     div
         [ Attr.attribute "role" "toolbar"
         , Attr.attribute "aria-label" "Selected brick"
         , Attr.style "display" "flex"
+        , Attr.style "flex-wrap" "wrap"
+        , Attr.style "justify-content" "center"
+        , Attr.style "align-items" "center"
         , Attr.style "gap" "0.25rem"
+        , Attr.style "max-width" "100%"
+        , Attr.style "box-sizing" "border-box"
         , Attr.style "padding" "0.375rem"
         , Attr.style "background" "rgba(5, 19, 29, 0.85)"
         , Attr.style "backdrop-filter" "blur(8px)"
-        , Attr.style "border-radius" "9999px"
+        , Attr.style "border-radius" "1.5rem"
         , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
         , Attr.style "box-shadow" "0 20px 25px -5px rgba(0, 0, 0, 0.5)"
         , Attr.style "pointer-events" "auto"
         , keepFocusOnCanvas
         ]
-        [ actionButton (TurnSelection TurnLeft) "rotate-ccw" "Turn left" "←"
-        , actionButton (TurnSelection TurnRight) "rotate-cw" "Turn right" "→"
-        , actionButton (TurnSelection TipForward) "corner-right-down" "Tip" "↑"
-        , actionButton RaiseSelection "arrow-up" "Raise" "E"
-        , actionButton LowerSelection "arrow-down" "Lower" "Q"
-        , actionButton Delete "trash-2" "Delete" "Delete"
+        (actions ++ [ fineButton (Core.fineMove model.studio) ])
+
+
+{-| The Fine toggle: 1 LDU moves for body drags and nudges, the touch stand-in
+for holding Shift. `aria-pressed` shows whether it is on; it persists across
+selection changes.
+-}
+fineButton : Bool -> Html Msg
+fineButton on =
+    button
+        [ onClick ToggleFine
+        , Attr.attribute "aria-pressed" (boolText on)
+        , Attr.attribute "aria-label" "Fine moves"
+        , Attr.title "Fine moves: 1 LDU steps (Shift)"
+        , Attr.style "display" "flex"
+        , Attr.style "flex-direction" "column"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "center"
+        , Attr.style "gap" "0.125rem"
+        , Attr.style "min-width" "3rem"
+        , Attr.style "min-height" "2.75rem"
+        , Attr.style "padding" "0.25rem 0.375rem"
+        , Attr.style "border" "none"
+        , Attr.style "border-radius" "9999px"
+        , Attr.style "background" (fineBackground on)
+        , Attr.style "color" (fineColour on)
+        , Attr.style "font-size" "0.6875rem"
+        , Attr.style "font-weight" "600"
+        , Attr.style "cursor" "pointer"
+        , Attr.style "transition" "all 150ms ease"
+        , Attr.class "touch-target"
         ]
+        [ Icon.featherSized 18 "crosshair"
+        , span [ Attr.attribute "aria-hidden" "true" ] [ text "Fine" ]
+        ]
+
+
+fineBackground : Bool -> String
+fineBackground on =
+    if on then
+        "var(--color-brand-yellow)"
+
+    else
+        "rgba(255, 255, 255, 0.1)"
+
+
+fineColour : Bool -> String
+fineColour on =
+    if on then
+        "var(--color-brand)"
+
+    else
+        "var(--color-text-on-dark)"
+
+
+boolText : Bool -> String
+boolText on =
+    if on then
+        "true"
+
+    else
+        "false"
 
 
 actionButton : Msg -> String -> String -> String -> Html Msg
@@ -800,6 +1185,7 @@ actionButton msg icon label shortcut =
         , Attr.style "font-weight" "600"
         , Attr.style "cursor" "pointer"
         , Attr.style "transition" "all 150ms ease"
+        , Attr.class "touch-target"
         ]
         [ Icon.featherSized 18 icon
         , span [ Attr.attribute "aria-hidden" "true" ] [ text label ]
