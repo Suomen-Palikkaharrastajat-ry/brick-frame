@@ -1,4 +1,4 @@
-module UI.PartCard exposing (Config, thumbnailKey, view)
+module UI.PartCard exposing (Badge, CompactConfig, Config, compactPanelHeight, compactView, thumbnailKey, view)
 
 {-| A visual part card for the dark floating docks of Brick Play and Brick
 Contraptions: a rendered image of the part with its short name below and a
@@ -32,6 +32,11 @@ neutral placeholder of the same size, so the dock never jumps.
 The whole card is one button. `onClick = Nothing` disables it (for example when
 none of the part is left): it stays solid, with a greyed image and the secondary
 text in the warning colour.
+
+`compactView` is the picture-only card for the minimal docks: a smaller image,
+no caption (its name and part number go in `tooltip` and `ariaLabel`), and an
+optional count `Badge` on the image corner. The dock that holds compact cards is
+`compactPanelHeight` tall.
 
 -}
 
@@ -78,6 +83,50 @@ imageSize =
     "72px"
 
 
+{-| Image edge of a compact card, in CSS pixels.
+-}
+compactImageSize : String
+compactImageSize =
+    "56px"
+
+
+{-| Height of a dock of compact cards: the same as the camera globe panel in
+Brick Contraptions (a 112 px globe inside 8 px padding and a 1 px border on each
+side), so the two panels line up along the bottom of the screen.
+-}
+compactPanelHeight : String
+compactPanelHeight =
+    "130px"
+
+
+{-| A count shown on a compact card's image corner, such as "3/4". `muted`
+draws it dimmed (nothing of the part is left).
+-}
+type alias Badge =
+    { text : String
+    , muted : Bool
+    }
+
+
+{-| What a compact card shows and does.
+
+  - `imageUrl`, `onClick`, `attributes`: as for `Config`.
+  - `tooltip`: the `title` text, shown on hover; it carries the name, part number
+    and colour.
+  - `ariaLabel`: the button's accessible name, e.g. "Add 24T Gear (3648)".
+  - `badge`: an optional count on the image corner.
+
+-}
+type alias CompactConfig msg =
+    { imageUrl : Maybe String
+    , tooltip : String
+    , ariaLabel : String
+    , badge : Maybe Badge
+    , onClick : Maybe msg
+    , attributes : List (Html.Attribute msg)
+    }
+
+
 {-| Render one part card.
 -}
 view : Config msg -> Html msg
@@ -85,17 +134,9 @@ view config =
     let
         enabled =
             config.onClick /= Nothing
-
-        clickAttributes =
-            case config.onClick of
-                Just msg ->
-                    [ Html.Events.onClick msg ]
-
-                Nothing ->
-                    []
     in
     button
-        (clickAttributes
+        (clickAttributes config.onClick
             ++ [ Attr.disabled (not enabled)
                , Attr.class "part-card"
                , Attr.attribute "aria-label" config.ariaLabel
@@ -130,7 +171,7 @@ view config =
                ]
             ++ config.attributes
         )
-        [ backdrop enabled (thumbnail enabled config.imageUrl)
+        [ backdrop enabled (thumbnail imageSize enabled config.imageUrl)
         , span
             [ Attr.style "display" "-webkit-box"
             , Attr.style "-webkit-line-clamp" "2"
@@ -161,6 +202,98 @@ view config =
         ]
 
 
+{-| Render one compact, picture-only part card. Its name is not drawn: the
+tooltip and the accessible name carry it.
+-}
+compactView : CompactConfig msg -> Html msg
+compactView config =
+    let
+        enabled =
+            config.onClick /= Nothing
+    in
+    button
+        (clickAttributes config.onClick
+            ++ [ Attr.disabled (not enabled)
+               , Attr.class "part-card part-card-compact"
+               , Attr.attribute "aria-label" config.ariaLabel
+               , Attr.title config.tooltip
+               , Attr.style "position" "relative"
+               , Attr.style "display" "flex"
+               , Attr.style "align-items" "center"
+               , Attr.style "justify-content" "center"
+               , Attr.style "flex-shrink" "0"
+               , Attr.style "padding" "0.25rem"
+               , Attr.style "background"
+                    (if enabled then
+                        "rgba(255, 255, 255, 0.08)"
+
+                     else
+                        "rgba(255, 255, 255, 0.03)"
+                    )
+               , Attr.style "border" "1px solid rgba(255, 255, 255, 0.1)"
+               , Attr.style "border-radius" "0.625rem"
+               , Attr.style "color" "var(--color-text-on-dark)"
+               , Attr.style "font-family" "inherit"
+               , Attr.style "cursor"
+                    (if enabled then
+                        "pointer"
+
+                     else
+                        "not-allowed"
+                    )
+               , Attr.style "touch-action" "manipulation"
+               , Attr.style "transition" "background 150ms ease"
+               ]
+            ++ config.attributes
+        )
+        (backdrop enabled (thumbnail compactImageSize enabled config.imageUrl)
+            :: Maybe.withDefault [] (Maybe.map (\badge -> [ compactBadge enabled badge ]) config.badge)
+        )
+
+
+{-| The count on a compact card's image corner. Decorative: the accessible name
+already gives the count.
+-}
+compactBadge : Bool -> Badge -> Html msg
+compactBadge enabled badge =
+    span
+        [ Attr.attribute "aria-hidden" "true"
+        , Attr.style "position" "absolute"
+        , Attr.style "top" "2px"
+        , Attr.style "right" "2px"
+        , Attr.style "padding" "0 0.3125rem"
+        , Attr.style "border-radius" "9999px"
+        , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
+        , Attr.style "background" "rgba(5, 19, 29, 0.85)"
+        , Attr.style "color"
+            (if badge.muted || not enabled then
+                "var(--color-text-subtle)"
+
+             else
+                "var(--color-brand-yellow)"
+            )
+        , Attr.style "font-size" "0.625rem"
+        , Attr.style "font-weight" "700"
+        , Attr.style "line-height" "1.4"
+        , Attr.style "white-space" "nowrap"
+        , Attr.style "font-variant-numeric" "tabular-nums"
+        , Attr.style "pointer-events" "none"
+        ]
+        [ text badge.text ]
+
+
+{-| The click handler of a card, if it has one.
+-}
+clickAttributes : Maybe msg -> List (Html.Attribute msg)
+clickAttributes onClick =
+    case onClick of
+        Just msg ->
+            [ Html.Events.onClick msg ]
+
+        Nothing ->
+            []
+
+
 {-| The light rounded tile behind the image: a light grey from the theme's
 neutral tokens (`--color-border-default` towards `--color-text-subtle`), light
 enough for black parts and dark enough that white parts keep an edge, with a
@@ -189,19 +322,19 @@ backdrop enabled child =
         [ child ]
 
 
-{-| The rendered image, or a same-sized placeholder. Decorative: the button's
-label already names the part.
+{-| The rendered image at a given edge size, or a same-sized placeholder.
+Decorative: the button's label already names the part.
 -}
-thumbnail : Bool -> Maybe String -> Html msg
-thumbnail enabled maybeUrl =
+thumbnail : String -> Bool -> Maybe String -> Html msg
+thumbnail size enabled maybeUrl =
     case maybeUrl of
         Just url ->
             img
                 [ Attr.src url
                 , Attr.alt ""
                 , Attr.attribute "draggable" "false"
-                , Attr.style "width" imageSize
-                , Attr.style "height" imageSize
+                , Attr.style "width" size
+                , Attr.style "height" size
                 , Attr.style "object-fit" "contain"
                 , Attr.style "pointer-events" "none"
                 , Attr.style "filter"
@@ -220,8 +353,8 @@ thumbnail enabled maybeUrl =
                 , Attr.style "display" "flex"
                 , Attr.style "align-items" "center"
                 , Attr.style "justify-content" "center"
-                , Attr.style "width" imageSize
-                , Attr.style "height" imageSize
+                , Attr.style "width" size
+                , Attr.style "height" size
                 , Attr.style "color" "var(--color-text-muted)"
                 , Attr.style "font-size" "1.5rem"
                 ]

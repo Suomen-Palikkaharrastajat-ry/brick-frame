@@ -15,9 +15,10 @@ import Expect
 import Gear.Detect as Detect
 import Gear.Phase as Phase
 import Gear.Placements as Placements
+import Html.Attributes as Attr
 import LDraw.Document as Document
 import LDraw.Resolve exposing (PartStatus(..))
-import Main exposing (Flags, Model, Msg(..), init, thumbnailRequests, update)
+import Main exposing (Flags, Model, Msg(..), init, thumbnailRequests, update, view)
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (vec3)
 import Render.Camera as Camera
@@ -27,6 +28,9 @@ import Studio.DragPlane as DragPlane
 import Studio.Edit as Edit exposing (NewPart)
 import Studio.Shortcuts exposing (TurnDirection(..))
 import Test exposing (Test, describe, test)
+import Test.Html.Event as Event
+import Test.Html.Query as Query
+import Test.Html.Selector as Selector
 import Time
 import Url
 import Viewport
@@ -35,7 +39,8 @@ import Viewport
 suite : Test
 suite =
     describe "Brick Contraptions"
-        [ describe "Curated Catalog"
+        [ menuTests
+        , describe "Curated Catalog"
             [ test "curatedParts contains all required gears" <|
                 \_ ->
                     let
@@ -1077,4 +1082,106 @@ dockPlacementTests =
                     ()
         , test "a project's own (non-Technic) part rests on the ground" <|
             \_ -> Expect.equal False (Placement.onAxleLine "3001.dat")
+        ]
+
+
+{-| The top-right menu: it opens and closes, Escape closes it before it
+deselects anything, its items send the messages their buttons used to, and the
+dock's category tabs run down the left of the catalog.
+-}
+menuTests : Test
+menuTests =
+    let
+        start =
+            Tuple.first (init testFlags)
+
+        selected =
+            update (AddPart gear8) start
+                |> Tuple.first
+                |> (\m -> Tuple.first (update (StudioMsg (Core.SelectOnly 0)) m))
+    in
+    describe "Top-right menu and category tabs"
+        [ test "the menu opens, closes, and pauses the editing keys while open" <|
+            \_ ->
+                let
+                    ( opened, _ ) =
+                        update ToggleMenu start
+
+                    ( closed, _ ) =
+                        update CloseMenu opened
+                in
+                Expect.equal
+                    [ ( False, False ), ( True, True ), ( False, False ) ]
+                    [ ( start.menuOpen, start.studio.helpVisible )
+                    , ( opened.menuOpen, opened.studio.helpVisible )
+                    , ( closed.menuOpen, closed.studio.helpVisible )
+                    ]
+        , test "Escape closes an open menu and keeps the selection" <|
+            \_ ->
+                let
+                    ( opened, _ ) =
+                        update ToggleMenu selected
+
+                    ( afterEscape, _ ) =
+                        update (pressKey { key = "Escape", ctrl = False, shift = False }) opened
+                in
+                Expect.equal [ True, False, True ]
+                    [ Core.hasSelection selected.studio
+                    , afterEscape.menuOpen
+                    , Core.hasSelection afterEscape.studio
+                    ]
+        , test "Escape with the menu closed still deselects" <|
+            \_ ->
+                let
+                    ( afterEscape, _ ) =
+                        update (pressKey { key = "Escape", ctrl = False, shift = False }) selected
+                in
+                Expect.equal False (Core.hasSelection afterEscape.studio)
+        , test "Undo from the menu undoes the last add, as the toolbar button did" <|
+            \_ ->
+                let
+                    ( added, _ ) =
+                        update (AddPart gear8) start
+
+                    ( undone, _ ) =
+                        update (MenuPicked Undo) added
+                in
+                Expect.equal [ 1, 0 ]
+                    [ List.length (Core.getPlacements added.studio), List.length (Core.getPlacements undone.studio) ]
+        , test "the visible ? button toggles the shortcut list, as the ? key does" <|
+            \_ ->
+                Query.fromHtml (view start)
+                    |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Keyboard shortcuts (?)") ]
+                    |> Event.simulate Event.click
+                    |> Event.expect ToggleHelp
+        , test "an accomplished machine shows a one-line status banner, with no headline" <|
+            \_ ->
+                let
+                    modelStr =
+                        "1 7 0 0 0 1 0 0 0 1 0 0 0 1 3647.dat\n1 7 30 0 0 1 0 0 0 1 0 0 0 1 4019.dat"
+
+                    ( accomplishedModel, _ ) =
+                        init { testFlags | initialHash = "#model=" ++ Url.percentEncode modelStr }
+                in
+                Query.fromHtml (view accomplishedModel)
+                    |> Expect.all
+                        [ Query.has [ Selector.attribute (Attr.attribute "role" "status"), Selector.text "All 2 gears are rotating together!" ]
+                        , Query.hasNot [ Selector.text "Contraption Accomplished" ]
+                        ]
+        , test "a machine that is not accomplished shows no banner" <|
+            \_ ->
+                Query.fromHtml (view start)
+                    |> Query.hasNot [ Selector.attribute (Attr.attribute "role" "status") ]
+        , test "the open menu lists its four actions, and the tabs select a category" <|
+            \_ ->
+                let
+                    ( opened, _ ) =
+                        update ToggleMenu start
+                in
+                Query.fromHtml (view opened)
+                    |> Expect.all
+                        [ Query.findAll [ Selector.attribute (Attr.attribute "role" "menuitem") ] >> Query.count (Expect.equal 4)
+                        , Query.findAll [ Selector.attribute (Attr.attribute "role" "tab") ] >> Query.count (Expect.equal 4)
+                        , Query.has [ Selector.attribute (Attr.attribute "aria-orientation" "vertical") ]
+                        ]
         ]

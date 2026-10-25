@@ -183,7 +183,8 @@ adds leave the camera alone.
 
 Both hosts embed `Studio.Core` with the gizmo off, so they edit like the studio
 while showing their own chrome. Their `Main.elm` owns the Msgs and forwards the
-action bar and toolbar to the component.
+action bar to the component. Both keep the chrome minimal: no title badge (a
+visually hidden `h1` keeps the heading), one top-right menu, and a compact dock.
 
 - **No gizmo.** `Core.setGizmoStyle NoGizmo` draws and hit-tests no arrows or
   rings. A body drag still moves a part on the view-relative plane
@@ -202,14 +203,33 @@ action bar and toolbar to the component.
   Turn left, Turn right, Tip, Raise, Lower and Delete. Each calls the same command
   as its key (`Core.turnSelected`, `Core.raiseSelected`, `Core.lowerSelected`,
   `Core.deleteSelection`).
-- **Part cards.** Dock items are `UI.PartCard`s: a rendered picture of the part in
-  its colour, its name and a secondary line (part number or count left). Images come
-  from the shared thumbnail pipeline (`runtime/thumbnail-pipeline.js`, also used by
-  the studio palette) over the `requestThumbnails` / `thumbnailLoaded` ports, and are
-  cached in IndexedDB. A neutral placeholder keeps the card size until an image
-  arrives; a part with none left is disabled, not hidden.
-- **Clear.** The toolbar's Clear button empties the model
-  (`Core.resetDocument Document.empty`).
+- **Menu.** A visible `?` button (Keyboard shortcuts, the same as the `?` key) sits
+  beside one hamburger button at the top right (`UI.HamburgerMenu`), which opens
+  Undo, Redo, Delete, Clear and Fit view (Brick Play only; Contraptions has the
+  globe's reset), each with its shortcut shown. Contraptions' Play|Pause sits between
+  them. Items send the same
+  Msgs as the old toolbar buttons, wrapped in `MenuPicked` so the menu closes first.
+  A click outside (a backdrop) or Escape closes it; Escape closes the menu before it
+  deselects anything. While the menu is open the studio's editing keys are paused,
+  like the help dialog.
+- **Accomplishment banner (Brick Contraptions).** One green line, "All N gears are
+  rotating together!" (`role="status"`), in the top row between the title-less
+  left edge and the buttons, the buttons' height. It shrinks and ellipsizes on narrow
+  windows. The green is LDraw's Green from the colour table; the theme has no green
+  token.
+- **Part cards.** Dock items are `UI.PartCard.compactView`s: the picture only, about
+  56 px. Name, part number and colour are in the tooltip (`title`) and the accessible
+  name (e.g. "Add 24T Gear (3648)"). Brick Play puts the count left on the image
+  corner ("3/4", muted at 0). Images come from the shared thumbnail pipeline
+  (`runtime/thumbnail-pipeline.js`, also used by the studio palette) over the
+  `requestThumbnails` / `thumbnailLoaded` ports, and are cached in IndexedDB. A
+  neutral placeholder keeps the card size until an image arrives; a part with none
+  left is disabled, not hidden.
+- **Dock height.** The dock is `PartCard.compactPanelHeight` (130 px) tall, the same
+  as Brick Contraptions' camera globe panel, and its bottom edge sits on the globe's
+  (0.75 rem from the bottom). Brick Contraptions' category tabs are a narrow vertical
+  column (`role="tablist"`, `aria-orientation="vertical"`) on the dock's left; the
+  card row scrolls sideways when it overflows.
 - **Mesh status (Brick Contraptions).** With one gear selected, a status pill says how
   it sits against its nearest other gear (`Machine.gearFeedback`, worded by
   `Machine.feedbackText`), e.g. `24T ↔ 24T: 40 LDU apart — needs 60` or

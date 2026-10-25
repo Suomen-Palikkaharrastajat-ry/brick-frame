@@ -23,8 +23,11 @@ finger still orbits on touch, as Play has no camera globe), and while something 
 the dock turns, tips, raises, lowers or deletes it (the same as the keyboard).
 
 The dock shows each kit item as a rendered picture of the part in its colour
-(`UI.PartCard`, fed by the shared thumbnail pipeline through `Ports`); clicking
-a card adds one of that part.
+(`UI.PartCard.compactView`, fed by the shared thumbnail pipeline through
+`Ports`); clicking a card adds one of that part, and its name, part number and
+count are in the tooltip and on the image corner. The top-right menu
+(`UI.HamburgerMenu`) holds undo, redo, delete, clear and fit view, beside a
+visible ? button that opens the shortcut list; Escape closes the menu first.
 
 -}
 
@@ -32,7 +35,7 @@ import Browser
 import Browser.Dom
 import Browser.Events
 import Dict exposing (Dict)
-import Html exposing (Html, button, div, header, span, text)
+import Html exposing (Html, button, div, h1, header, span, text)
 import Html.Attributes as Attr
 import Html.Events exposing (onClick, preventDefaultOn)
 import Json.Decode as Decode
@@ -42,9 +45,10 @@ import Ports
 import Render.Camera as Camera
 import Studio.Colours as Colours
 import Studio.Core as Core
-import Studio.Shortcuts exposing (TurnDirection(..))
+import Studio.Shortcuts as StudioShortcuts exposing (TurnDirection(..))
 import Studio.UrlPayload as UrlPayload exposing (PartKitItem)
 import Task
+import UI.HamburgerMenu as HamburgerMenu
 import UI.Icon as Icon
 import UI.PartCard as PartCard
 import UI.ShortcutHelp as ShortcutHelp
@@ -76,6 +80,7 @@ type alias Model =
     { studio : Core.Model
     , inventory : List PartKitItem
     , helpOpen : Bool
+    , menuOpen : Bool
     , windowWidth : Int
     , windowHeight : Int
     , thumbnails : Dict String Thumbnail
@@ -105,6 +110,9 @@ type Msg
     | Clear
     | FitView
     | ToggleHelp
+    | ToggleMenu
+    | CloseMenu
+    | MenuPicked Msg
     | NoOp
     | WindowResized Int Int
     | ThumbnailLoaded { file : String, color : Int, url : String, title : String }
@@ -159,6 +167,7 @@ init flags =
             { studio = initialStudio
             , inventory = inventory
             , helpOpen = False
+            , menuOpen = False
             , windowWidth = 1280
             , windowHeight = 800
             , thumbnails = Dict.empty
@@ -348,12 +357,21 @@ update msg model =
                 open =
                     not model.helpOpen
             in
-            ( { model
-                | helpOpen = open
-                , studio = Core.setHelpVisible open model.studio
-              }
-            , Cmd.none
-            )
+            ( syncKeyPause { model | helpOpen = open, menuOpen = False }, Cmd.none )
+
+        ToggleMenu ->
+            ( syncKeyPause { model | menuOpen = not model.menuOpen && not model.helpOpen }, Cmd.none )
+
+        CloseMenu ->
+            ( syncKeyPause { model | menuOpen = False }, Cmd.none )
+
+        MenuPicked action ->
+            -- The menu closes, then the chosen message runs as if its button were pressed.
+            let
+                ( next, cmd ) =
+                    update action (syncKeyPause { model | menuOpen = False })
+            in
+            ( syncKeyPause next, cmd )
 
         NoOp ->
             ( model, Cmd.none )
@@ -370,6 +388,14 @@ update msg model =
               }
             , Cmd.none
             )
+
+
+{-| The studio pauses its editing keys while a layer is open (the help dialog or
+the menu), so Escape reaches the app to close that layer first.
+-}
+syncKeyPause : Model -> Model
+syncKeyPause model =
+    { model | studio = Core.setHelpVisible (model.helpOpen || model.menuOpen) model.studio }
 
 
 {-| Run a studio edit and forward its effects.
@@ -389,16 +415,40 @@ runCore edit model =
 -}
 applyShortcut : ViewportShortcuts.KeyEvent -> ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
 applyShortcut keyEvent ( model, cmd ) =
-    case ViewportShortcuts.actionFor (shortcutContext model) keyEvent of
-        Just action ->
-            let
-                ( next, actionCmd ) =
-                    update (msgForAction action) model
-            in
-            ( next, Cmd.batch [ cmd, actionCmd ] )
+    if model.menuOpen && closesMenu keyEvent then
+        let
+            ( next, actionCmd ) =
+                update CloseMenu model
+        in
+        ( next, Cmd.batch [ cmd, actionCmd ] )
 
-        Nothing ->
-            ( model, cmd )
+    else
+        case ViewportShortcuts.actionFor (shortcutContext model) keyEvent of
+            Just action ->
+                let
+                    ( next, actionCmd ) =
+                        update (msgForAction action) model
+                in
+                ( next, Cmd.batch [ cmd, actionCmd ] )
+
+            Nothing ->
+                ( model, cmd )
+
+
+{-| Escape closes an open menu first. Asked of the studio's own shortcut table,
+so the key is still matched in one place.
+-}
+closesMenu : ViewportShortcuts.KeyEvent -> Bool
+closesMenu keyEvent =
+    StudioShortcuts.actionFor
+        { hasSelection = False
+        , helpVisible = True
+        , walking = False
+        , inSubmodel = False
+        , menuOpen = True
+        }
+        keyEvent
+        == Just StudioShortcuts.CloseMenu
 
 
 extractKey : Core.Event -> Maybe ViewportShortcuts.KeyEvent
@@ -490,7 +540,8 @@ the camera.
 helpRows : List ( String, List ( String, String ) )
 helpRows =
     [ ( "Build"
-      , [ ( "Drag a brick", "Move it as seen from the camera (snaps to studs)" )
+      , [ ( "Menu, top right", "Undo, redo, delete, clear, fit view, and this list" )
+        , ( "Drag a brick", "Move it as seen from the camera (snaps to studs)" )
         , ( "Shift + drag a brick", "Fine move: 1 LDU steps (Shift held during a drag works too)" )
         , ( "Wheel while dragging", "Raise / lower the brick" )
         , ( "Action bar (above the dock)", "Turn left / right, tip, raise, lower or remove the selected brick" )
@@ -584,29 +635,6 @@ subscriptions model =
 -}
 view : Model -> Html Msg
 view model =
-    let
-        placed =
-            List.length (Core.getPlacements model.studio)
-
-        hasUndo =
-            Core.canUndo model.studio
-
-        hasRedo =
-            Core.canRedo model.studio
-
-        hasSel =
-            Core.hasSelection model.studio
-
-        totalBricks =
-            List.sum (List.map .count model.inventory)
-
-        headerSubtitle =
-            if List.length model.inventory == 1 && (List.head model.inventory |> Maybe.map .part) == Just "3001.dat" then
-                "10 Yellow Bricks"
-
-            else
-                "Kit (" ++ String.fromInt totalBricks ++ " pieces)"
-    in
     div
         [ Attr.style "position" "relative"
         , Attr.style "width" "100vw"
@@ -615,69 +643,31 @@ view model =
         , Attr.style "background" "var(--color-brand)"
         , Attr.style "font-family" "var(--font-sans)"
         ]
-        [ -- Top toolbar
+        [ -- Top right: the menu. The page heading is for screen readers only.
           header
             [ Attr.style "position" "absolute"
             , Attr.style "top" "1rem"
-            , Attr.style "left" "1rem"
             , Attr.style "right" "1rem"
-            , Attr.style "display" "flex"
-            , Attr.style "justify-content" "space-between"
-            , Attr.style "align-items" "center"
-            , Attr.style "z-index" "10"
+            , Attr.style "z-index" "20"
             , Attr.style "pointer-events" "none"
             , keepFocusOnCanvas
             ]
-            [ -- App Title badge
-              div
-                [ Attr.style "display" "flex"
-                , Attr.style "align-items" "center"
-                , Attr.style "gap" "0.75rem"
-                , Attr.style "padding" "0.5rem 1rem"
-                , Attr.style "background" "rgba(5, 19, 29, 0.85)"
-                , Attr.style "backdrop-filter" "blur(8px)"
-                , Attr.style "border-radius" "9999px"
-                , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
-                , Attr.style "color" "var(--color-text-on-dark)"
-                , Attr.style "pointer-events" "auto"
-                ]
-                [ span
-                    [ Attr.style "font-weight" "700"
-                    , Attr.style "letter-spacing" "-0.01em"
-                    ]
-                    [ text "Palikkakehys Play" ]
-                , span
-                    [ Attr.style "font-size" "0.875rem"
-                    , Attr.style "color" "var(--color-text-subtle)"
-                    ]
-                    [ text headerSubtitle ]
-                ]
-
-            -- Action Controls Toolbar
+            [ h1 [ Attr.class "sr-only" ] [ text "Palikkakehys Play" ]
             , div
                 [ Attr.style "display" "flex"
                 , Attr.style "align-items" "center"
                 , Attr.style "gap" "0.5rem"
-                , Attr.style "padding" "0.375rem"
-                , Attr.style "background" "rgba(5, 19, 29, 0.85)"
-                , Attr.style "backdrop-filter" "blur(8px)"
-                , Attr.style "border-radius" "0.75rem"
-                , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
                 , Attr.style "pointer-events" "auto"
                 ]
-                [ toolbarButton Undo hasUndo "Undo"
-                , toolbarButton Redo hasRedo "Redo"
-                , toolbarButton Delete hasSel "Delete"
-                , toolbarButton FitView True "Fit View"
-                , toolbarButtonWith [ Attr.title "Clear — remove all parts", Attr.attribute "aria-label" "Clear — remove all parts" ] Clear (placed > 0) "Clear"
-                , toolbarButton ToggleHelp True "?"
+                [ helpButton
+                , HamburgerMenu.view (menuConfig model)
                 ]
             ]
 
         -- 3D WebGL Canvas
         , Html.map StudioMsg (Core.view { width = model.windowWidth, height = model.windowHeight } model.studio)
 
-        -- Shortcut reference, open from the ? button
+        -- Shortcut reference, open from the menu
         , if model.helpOpen then
             ShortcutHelp.view { rows = helpRows, onClose = ToggleHelp }
 
@@ -687,7 +677,7 @@ view model =
         -- Bottom: the selection action bar floats above the inventory dock
         , div
             [ Attr.style "position" "absolute"
-            , Attr.style "bottom" "1.5rem"
+            , Attr.style "bottom" "0.75rem"
             , Attr.style "left" "1.5rem"
             , Attr.style "right" "1.5rem"
             , Attr.style "display" "flex"
@@ -697,7 +687,7 @@ view model =
             , Attr.style "z-index" "10"
             , Attr.style "pointer-events" "none"
             ]
-            [ if hasSel then
+            [ if Core.hasSelection model.studio then
                 selectionBar
 
               else
@@ -705,6 +695,57 @@ view model =
             , viewDock model
             ]
         ]
+
+
+{-| The top-right menu: undo, redo, delete, clear, fit view and the shortcut
+list. Each item does what its keyboard shortcut does.
+-}
+menuConfig : Model -> HamburgerMenu.Config Msg
+menuConfig model =
+    { id = menuId
+    , open = model.menuOpen
+    , onToggle = ToggleMenu
+    , onClose = CloseMenu
+    , items =
+        [ { label = "Undo", shortcut = "Ctrl+Z", enabled = Core.canUndo model.studio, onSelect = MenuPicked Undo }
+        , { label = "Redo", shortcut = "Ctrl+Shift+Z", enabled = Core.canRedo model.studio, onSelect = MenuPicked Redo }
+        , { label = "Delete", shortcut = "Del", enabled = Core.hasSelection model.studio, onSelect = MenuPicked Delete }
+        , { label = "Clear", shortcut = "", enabled = List.length (Core.getPlacements model.studio) > 0, onSelect = MenuPicked Clear }
+        , { label = "Fit view", shortcut = "F", enabled = True, onSelect = MenuPicked FitView }
+        ]
+    }
+
+
+{-| The visible shortcut-reference button: it toggles the help overlay, as the
+`?` key does.
+-}
+helpButton : Html Msg
+helpButton =
+    button
+        [ onClick ToggleHelp
+        , Attr.attribute "aria-label" "Keyboard shortcuts (?)"
+        , Attr.title "Keyboard shortcuts (?)"
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "center"
+        , Attr.style "width" "2.25rem"
+        , Attr.style "height" "2.25rem"
+        , Attr.style "padding" "0"
+        , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
+        , Attr.style "border-radius" "0.5rem"
+        , Attr.style "background" "rgba(5, 19, 29, 0.85)"
+        , Attr.style "color" "var(--color-text-on-dark)"
+        , Attr.style "cursor" "pointer"
+        , Attr.style "transition" "all 150ms ease"
+        ]
+        [ Icon.featherSized 18 "help-circle" ]
+
+
+{-| The DOM id of the menu panel, for `aria-controls`.
+-}
+menuId : String
+menuId =
+    "play-menu"
 
 
 {-| Buttons for the selected bricks, the touch- and mouse-friendly stand-in for
@@ -769,11 +810,13 @@ viewDock model =
         [ Attr.attribute "role" "group"
         , Attr.attribute "aria-label" "Kit"
         , Attr.style "display" "flex"
-        , Attr.style "align-items" "stretch"
+        , Attr.style "align-items" "center"
         , Attr.style "gap" "0.5rem"
+        , Attr.style "box-sizing" "border-box"
+        , Attr.style "height" PartCard.compactPanelHeight
         , Attr.style "max-width" "100%"
         , Attr.style "overflow-x" "auto"
-        , Attr.style "padding" "0.5rem 0.75rem"
+        , Attr.style "padding" "0.5rem"
         , Attr.style "background" "rgba(5, 19, 29, 0.9)"
         , Attr.style "backdrop-filter" "blur(12px)"
         , Attr.style "border-radius" "1rem"
@@ -785,6 +828,9 @@ viewDock model =
         (List.map (viewKitCard model) model.inventory)
 
 
+{-| A kit item as a compact picture card. Its name, part number, colour and
+count are in the tooltip and accessible name; the image corner shows "left/kit".
+-}
 viewKitCard : Model -> PartKitItem -> Html Msg
 viewKitCard model item =
     let
@@ -794,20 +840,20 @@ viewKitCard model item =
         name =
             kitItemName model item
 
-        availability =
-            String.fromInt remaining ++ " / " ++ String.fromInt item.count ++ " left"
-
         colourName =
             Colours.nameOf item.color
     in
-    PartCard.view
+    PartCard.compactView
         { imageUrl =
             Dict.get (PartCard.thumbnailKey item.part item.color) model.thumbnails
                 |> Maybe.map .url
-        , name = name
-        , secondary = availability
         , tooltip = name ++ " (" ++ partNumber item ++ ", " ++ colourName ++ ") — " ++ String.fromInt remaining ++ " of " ++ String.fromInt item.count ++ " available"
         , ariaLabel = "Add " ++ name ++ " (" ++ colourName ++ "), " ++ String.fromInt remaining ++ " of " ++ String.fromInt item.count ++ " left"
+        , badge =
+            Just
+                { text = String.fromInt remaining ++ "/" ++ String.fromInt item.count
+                , muted = remaining == 0
+                }
         , onClick =
             if remaining > 0 then
                 Just (AddPart item)
@@ -816,52 +862,6 @@ viewKitCard model item =
                 Nothing
         , attributes = [ keepFocusOnCanvas ]
         }
-
-
-toolbarButton : Msg -> Bool -> String -> Html Msg
-toolbarButton =
-    toolbarButtonWith []
-
-
-{-| A toolbar button with extra attributes, such as a longer `title` and
-`aria-label` than its visible label.
--}
-toolbarButtonWith : List (Html.Attribute Msg) -> Msg -> Bool -> String -> Html Msg
-toolbarButtonWith extra msg enabled label =
-    button
-        (extra
-            ++ [ onClick msg
-               , Attr.disabled (not enabled)
-               , Attr.style "padding" "0.375rem 0.75rem"
-               , Attr.style "font-size" "0.875rem"
-               , Attr.style "font-weight" "500"
-               , Attr.style "border" "none"
-               , Attr.style "border-radius" "0.375rem"
-               , Attr.style "background"
-                    (if enabled then
-                        "rgba(255, 255, 255, 0.1)"
-
-                     else
-                        "transparent"
-                    )
-               , Attr.style "color"
-                    (if enabled then
-                        "var(--color-text-on-dark)"
-
-                     else
-                        "rgba(255, 255, 255, 0.3)"
-                    )
-               , Attr.style "cursor"
-                    (if enabled then
-                        "pointer"
-
-                     else
-                        "not-allowed"
-                    )
-               , Attr.style "transition" "all 150ms ease"
-               ]
-        )
-        [ text label ]
 
 
 {-| Main application program.

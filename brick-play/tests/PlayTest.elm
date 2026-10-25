@@ -5,20 +5,25 @@ module PlayTest exposing (suite)
 
 import Dict
 import Expect
-import Main exposing (Flags, Model, Msg(..), helpRows, init, kitItemName, remainingCount, thumbnailRequests, update)
+import Html.Attributes as Attr
+import Main exposing (Flags, Model, Msg(..), helpRows, init, kitItemName, remainingCount, thumbnailRequests, update, view)
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (vec3)
 import Set
 import Studio.Core as Core
 import Studio.Shortcuts exposing (TurnDirection(..))
 import Test exposing (Test, describe, test)
+import Test.Html.Event as Event
+import Test.Html.Query as Query
+import Test.Html.Selector as Selector
 import Viewport
 
 
 suite : Test
 suite =
     describe "Brick Play"
-        [ test "initial inventory has 10 bricks available" <|
+        [ menuTests
+        , test "initial inventory has 10 bricks available" <|
             \_ ->
                 let
                     ( model, _ ) =
@@ -443,3 +448,135 @@ addFirst model =
 
         [] ->
             ( model, Cmd.none )
+
+
+{-| The top-right menu: it opens and closes, Escape closes it before it
+deselects anything, and its items send the messages their buttons used to.
+-}
+menuTests : Test
+menuTests =
+    describe "Top-right menu"
+        [ test "the menu opens, closes, and pauses the editing keys while open" <|
+            \_ ->
+                let
+                    ( model0, _ ) =
+                        init testFlags
+
+                    ( model1, _ ) =
+                        update ToggleMenu model0
+
+                    ( model2, _ ) =
+                        update CloseMenu model1
+                in
+                Expect.equal
+                    [ ( False, False ), ( True, True ), ( False, False ) ]
+                    [ ( model0.menuOpen, model0.studio.helpVisible )
+                    , ( model1.menuOpen, model1.studio.helpVisible )
+                    , ( model2.menuOpen, model2.studio.helpVisible )
+                    ]
+        , test "Escape closes an open menu and keeps the selection" <|
+            \_ ->
+                let
+                    ( model0, _ ) =
+                        init testFlags
+
+                    selected =
+                        Tuple.first (addFirst model0)
+                            |> (\m -> Tuple.first (update (StudioMsg (Core.SelectOnly 0)) m))
+
+                    ( menuOpen, _ ) =
+                        update ToggleMenu selected
+
+                    ( afterEscape, _ ) =
+                        update (pressKey "Escape") menuOpen
+                in
+                Expect.equal [ True, False, True ]
+                    [ Core.hasSelection selected.studio
+                    , afterEscape.menuOpen
+                    , Core.hasSelection afterEscape.studio
+                    ]
+        , test "Escape with the menu closed still deselects" <|
+            \_ ->
+                let
+                    ( model0, _ ) =
+                        init testFlags
+
+                    selected =
+                        Tuple.first (addFirst model0)
+                            |> (\m -> Tuple.first (update (StudioMsg (Core.SelectOnly 0)) m))
+
+                    ( afterEscape, _ ) =
+                        update (pressKey "Escape") selected
+                in
+                Expect.equal False (Core.hasSelection afterEscape.studio)
+        , test "Undo from the menu undoes the last add, as the toolbar button did" <|
+            \_ ->
+                let
+                    ( model0, _ ) =
+                        init testFlags
+
+                    ( model1, _ ) =
+                        addFirst model0
+
+                    ( model2, _ ) =
+                        update (MenuPicked Undo) model1
+                in
+                Expect.equal [ 0, 10 ]
+                    [ List.length (Core.getPlacements model2.studio), remainingCount model2 ]
+        , test "the visible ? button toggles the shortcut list, as the ? key does" <|
+            \_ ->
+                let
+                    ( model0, _ ) =
+                        init testFlags
+                in
+                Query.fromHtml (view model0)
+                    |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Keyboard shortcuts (?)") ]
+                    |> Event.simulate Event.click
+                    |> Event.expect ToggleHelp
+        , test "the open menu lists its five actions with their shortcuts" <|
+            \_ ->
+                let
+                    ( model0, _ ) =
+                        init testFlags
+
+                    ( opened, _ ) =
+                        update ToggleMenu model0
+                in
+                Query.fromHtml (view opened)
+                    |> Expect.all
+                        [ Query.findAll [ Selector.attribute (Attr.attribute "role" "menuitem") ] >> Query.count (Expect.equal 5)
+                        , Query.has [ Selector.text "Ctrl+Shift+Z" ]
+                        ]
+        , test "the kit cards show their count on the image and name it in the accessible label" <|
+            \_ ->
+                let
+                    ( model0, _ ) =
+                        init testFlags
+                in
+                Query.fromHtml (view model0)
+                    |> Expect.all
+                        [ Query.has [ Selector.text "10/10" ]
+                        , Query.has [ Selector.attribute (Attr.attribute "aria-label" "Add 3001 (Yellow), 10 of 10 left") ]
+                        ]
+        ]
+
+
+{-| A key press delivered to the studio the way the browser's keydown reaches it.
+-}
+pressKey : String -> Msg
+pressKey key =
+    StudioMsg
+        (Core.ViewportMsg
+            (Viewport.KeyPressed
+                { key = key
+                , ctrl = False
+                , meta = False
+                , alt = False
+                , shift = False
+                , repeat = False
+                , targetTag = "BODY"
+                , targetEditable = False
+                , targetRole = ""
+                }
+            )
+        )

@@ -25,9 +25,13 @@ motor's gear train is drawn turning by the shared `Simulation` component, with
 the axles and parts threaded on those gears; their static copies are hidden from
 the studio's scene (see `Contraption.Animation`).
 
-The dock shows each part as a visual card (`UI.PartCard`) with a rendered image
-from the shared thumbnail pipeline (through `Ports`); the images of the visible
-category are asked for on start and whenever the category changes.
+The dock is a compact picture strip (`UI.PartCard.compactView`) beside a vertical
+column of category tabs, exactly as tall as the camera globe panel, with a rendered
+image from the shared thumbnail pipeline (through `Ports`); the images of the visible
+category are asked for on start and whenever the category changes. The top-right
+menu (`UI.HamburgerMenu`) holds undo, redo, delete and clear, beside a visible ?
+button that opens the shortcut list and the play button; Escape closes the menu
+first.
 Angles are a pure function of `currentTime`. Any edit — a drag, a key move, an
 added, removed or turned part, undo or redo — stops the machine and rewinds it
 to time 0, so the parts are static and editable again; the next Play
@@ -50,7 +54,7 @@ import Data
 import Dict exposing (Dict)
 import EmbeddedParts
 import Gear.Placements as Placements
-import Html exposing (Html, button, div, header, span, text)
+import Html exposing (Html, button, div, h1, header, span, text)
 import Html.Attributes as Attr
 import Html.Events exposing (onClick)
 import Json.Decode as Decode
@@ -61,9 +65,10 @@ import Render.Camera as Camera
 import Set
 import Simulation
 import Studio.Core as Core
-import Studio.Shortcuts exposing (TurnDirection(..))
+import Studio.Shortcuts as StudioShortcuts exposing (TurnDirection(..))
 import Studio.UrlPayload as UrlPayload
 import Task
+import UI.HamburgerMenu as HamburgerMenu
 import UI.Icon as Icon
 import UI.PartCard as PartCard
 import UI.ShortcutHelp as ShortcutHelp
@@ -90,6 +95,7 @@ type alias Model =
     , playing : Bool
     , globeDrag : Maybe GlobeDrag
     , helpOpen : Bool
+    , menuOpen : Bool
     , activeCategory : Category
     , projectParts : List PartItem
     , currentTime : Float
@@ -136,6 +142,9 @@ type Msg
     | ZoomDone
     | ResetView
     | ToggleHelp
+    | ToggleMenu
+    | CloseMenu
+    | MenuPicked Msg
     | NoOp
     | SetCategory Category
     | AddPart PartItem
@@ -215,6 +224,7 @@ init flags =
             , playing = False
             , globeDrag = Nothing
             , helpOpen = False
+            , menuOpen = False
             , activeCategory = activeCategory
             , projectParts = projectParts
             , currentTime = 0.0
@@ -465,12 +475,21 @@ step msg model =
                 open =
                     not model.helpOpen
             in
-            ( { model
-                | helpOpen = open
-                , studio = Core.setHelpVisible open model.studio
-              }
-            , Cmd.none
-            )
+            ( syncKeyPause { model | helpOpen = open, menuOpen = False }, Cmd.none )
+
+        ToggleMenu ->
+            ( syncKeyPause { model | menuOpen = not model.menuOpen && not model.helpOpen }, Cmd.none )
+
+        CloseMenu ->
+            ( syncKeyPause { model | menuOpen = False }, Cmd.none )
+
+        MenuPicked action ->
+            -- The menu closes, then the chosen message runs as if its button were pressed.
+            let
+                ( next, cmd ) =
+                    update action (syncKeyPause { model | menuOpen = False })
+            in
+            ( syncKeyPause next, cmd )
 
         NoOp ->
             ( model, Cmd.none )
@@ -613,6 +632,14 @@ step msg model =
             update (viewportMsg (Viewport.WindowResize w h)) { model | windowWidth = w, windowHeight = h }
 
 
+{-| The studio pauses its editing keys while a layer is open (the help dialog or
+the menu), so Escape reaches the app to close that layer first.
+-}
+syncKeyPause : Model -> Model
+syncKeyPause model =
+    { model | studio = Core.setHelpVisible (model.helpOpen || model.menuOpen) model.studio }
+
+
 {-| Run a studio edit, re-analyse the machine and forward the effects.
 -}
 runCore : (Core.Model -> ( Core.Model, Cmd Core.Msg, List Core.Event )) -> Model -> ( Model, Cmd Msg )
@@ -654,16 +681,40 @@ extractKey event =
 -}
 applyShortcut : ViewportShortcuts.KeyEvent -> ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
 applyShortcut keyEvent ( model, cmd ) =
-    case ViewportShortcuts.actionFor (shortcutContext model) keyEvent of
-        Just action ->
-            let
-                ( next, actionCmd ) =
-                    update (msgForAction action) model
-            in
-            ( next, Cmd.batch [ cmd, actionCmd ] )
+    if model.menuOpen && closesMenu keyEvent then
+        let
+            ( next, actionCmd ) =
+                update CloseMenu model
+        in
+        ( next, Cmd.batch [ cmd, actionCmd ] )
 
-        Nothing ->
-            ( model, cmd )
+    else
+        case ViewportShortcuts.actionFor (shortcutContext model) keyEvent of
+            Just action ->
+                let
+                    ( next, actionCmd ) =
+                        update (msgForAction action) model
+                in
+                ( next, Cmd.batch [ cmd, actionCmd ] )
+
+            Nothing ->
+                ( model, cmd )
+
+
+{-| Escape closes an open menu first. Asked of the studio's own shortcut table,
+so the key is still matched in one place.
+-}
+closesMenu : ViewportShortcuts.KeyEvent -> Bool
+closesMenu keyEvent =
+    StudioShortcuts.actionFor
+        { hasSelection = False
+        , helpVisible = True
+        , walking = False
+        , inSubmodel = False
+        , menuOpen = True
+        }
+        keyEvent
+        == Just StudioShortcuts.CloseMenu
 
 
 {-| What `Escape` and `?` need to know to pick between their meanings.
@@ -790,18 +841,6 @@ view model =
 
         gearCount =
             List.length model.machine.gears
-
-        placedCount =
-            List.length (Core.getPlacements model.studio)
-
-        hasUndo =
-            Core.canUndo model.studio
-
-        hasRedo =
-            Core.canRedo model.studio
-
-        hasSel =
-            Core.hasSelection model.studio
     in
     div
         [ Attr.style "position" "relative"
@@ -811,108 +850,42 @@ view model =
         , Attr.style "background" "var(--color-brand)"
         , Attr.style "font-family" "var(--font-sans)"
         ]
-        [ -- Top toolbar & header
+        [ -- One row across the top: the accomplishment banner sits in the middle,
+          -- the help, play and menu buttons on the right. The banner shares the
+          -- buttons' height and top edge, and shrinks before it reaches them.
           header
             [ Attr.style "position" "absolute"
             , Attr.style "top" "1rem"
             , Attr.style "left" "1rem"
             , Attr.style "right" "1rem"
-            , Attr.style "display" "flex"
-            , Attr.style "justify-content" "space-between"
+            , Attr.style "height" "2.25rem"
+            , Attr.style "display" "grid"
+            , Attr.style "grid-template-columns" "1fr minmax(0, auto) 1fr"
             , Attr.style "align-items" "center"
-            , Attr.style "z-index" "10"
+            , Attr.style "gap" "0.75rem"
+            , Attr.style "z-index" "20"
             , Attr.style "pointer-events" "none"
             , keepFocusOnCanvas
             ]
-            [ -- App Title badge
-              div
-                [ Attr.style "display" "flex"
-                , Attr.style "align-items" "center"
-                , Attr.style "gap" "0.75rem"
-                , Attr.style "padding" "0.5rem 1rem"
-                , Attr.style "background" "rgba(5, 19, 29, 0.85)"
-                , Attr.style "backdrop-filter" "blur(8px)"
-                , Attr.style "border-radius" "9999px"
-                , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
-                , Attr.style "color" "var(--color-text-on-dark)"
-                , Attr.style "pointer-events" "auto"
-                ]
-                [ span
-                    [ Attr.style "font-weight" "700"
-                    , Attr.style "letter-spacing" "-0.01em"
-                    ]
-                    [ text "Palikkakehys Contraptions" ]
-                , span
-                    [ Attr.style "font-size" "0.875rem"
-                    , Attr.style "color" "var(--color-brand-yellow)"
-                    ]
-                    [ text (String.fromInt gearCount ++ " gears") ]
-                ]
+            [ h1 [ Attr.class "sr-only" ] [ text "Palikkakehys Contraptions" ]
+            , div [] []
+            , if accomplished then
+                accomplishmentBanner gearCount
 
-            -- Action Controls Toolbar
+              else
+                div [ Attr.style "display" "none" ] []
             , div
-                [ Attr.style "display" "flex"
-                , Attr.style "align-items" "center"
-                , Attr.style "gap" "0.5rem"
-                , Attr.style "padding" "0.375rem"
-                , Attr.style "background" "rgba(5, 19, 29, 0.85)"
-                , Attr.style "backdrop-filter" "blur(8px)"
-                , Attr.style "border-radius" "0.75rem"
-                , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
-                , Attr.style "pointer-events" "auto"
-                ]
-                [ playButton model.playing
-                , toolbarButton Undo hasUndo "Undo"
-                , toolbarButton Redo hasRedo "Redo"
-                , toolbarButton Delete hasSel "Delete"
-                , toolbarButtonWith [ Attr.title "Clear — remove all parts", Attr.attribute "aria-label" "Clear — remove all parts" ] Clear (placedCount > 0) "Clear"
-                , toolbarButton ToggleHelp True "?"
-                ]
-            ]
-
-        -- Celebration Accomplishment Banner
-        , if accomplished then
-            div
-                [ Attr.style "position" "absolute"
-                , Attr.style "top" "4.5rem"
-                , Attr.style "left" "50%"
-                , Attr.style "transform" "translateX(-50%)"
+                [ Attr.style "justify-self" "end"
                 , Attr.style "display" "flex"
                 , Attr.style "align-items" "center"
-                , Attr.style "gap" "1rem"
-                , Attr.style "padding" "0.75rem 1.5rem"
-                , Attr.style "background" "rgba(201, 26, 9, 0.95)"
-                , Attr.style "backdrop-filter" "blur(12px)"
-                , Attr.style "border-radius" "9999px"
-                , Attr.style "border" "2px solid var(--color-brand-yellow)"
-                , Attr.style "color" "var(--color-text-on-dark)"
-                , Attr.style "box-shadow" "0 10px 25px rgba(0, 0, 0, 0.6)"
-                , Attr.style "z-index" "20"
-                , Attr.style "animation" "pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite"
+                , Attr.style "gap" "0.5rem"
+                , Attr.style "pointer-events" "auto"
                 ]
-                [ span
-                    [ Attr.style "font-size" "1.25rem" ]
-                    [ text "⚙️" ]
-                , div
-                    [ Attr.style "display" "flex"
-                    , Attr.style "flex-direction" "column"
-                    ]
-                    [ span
-                        [ Attr.style "font-weight" "800"
-                        , Attr.style "font-size" "1.125rem"
-                        , Attr.style "letter-spacing" "-0.01em"
-                        ]
-                        [ text "Contraption Accomplished!" ]
-                    , span
-                        [ Attr.style "font-size" "0.875rem"
-                        , Attr.style "color" "var(--color-brand-yellow)"
-                        ]
-                        [ text ("All " ++ String.fromInt gearCount ++ " gears are rotating together!") ]
-                    ]
+                [ helpButton
+                , playButton model.playing
+                , HamburgerMenu.view (menuConfig model)
                 ]
-
-          else
-            text ""
+            ]
 
         -- 3D WebGL Canvas
         , Html.map StudioMsg (viewCanvas model)
@@ -951,10 +924,11 @@ view model =
           else
             text ""
 
-        -- Bottom: the selection action bar floats above the Technic dock
+        -- Bottom: the selection action bar floats above the Technic dock, whose
+        -- bottom edge lines up with the camera globe's
         , div
             ([ Attr.style "position" "absolute"
-             , Attr.style "bottom" "1.5rem"
+             , Attr.style "bottom" "0.75rem"
              , Attr.style "display" "flex"
              , Attr.style "flex-direction" "column"
              , Attr.style "gap" "0.5rem"
@@ -966,7 +940,7 @@ view model =
             [ Machine.gearFeedback (Set.toList model.studio.selection) model.studio.document
                 |> Maybe.map gearFeedbackPill
                 |> Maybe.withDefault (text "")
-            , if hasSel then
+            , if Core.hasSelection model.studio then
                 selectionBar
 
               else
@@ -974,6 +948,92 @@ view model =
             , viewDock model
             ]
         ]
+
+
+{-| The top-right menu: undo, redo, delete, clear and the shortcut list. Each
+item does what its keyboard shortcut does.
+-}
+menuConfig : Model -> HamburgerMenu.Config Msg
+menuConfig model =
+    { id = menuId
+    , open = model.menuOpen
+    , onToggle = ToggleMenu
+    , onClose = CloseMenu
+    , items =
+        [ { label = "Undo", shortcut = "Ctrl+Z", enabled = Core.canUndo model.studio, onSelect = MenuPicked Undo }
+        , { label = "Redo", shortcut = "Ctrl+Shift+Z", enabled = Core.canRedo model.studio, onSelect = MenuPicked Redo }
+        , { label = "Delete", shortcut = "Del", enabled = Core.hasSelection model.studio, onSelect = MenuPicked Delete }
+        , { label = "Clear", shortcut = "", enabled = List.length (Core.getPlacements model.studio) > 0, onSelect = MenuPicked Clear }
+        ]
+    }
+
+
+{-| The visible shortcut-reference button: it toggles the help overlay, as the
+`?` key does.
+-}
+helpButton : Html Msg
+helpButton =
+    button
+        [ onClick ToggleHelp
+        , Attr.attribute "aria-label" "Keyboard shortcuts (?)"
+        , Attr.title "Keyboard shortcuts (?)"
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "center"
+        , Attr.style "width" "2.25rem"
+        , Attr.style "height" "2.25rem"
+        , Attr.style "padding" "0"
+        , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
+        , Attr.style "border-radius" "0.5rem"
+        , Attr.style "background" "rgba(5, 19, 29, 0.85)"
+        , Attr.style "color" "var(--color-text-on-dark)"
+        , Attr.style "cursor" "pointer"
+        , Attr.style "transition" "all 150ms ease"
+        ]
+        [ Icon.featherSized 18 "help-circle" ]
+
+
+{-| The DOM id of the menu panel, for `aria-controls`.
+-}
+menuId : String
+menuId =
+    "contraptions-menu"
+
+
+{-| The accomplishment banner: a polite live status line, in the green of the
+LDraw palette's Green (the theme has no green token). It is one line, the height
+of the top buttons, and ellipsizes on a narrow window.
+-}
+accomplishmentBanner : Int -> Html Msg
+accomplishmentBanner gearCount =
+    let
+        green =
+            Colors.resolveColor 2 16
+
+        channel value =
+            String.fromInt (round (value * 255))
+    in
+    div
+        [ Attr.attribute "role" "status"
+        , Attr.attribute "aria-live" "polite"
+        , Attr.style "height" "2.25rem"
+        , Attr.style "box-sizing" "border-box"
+        , Attr.style "min-width" "0"
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "padding" "0 1.25rem"
+        , Attr.style "background" ("rgba(" ++ channel green.r ++ ", " ++ channel green.g ++ ", " ++ channel green.b ++ ", 0.95)")
+        , Attr.style "border" "2px solid var(--color-brand-yellow)"
+        , Attr.style "border-radius" "9999px"
+        , Attr.style "color" "var(--color-text-on-dark)"
+        , Attr.style "font-size" "0.875rem"
+        , Attr.style "font-weight" "700"
+        , Attr.style "white-space" "nowrap"
+        , Attr.style "overflow" "hidden"
+        , Attr.style "text-overflow" "ellipsis"
+        , Attr.style "box-shadow" "0 10px 25px rgba(0, 0, 0, 0.6)"
+        ]
+        [ text ("All " ++ String.fromInt gearCount ++ " gears are rotating together!") ]
 
 
 {-| The studio canvas. While the machine is animated the turning gears are
@@ -1119,47 +1179,61 @@ viewDock : Model -> Html Msg
 viewDock model =
     div
         [ Attr.style "display" "flex"
-        , Attr.style "flex-direction" "column"
-        , Attr.style "align-items" "center"
+        , Attr.style "align-items" "stretch"
         , Attr.style "gap" "0.5rem"
-        , Attr.style "padding" "0.75rem 1rem"
+        , Attr.style "box-sizing" "border-box"
+        , Attr.style "height" PartCard.compactPanelHeight
+        , Attr.style "min-width" "0"
+        , Attr.style "max-width" "100%"
+        , Attr.style "padding" "0.5rem"
         , Attr.style "background" "rgba(5, 19, 29, 0.92)"
         , Attr.style "backdrop-filter" "blur(12px)"
-        , Attr.style "border-radius" "1.25rem"
+        , Attr.style "border-radius" "1rem"
         , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
         , Attr.style "box-shadow" "0 20px 25px -5px rgba(0, 0, 0, 0.5)"
         , Attr.style "pointer-events" "auto"
-        , Attr.style "min-width" "0"
         , keepFocusOnCanvas
         ]
-        [ -- Category Tabs
-          div
-            [ Attr.style "display" "flex"
-            , Attr.style "gap" "0.375rem"
-            , Attr.style "margin-bottom" "0.25rem"
-            ]
-            (let
-                categories =
-                    if List.isEmpty model.projectParts then
-                        [ GearsCategory, BeamsCategory, AxlesCategory, PinsCategory ]
-
-                    else
-                        [ ProjectCategory, GearsCategory, BeamsCategory, AxlesCategory, PinsCategory ]
-             in
-             List.map (categoryTab model.activeCategory) categories
-            )
-
-        -- Parts Row
+        [ categoryTabs model
         , div
-            [ Attr.style "display" "flex"
+            [ Attr.attribute "role" "group"
+            , Attr.attribute "aria-label" "Parts"
+            , Attr.style "display" "flex"
             , Attr.style "align-items" "center"
             , Attr.style "gap" "0.5rem"
+            , Attr.style "flex" "1 1 auto"
+            , Attr.style "min-width" "0"
             , Attr.style "overflow-x" "auto"
-            , Attr.style "max-width" "100%"
-            , Attr.style "padding" "0.25rem"
+            , Attr.style "padding" "0.125rem"
             ]
             (List.map (partCard model.thumbnails) (dockParts model))
         ]
+
+
+{-| The category tabs: a narrow column on the left of the dock.
+-}
+categoryTabs : Model -> Html Msg
+categoryTabs model =
+    let
+        categories =
+            if List.isEmpty model.projectParts then
+                [ GearsCategory, BeamsCategory, AxlesCategory, PinsCategory ]
+
+            else
+                [ ProjectCategory, GearsCategory, BeamsCategory, AxlesCategory, PinsCategory ]
+    in
+    div
+        [ Attr.attribute "role" "tablist"
+        , Attr.attribute "aria-orientation" "vertical"
+        , Attr.attribute "aria-label" "Part categories"
+        , Attr.style "display" "flex"
+        , Attr.style "flex-direction" "column"
+        , Attr.style "justify-content" "space-between"
+        , Attr.style "flex-shrink" "0"
+        , Attr.style "width" "4.5rem"
+        , Attr.style "min-height" "0"
+        ]
+        (List.map (categoryTab model.activeCategory) categories)
 
 
 categoryTab : Category -> Category -> Html Msg
@@ -1167,14 +1241,38 @@ categoryTab active cat =
     let
         isSelected =
             active == cat
+
+        label =
+            case cat of
+                ProjectCategory ->
+                    "Project"
+
+                PinsCategory ->
+                    "Pins"
+
+                _ ->
+                    Catalog.categoryLabel cat
     in
     button
         [ onClick (SetCategory cat)
-        , Attr.style "padding" "0.375rem 0.75rem"
-        , Attr.style "font-size" "0.875rem"
+        , Attr.attribute "role" "tab"
+        , Attr.attribute "aria-selected"
+            (if isSelected then
+                "true"
+
+             else
+                "false"
+            )
+        , Attr.title (Catalog.categoryLabel cat)
+        , Attr.style "flex-shrink" "0"
+        , Attr.style "width" "100%"
+        , Attr.style "padding" "0.1875rem 0.25rem"
+        , Attr.style "font-size" "0.6875rem"
         , Attr.style "font-weight" "600"
+        , Attr.style "line-height" "1.2"
+        , Attr.style "white-space" "nowrap"
         , Attr.style "border" "none"
-        , Attr.style "border-radius" "9999px"
+        , Attr.style "border-radius" "0.375rem"
         , Attr.style "background"
             (if isSelected then
                 "var(--color-brand-yellow)"
@@ -1192,11 +1290,11 @@ categoryTab active cat =
         , Attr.style "cursor" "pointer"
         , Attr.style "transition" "all 150ms ease"
         ]
-        [ text (Catalog.categoryLabel cat) ]
+        [ text label ]
 
 
-{-| One dock part as a visual card: its rendered image, its name and its part
-number. Project kit parts are named by their .dat title once it is known.
+{-| One dock part as a compact picture card. Its name, part number and
+description are in the tooltip and the accessible name.
 -}
 partCard : Dict String Thumbnail -> PartItem -> Html Msg
 partCard thumbnails item =
@@ -1218,20 +1316,12 @@ partCard thumbnails item =
 
                 _ ->
                     item.name
-
-        secondary =
-            if name == partNumber then
-                Catalog.categoryLabel item.category
-
-            else
-                partNumber
     in
-    PartCard.view
+    PartCard.compactView
         { imageUrl = Maybe.map .url thumb
-        , name = name
-        , secondary = secondary
         , tooltip = name ++ " (" ++ item.file ++ ")" ++ descriptionSuffix item.description
-        , ariaLabel = "Add " ++ name
+        , ariaLabel = "Add " ++ name ++ " (" ++ partNumber ++ ")"
+        , badge = Nothing
         , onClick = Just (AddPart item)
         , attributes = [ keepFocusOnCanvas ]
         }
@@ -1279,7 +1369,8 @@ reachable with a plain mouse or a single finger.
 helpRows : List ( String, List ( String, String ) )
 helpRows =
     [ ( "Build"
-      , [ ( "Add from the dock", "Gears, axles, beams and pins go on one axle line, next to the selection" )
+      , [ ( "Menu, top right", "Undo, redo, delete, clear, and this list" )
+        , ( "Add from the dock", "Gears, axles, beams and pins go on one axle line, next to the selection" )
         , ( "Drag a part", "Slide it at its height, as seen from the camera; it snaps to studs and axles. Grab a gear by its axle hole too" )
         , ( "Shift + drag a part", "Fine move: 1 LDU steps (Shift held during a drag works too)" )
         , ( "Gears turn to mesh automatically", "A gear that meets another turns its axle line so the teeth interlock" )
@@ -1369,53 +1460,6 @@ playButton playing =
          else
             [ Icon.feather "play", text "Play" ]
         )
-
-
-toolbarButton : Msg -> Bool -> String -> Html Msg
-toolbarButton =
-    toolbarButtonWith []
-
-
-{-| A toolbar button with extra attributes, such as a longer `title` and
-`aria-label` than its visible label.
--}
-toolbarButtonWith : List (Html.Attribute Msg) -> Msg -> Bool -> String -> Html Msg
-toolbarButtonWith extra msg enabled label =
-    button
-        (extra
-            ++ [ onClick msg
-               , Attr.disabled (not enabled)
-               , Attr.style "padding" "0.375rem 0.75rem"
-               , Attr.style "font-size" "0.875rem"
-               , Attr.style "font-weight" "500"
-               , Attr.style "border" "none"
-               , Attr.style "border-radius" "0.375rem"
-               , Attr.style "background"
-                    (if enabled then
-                        "rgba(255, 255, 255, 0.1)"
-
-                     else
-                        "transparent"
-                    )
-               , Attr.style "color"
-                    (if enabled then
-                        "var(--color-text-on-dark)"
-
-                     else
-                        "rgba(255, 255, 255, 0.3)"
-                    )
-               , Attr.style "cursor"
-                    (if enabled then
-                        "pointer"
-
-                     else
-                        "not-allowed"
-                    )
-               , Attr.style "white-space" "nowrap"
-               , Attr.style "transition" "all 150ms ease"
-               ]
-        )
-        [ text label ]
 
 
 {-| Main application program.

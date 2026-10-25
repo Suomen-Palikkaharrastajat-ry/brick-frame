@@ -65,6 +65,9 @@ featherSized size name =
                 "trash-2" ->
                     FeatherIcons.trash2
 
+                "menu" ->
+                    FeatherIcons.menu
+
                 _ ->
                     FeatherIcons.play
     in
