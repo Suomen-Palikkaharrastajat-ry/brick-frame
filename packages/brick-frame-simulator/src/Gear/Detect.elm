@@ -1,4 +1,15 @@
-module Gear.Detect exposing (buildGearGraph, buildGearGraphReference, extractGears)
+module Gear.Detect exposing
+    ( MeshFacts
+    , buildGearGraph
+    , buildGearGraphReference
+    , canonicalAxis
+    , extractGears
+    , isBevelLike
+    , isCrownLike
+    , isWorm
+    , meshFacts
+    , meshing
+    )
 
 {-| Gear detection: identify known gear parts within a loaded LDraw
 model and build a connectivity graph from their world positions.
@@ -238,8 +249,35 @@ meshToleranceFor expectedDistance =
     clamp 0.8 2.0 (expectedDistance * 0.035)
 
 
-meshing : GearInstance -> GearInstance -> Bool
-meshing g1 g2 =
+{-| The measurements behind the mesh test for one pair of gears, so a UI can
+explain _why_ two gears do or do not mesh using exactly the rules of
+`buildGearGraph`.
+
+  - `distance` — centre-to-centre distance (LDU)
+  - `expected` — required centre distance, the sum of the pitch radii
+  - `tolerance` — allowed `|distance - expected|`
+  - `perpendicular` — the pair needs perpendicular axes (crown, bevel or worm)
+  - `absDot` — `|axis1 · axis2|` (1 = parallel, 0 = perpendicular)
+  - `axialOffset` — offset of the second centre along the first gear's axis
+  - `axisOk` — the axis rule for this pair holds (for spur pairs that is
+    parallel axes _and_ the same plane)
+
+-}
+type alias MeshFacts =
+    { distance : Float
+    , expected : Float
+    , tolerance : Float
+    , perpendicular : Bool
+    , absDot : Float
+    , axialOffset : Float
+    , axisOk : Bool
+    }
+
+
+{-| Measure a pair of gears against the mesh rules; see `MeshFacts`.
+-}
+meshFacts : GearInstance -> GearInstance -> MeshFacts
+meshFacts g1 g2 =
     let
         dist =
             Vec3.distance g1.worldPosition g2.worldPosition
@@ -262,27 +300,45 @@ meshing g1 g2 =
         axialOffset =
             abs (Vec3.dot centerDelta axis1)
 
+        -- Crown gears mesh with perpendicular mating gears, bevel meshes are
+        -- approximately perpendicular, and worm-spur meshes have
+        -- perpendicular axes.
+        perpendicular =
+            isCrownLike g1.spec
+                || isCrownLike g2.spec
+                || isBevelLike g1.spec
+                || isBevelLike g2.spec
+                || isWorm g1.spec
+                || isWorm g2.spec
+
         axisOk =
-            if isCrownLike g1.spec || isCrownLike g2.spec then
-                -- Crown gears mesh with perpendicular mating gears.
-                absDot <= 0.35
-
-            else if isBevelLike g1.spec || isBevelLike g2.spec then
-                -- Bevel/crown meshes are approximately perpendicular
-                absDot <= 0.35
-
-            else if isWorm g1.spec || isWorm g2.spec then
-                -- Worm-spur meshes have perpendicular axes
+            if perpendicular then
                 absDot <= 0.35
 
             else
                 -- Spur meshes share a common axle direction
                 absDot >= 0.9 && axialOffset <= 2.0
-
-        radialTolerance =
-            meshToleranceFor expected
     in
-    axisOk && abs (dist - expected) <= radialTolerance
+    { distance = dist
+    , expected = expected
+    , tolerance = meshToleranceFor expected
+    , perpendicular = perpendicular
+    , absDot = absDot
+    , axialOffset = axialOffset
+    , axisOk = axisOk
+    }
+
+
+{-| True when two gears mesh: the axis rule holds and the centre distance is
+within tolerance of the sum of the pitch radii.
+-}
+meshing : GearInstance -> GearInstance -> Bool
+meshing g1 g2 =
+    let
+        facts =
+            meshFacts g1 g2
+    in
+    facts.axisOk && abs (facts.distance - facts.expected) <= facts.tolerance
 
 
 {-| True when two gears share a physical axle: parallel axes with negligible

@@ -86,7 +86,7 @@ suite =
                         , \_ -> Expect.equal (Just ZoomOut) (action "-")
                         ]
                         ()
-            , test "the number row selects view presets" <|
+            , test "the number row selects view presets, 6 looking up from below" <|
                 \_ ->
                     List.map action [ "1", "2", "3", "4", "5", "6" ]
                         |> Expect.equal
@@ -95,8 +95,11 @@ suite =
                             , Just PresetLeft
                             , Just PresetRight
                             , Just PresetTop
-                            , Just PresetIsometric
+                            , Just PresetBottom
                             ]
+            , test "backquote selects the isometric view" <|
+                \_ ->
+                    action "`" |> Expect.equal (Just PresetIsometric)
             , test "unbound keys do nothing" <|
                 \_ ->
                     Expect.all

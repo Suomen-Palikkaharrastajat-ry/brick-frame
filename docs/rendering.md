@@ -190,6 +190,34 @@ Projection: `Mat4.makePerspective Camera.fovYDegrees aspect near far` (FOV 45°)
 the frustum cull in `Render.Pick.isSphereVisible`, `Render.Instanced`'s pixel-radius
 LOD, and the pan scale all read it.
 
+### Re-pivoting (follow the clicked part)
+
+`Camera.repivot newTarget` moves the orbit pivot by **translating the view**: it
+sets `target` and keeps azimuth, elevation, distance and the zoom range, so the
+eye slides along with the target. Nothing turns and nothing zooms; the new pivot
+lands in the centre of the screen and screen-relative directions (camera-left,
+away from the camera — what W/A/S/D move along) stay the same. It leaves the
+camera alone in `Walk` (the eye is the pivot).
+
+(It used to keep the eye fixed and recompute azimuth/elevation/distance instead.
+Playtests found that disorienting: it zoomed right into a freshly added big gear,
+pushed the neighbours to the screen edge, and changed the azimuth so the W/A/S/D
+axes flipped near 45°.)
+
+`Viewport.pivotOn target` applies it to a viewport and marks the camera manual,
+so auto-fit no longer takes over. It does not snap: the target **glides** to the
+new pivot over 280 ms (smoothstep, one `repivot` of the starting camera per
+animation frame — a pan). Any other camera change (the user orbiting, Fit View),
+or a drag capturing the pointer, abandons the glide where it is, and it is a
+no-op before any content has been measured. Fit View is the reset: it recentres
+on the model. The editing hosts (`Studio.Core` for Brick Play and Brick
+Contraptions, `Studio.Workspace` in the studio) call it **only on an explicit
+click or tap that selects a part** (including a part pressed and released
+without moving it) — never on adding a part, keyboard or action-bar moves, a
+drag drop, undo/redo or select all. The viewer, the studio's Preview and
+Instructions pages never do. Tests of "the camera did not move" compare
+`target` plus azimuth/elevation/distance.
+
 ### Sensitivity
 
 Every interaction constant is relative to the viewport rather than a fixed
@@ -259,10 +287,48 @@ same figure as before.
 
 ## Interaction controls
 
-- **Desktop:** drag to orbit, `Shift + drag` to pan, wheel to zoom.
-- **Touch:** 1-finger orbit, 2-finger pan + pinch zoom.
+- **Desktop mouse:** see the table below. Wheel zooms in every host.
+- **Desktop mouse buttons** (`Viewport.update`, `Viewport.Decode.mouseButtonDecoder`).
+  The viewport emits the same events everywhere; what a left drag on empty
+  canvas does depends on the host's `Studio.Core.DragMode`:
+  - Viewer and studio (`DragPartsOrOrbit`, the default): left drag on empty canvas orbits.
+    In the studio a left drag on a part moves it.
+  - Brick Play and Brick Contraptions (`DragPartsOrPan OneFinger…`): left drag on empty
+    canvas pans, exactly like Shift + drag (`Viewport.panCurrentGesture`). A left drag on
+    a part moves it. A click on empty canvas still clears the selection. Shift + left
+    press on a part grabs it for a fine move (`Viewport.setShiftPressGrabs`, switched on by
+    `Core.setDragMode`); Shift + left press on empty canvas pans. Holding Shift during a
+    body drag moves on a 1 LDU grid (the normal grid returns on release).
+
+  | Input | Viewer, studio | Brick Play, Brick Contraptions | Event |
+  |---|---|---|---|
+  | Left drag, plain | Orbit (empty canvas); a part is picked up if pressed | Pan (empty canvas); a part is picked up if pressed | `PressStarted`, host may `captureDrag` |
+  | Left drag + Shift | Pan | Pan on empty canvas; grabs a part (fine, 1 LDU) | `PressStarted` on a part (Play, Contraptions only), else none |
+  | Left drag + Ctrl / Cmd | Orbit | Orbit | none (never grabs) |
+  | Right drag | Orbit | Orbit | none (never grabs) |
+  | Middle drag | Pan | Pan | none (never grabs) |
+  | Space held + drag | Pan, only with `Viewport.setSpacePan True` (the studio workspace) | Not enabled | none |
+  | Left click, no drag | none | none | `Clicked x y toggle`, `toggle` = Shift, Ctrl or Cmd |
+  | Right / middle click, no drag | none | none | none |
+
+  A right press while a drag is captured emits `DragCancelled` and releases the
+  capture. The canvas suppresses the context menu, and the middle button's
+  default autoscroll is prevented. Held movement keys do not move the camera
+  while a capture is active.
+- **Touch:** 2-finger pan + pinch zoom in every host. One finger orbits in the
+  viewer, the studio and Brick Play (`OneFingerOrbits`, since touch has no right
+  button). In Brick Contraptions one finger pans (`OneFingerPans`), because the
+  camera globe below does the orbiting. A tap without travel clears the selection.
+- **Camera globe** (Brick Contraptions, `Contraption.CameraGlobe`): a globe drawn
+  from a fixed viewpoint above the horizon, with the camera's marker on it. Drag on
+  the globe to fly the camera (the marker follows the pointer, `dragOrbit`), tap a
+  point to jump straight there (`flyToDelta`), and use the reset button to fit the
+  whole model (`ResetView` → `FitView`). The zoom slider is log-scale (`zoomLevel`,
+  `wheelDeltaForZoom`), so each step zooms by the same factor. The host owns the
+  pointer state and only forwards camera messages.
 - **Fit view:** the ⛶ button in the viewer control pad re-frames the model
-  (`FitView` → `frameModelBounds`). Without it the camera was a one-way door:
+  (`FitView` → `frameModelBounds`); Brick Play's toolbar Fit View and Brick
+  Contraptions' globe reset do the same, and `F` works everywhere. Without it the camera was a one-way door:
   the first interaction switches `cameraMode` to `CameraManual` and auto-fit
   never runs again, so a model lost off-screen needed a page reload. Fitting also
   returns to `Orbit`.
@@ -292,7 +358,8 @@ also backs the `?` overlay, so the reference cannot drift from the bindings.
 | `+` `-` | Zoom |
 | `F`, `Home` | Fit whole model |
 | `G` | Street level on / off |
-| `1`–`6` | Front, back, left, right, top, isometric |
+| `1`–`6` | Front, back, left, right, top, bottom |
+| `` ` `` | Isometric (3/4) view |
 | `?` | Shortcut reference |
 | `Esc` | Close the reference, then leave street level |
 | `Space` | Play / pause |
@@ -312,8 +379,8 @@ to a tab switch would otherwise leave the camera walking forever.
 
 `Viewport.applyViewPreset` reuses `cameraForBounds` for the target and distance —
 both come from the bounding *sphere* and so are independent of viewing angle —
-then overrides the angles from `viewPresetAngles`. `TopView` stops just short of
-straight down, matching the camera's own elevation clamp.
+then overrides the angles from `viewPresetAngles`. `TopView` and `BottomView` stop just short of
+straight up and down, matching the camera's own elevation clamp.
 
 ### Touch event handling
 

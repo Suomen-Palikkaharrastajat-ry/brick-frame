@@ -16,7 +16,7 @@ import Gear.Physics
         , propagate
         , propagateWithLinkages
         )
-import Gear.Types exposing (GearGraph, GearId, GearSpec)
+import Gear.Types exposing (GearGraph, GearId, GearInstance, GearSpec)
 import Math.Matrix4 as Mat4
 import Math.Vector3 exposing (vec3)
 import Test exposing (Test, describe, test)
@@ -238,6 +238,91 @@ suite =
                         |> angleAt
                         |> (\f -> f 2)
                         |> Expect.within (Expect.Absolute 1.0e-6) -0.5
+            , test "co-axial gear with its axis flipped turns at the negated angle" <|
+                \_ ->
+                    -- Gear 1 is turned 180° about X, so its true axis points against gear 0's.
+                    let
+                        flippedGraph =
+                            geometryGraph
+                                [ placedGear "3648.dat" 0 24 Mat4.identity
+                                , placedGear "3647.dat" 1 8 (Mat4.makeRotate pi (vec3 1 0 0))
+                                ]
+                                |> (\g -> { g | rigidAxles = Dict.fromList [ ( 0, [ 1 ] ), ( 1, [ 0 ] ) ], connections = Dict.empty })
+                    in
+                    propagate flippedGraph 0 2.0
+                        |> angleAt
+                        |> (\f -> f 1)
+                        |> Expect.within (Expect.Absolute 1.0e-6) -2.0
+            , test "co-axial gears with matching axes keep the same angle" <|
+                \_ ->
+                    let
+                        sameGraph =
+                            geometryGraph
+                                [ placedGear "3648.dat" 0 24 Mat4.identity
+                                , placedGear "3647.dat" 1 8 Mat4.identity
+                                ]
+                                |> (\g -> { g | rigidAxles = Dict.fromList [ ( 0, [ 1 ] ), ( 1, [ 0 ] ) ], connections = Dict.empty })
+                    in
+                    propagate sameGraph 0 2.0
+                        |> angleAt
+                        |> (\f -> f 1)
+                        |> Expect.within (Expect.Absolute 1.0e-6) 2.0
+            ]
+        , describe "propagate — signed ratios from gear geometry"
+            [ test "same-orientation 8T driving 24T along X: -1/3 (unchanged rule)" <|
+                \_ ->
+                    let
+                        d =
+                            (8 + 24) / (2 * pi)
+
+                        g =
+                            geometryGraph
+                                [ placedGear "3647.dat" 0 8 Mat4.identity
+                                , placedGear "3648.dat" 1 24 (Mat4.makeTranslate3 d 0 0)
+                                ]
+                    in
+                    propagate g 0 1.0
+                        |> angleAt
+                        |> (\f -> f 1)
+                        |> Expect.within (Expect.Absolute 1.0e-6) (-1 / 3)
+            , test "one gear flipped (16T flipped, 24T upright): ratio sign is positive" <|
+                \_ ->
+                    let
+                        d =
+                            (16 + 24) / (2 * pi)
+
+                        g =
+                            geometryGraph
+                                [ placedGear "4019.dat" 0 16 Mat4.identity
+                                , placedGear "3648.dat" 1 24 (Mat4.mul (Mat4.makeTranslate3 d 0 0) flipX)
+                                ]
+                    in
+                    propagate g 0 1.0
+                        |> angleAt
+                        |> (\f -> f 1)
+                        |> Expect.within (Expect.Absolute 1.0e-6) (2 / 3)
+            , test "crown 24T with spur 16T: sign is the product of the two axis flips" <|
+                \_ ->
+                    let
+                        spurDistance =
+                            16 / (2 * pi)
+
+                        expectation ( ss, sc ) () =
+                            let
+                                g =
+                                    geometryGraph
+                                        [ placedGear "3650b.dat" 0 24 (flipIf (sc < 0) Mat4.identity)
+                                        , placedGear "4019.dat" 1 16 (Mat4.mul (Mat4.makeTranslate3 0 0 spurDistance) (Mat4.makeRotate (toFloat ss * pi / 2) (vec3 0 1 0)))
+                                        ]
+                            in
+                            propagate g 0 1.0
+                                |> angleAt
+                                |> (\f -> f 1)
+                                |> Expect.within (Expect.Absolute 1.0e-6) (1.5 * toFloat (ss * sc))
+                    in
+                    Expect.all
+                        (List.map expectation [ ( 1, 1 ), ( 1, -1 ), ( -1, 1 ), ( -1, -1 ) ])
+                        ()
             ]
         , describe "Kinematic Linkages"
             [ test "crank-slider calculates exact position at top/bottom dead center and quadrature" <|
@@ -374,3 +459,49 @@ suite =
                         |> Expect.equal Nothing
             ]
         ]
+
+
+
+-- ── Geometry helpers ──────────────────────────────────────────────────────────
+
+
+flipX : Mat4.Mat4
+flipX =
+    Mat4.makeRotate pi (vec3 1 0 0)
+
+
+flipIf : Bool -> Mat4.Mat4 -> Mat4.Mat4
+flipIf flipped m =
+    if flipped then
+        Mat4.mul m flipX
+
+    else
+        m
+
+
+{-| A gear with pitch radius `teeth / (2·pi)` at the origin of its matrix.
+-}
+placedGear : String -> GearId -> Int -> Mat4.Mat4 -> GearInstance
+placedGear partFile id teeth m =
+    { id = id
+    , spec = { partFile = partFile, teeth = teeth, pitchRadius = toFloat teeth / (2 * pi) }
+    , color = 16
+    , worldPosition = Mat4.transform m (vec3 0 0 0)
+    , worldMatrix = m
+    }
+
+
+{-| A graph in which every gear meshes with every other one.
+-}
+geometryGraph : List GearInstance -> GearGraph
+geometryGraph gears =
+    let
+        ids =
+            List.map .id gears
+    in
+    { instances = Array.fromList gears
+    , connections =
+        Dict.fromList
+            (List.map (\g -> ( g.id, List.filter (\i -> i /= g.id) ids )) gears)
+    , rigidAxles = Dict.empty
+    }

@@ -380,4 +380,58 @@ suite =
                     Camera.walkSpeed (Camera.setSceneRadius 10 bigModelCamera)
                         |> Expect.greaterThan 0
             ]
+        , describe "repivot"
+            [ test "translates the eye with the target for several targets" <|
+                \_ ->
+                    let
+                        cam =
+                            { bigModelCamera | distance = 300 }
+
+                        eye =
+                            Camera.position cam
+
+                        check target =
+                            Vec3.distance
+                                (Vec3.add eye (Vec3.sub target cam.target))
+                                (Camera.position (Camera.repivot target cam))
+                                |> Expect.within (Expect.Absolute 1.0e-6) 0
+                    in
+                    Expect.all
+                        (List.map (\t -> \_ -> check t)
+                            [ vec3 0 0 0, vec3 40 -8 -60, vec3 -120 24 30, vec3 10 100 5 ]
+                        )
+                        ()
+            , test "moves the target to the new pivot" <|
+                \_ ->
+                    (Camera.repivot (vec3 40 -8 -60) bigModelCamera).target
+                        |> Expect.equal (vec3 40 -8 -60)
+            , test "keeps azimuth, elevation, distance and zoom range" <|
+                \_ ->
+                    let
+                        cam =
+                            Camera.setZoomRange 50 1000 { bigModelCamera | distance = 300 }
+
+                        moved =
+                            Camera.repivot (Vec3.add (Camera.position cam) (vec3 10 -10 -10)) cam
+                    in
+                    Expect.equal
+                        ( ( moved.azimuth, moved.elevation ), ( moved.distance, moved.minDistance, moved.maxDistance ) )
+                        ( ( cam.azimuth, cam.elevation ), ( cam.distance, cam.minDistance, cam.maxDistance ) )
+            , test "orbiting afterwards turns around the new pivot" <|
+                \_ ->
+                    let
+                        pivot =
+                            vec3 40 0 -60
+
+                        turned =
+                            Camera.repivot pivot { bigModelCamera | distance = 300 }
+                                |> Camera.orbitBy 0.5 0
+                    in
+                    Vec3.distance (Camera.position turned) pivot
+                        |> Expect.within (Expect.Relative 1.0e-9) turned.distance
+            , test "does nothing in walk navigation" <|
+                \_ ->
+                    Camera.repivot (vec3 40 0 -60) walkCamera
+                        |> Expect.equal walkCamera
+            ]
         ]

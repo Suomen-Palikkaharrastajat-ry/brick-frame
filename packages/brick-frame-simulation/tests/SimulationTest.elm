@@ -10,16 +10,21 @@ import Gear.Types exposing (GearSpec)
 import LDraw.Resolve as Resolve exposing (PartStatus(..))
 import LDraw.Types exposing (LDrawLine(..))
 import Math.Matrix4 as Mat4
+import Math.Vector3 as Vec3
 import Render.Camera as Camera
+import Render.Style as Style
+import Set
 import Simulation exposing (Event(..), Msg(..))
 import Test exposing (Test, describe, test)
 import Time
+import WebGL
 
 
 specs : List GearSpec
 specs =
     [ { partFile = "3647.dat", teeth = 8, pitchRadius = 10 }
     , { partFile = "4019.dat", teeth = 16, pitchRadius = 20 }
+    , { partFile = "3648.dat", teeth = 24, pitchRadius = 30 }
     ]
 
 
@@ -45,6 +50,62 @@ meshingPair =
     [ part "3647.dat" 0, part "4019.dat" 30, part "3001.dat" 100 ]
 
 
+{-| Two 24T gears 60 LDU apart along X, both turning about Z (their pitch radii
+sum), with an axle along Z through the second one.
+-}
+drivenLines : List LDrawLine
+drivenLines =
+    [ gear24 0, gear24 60, axleAlongZ 60 0 ]
+
+
+gear24 : Float -> LDrawLine
+gear24 x =
+    SubFileRef { color = 4, transform = Mat4.makeTranslate3 x 0 0, file = "3648.dat" }
+
+
+{-| An axle along Z at (x, y, 0): its local X turned to Z.
+-}
+axleAlongZ : Float -> Float -> LDrawLine
+axleAlongZ x y =
+    SubFileRef
+        { color = 0
+        , transform = Mat4.mul (Mat4.makeTranslate3 x y 0) (Mat4.makeRotate (pi / 2) (Vec3.vec3 0 1 0))
+        , file = "3705.dat"
+        }
+
+
+drivenCache : Resolve.PartCache
+drivenCache =
+    Dict.fromList
+        [ ( "3648.dat", Loaded [] )
+        , ( "3705.dat", Loaded [] )
+        ]
+
+
+{-| The model with the driven layout, plus an axle 200 LDU away that nothing drives.
+-}
+drivenModel : Simulation.Model
+drivenModel =
+    Simulation.init config
+        |> Simulation.analyse { lines = drivenLines ++ [ axleAlongZ 200 0 ], cache = drivenCache }
+        |> Tuple.first
+
+
+drivenPartsFor : List Int -> Simulation.Model -> List Simulation.DrivenPart
+drivenPartsFor ids =
+    Simulation.drivenPartsFor (Set.fromList ids)
+
+
+drivenEntities : List Int -> Simulation.Model -> List WebGL.Entity
+drivenEntities ids =
+    Simulation.drivenEntitiesFor (Set.fromList ids) Camera.init Style.defaultStyle 1.0
+
+
+originX : Simulation.DrivenPart -> Float
+originX drivenPart =
+    Vec3.getX (Mat4.transform drivenPart.transform (Vec3.vec3 0 0 0))
+
+
 cache : Resolve.PartCache
 cache =
     Dict.fromList
@@ -59,6 +120,65 @@ analysed =
     Simulation.init config
         |> Simulation.analyse { lines = meshingPair, cache = cache }
         |> Tuple.first
+
+
+{-| An analysed model of the given lines, read at t = 1 s with the motor on gear 0.
+-}
+meshModel : List LDrawLine -> Simulation.Model
+meshModel lines =
+    Simulation.init config
+        |> Simulation.analyse { lines = lines, cache = Dict.union drivenCache cache }
+        |> Tuple.first
+        |> Simulation.setTime 1.0
+
+
+{-| A gear at (x, 0, 0), turned 180° about X when flipped, so its local +Z points the other way.
+-}
+gearAt : String -> Bool -> Float -> LDrawLine
+gearAt file flipped x =
+    let
+        turn =
+            if flipped then
+                Mat4.makeRotate pi (Vec3.vec3 1 0 0)
+
+            else
+                Mat4.identity
+    in
+    SubFileRef { color = 4, transform = Mat4.mul (Mat4.makeTranslate3 x 0 0) turn, file = file }
+
+
+signum : Float -> Float
+signum x =
+    if x < 0 then
+        -1
+
+    else
+        1
+
+
+{-| The sense, +1 or -1, in which a rotation by `angle` about `axis` turns as seen
+along the world Z axis (where all test gears point along ±Z).
+-}
+visualSense : Float -> Vec3.Vec3 -> Float
+visualSense angle axis =
+    signum (angle * Vec3.getZ axis)
+
+
+{-| The visual sense of a gear, from its rendered axis and its angle.
+-}
+gearSense : Simulation.Model -> Int -> Maybe Float
+gearSense m gearId =
+    Maybe.map2 visualSense
+        (Dict.get gearId m.gearAngles)
+        (Dict.get gearId m.gearMeshes |> Maybe.map .axis)
+
+
+{-| The product of the visual senses of gears 0 and 1: -1 when they turn opposite ways, +1 when together.
+-}
+oppositeWays : Simulation.Model -> Float
+oppositeWays m =
+    Maybe.map2 (*) (gearSense m 0) (gearSense m 1)
+        |> Maybe.withDefault 0
 
 
 time : Int -> Time.Posix
@@ -211,6 +331,142 @@ suite =
                     in
                     ( once.playback.running, twice.playback.running )
                         |> Expect.equal ( True, False )
+            ]
+        , describe "host clock"
+            [ test "setTime turns the gears by ratio x speed x t, meshing gears opposite ways" <|
+                \_ ->
+                    let
+                        at =
+                            Simulation.setTime 0.5 analysed
+                    in
+                    ( Dict.get 0 at.gearAngles, Dict.get 1 at.gearAngles )
+                        |> Expect.all
+                            [ \_ -> Expect.within (Expect.Absolute 0.0001) 0.5 at.playback.currentTime
+                            , \( motor, _ ) -> Expect.within (Expect.Absolute 0.0001) pi (Maybe.withDefault 0 motor)
+                            , \( _, driven ) -> Expect.within (Expect.Absolute 0.0001) (-pi / 2) (Maybe.withDefault 0 driven)
+                            ]
+            , test "setTime is a pure function of the time" <|
+                \_ ->
+                    Simulation.setTime 0.3 (Simulation.setTime 7 analysed)
+                        |> .gearAngles
+                        |> Expect.equal (Simulation.setTime 0.3 analysed).gearAngles
+            , test "rotatingGearIds lists the motor's gear train, not a lone gear" <|
+                \_ ->
+                    Simulation.init config
+                        |> Simulation.analyse { lines = meshingPair ++ [ part "3647.dat" 500 ], cache = cache }
+                        |> Tuple.first
+                        |> Simulation.rotatingGearIds
+                        |> Expect.equal (Set.fromList [ 0, 1 ])
+            , test "rotatingGearIds leaves out gears without a loaded mesh" <|
+                \_ ->
+                    Simulation.init config
+                        |> Simulation.analyse { lines = meshingPair, cache = Dict.remove "4019.dat" cache }
+                        |> Tuple.first
+                        |> Simulation.rotatingGearIds
+                        |> Expect.equal (Set.fromList [ 0 ])
+            ]
+        , describe "true axes"
+            [ test "a flipped gear is rendered about its own true axis" <|
+                \_ ->
+                    let
+                        m =
+                            meshModel [ gearAt "3648.dat" False 0, gearAt "4019.dat" True 50 ]
+                    in
+                    [ Dict.get 0 m.gearMeshes, Dict.get 1 m.gearMeshes ]
+                        |> List.map (Maybe.map (\g -> signum (Vec3.getZ g.axis)))
+                        |> Expect.equal [ Just -1, Just 1 ]
+            , test "a meshing pair turns opposite ways on screen when one gear is flipped" <|
+                \_ ->
+                    oppositeWays (meshModel [ gearAt "3648.dat" False 0, gearAt "4019.dat" True 50 ])
+                        |> Expect.equal -1
+            , test "a same-orientation meshing pair still turns opposite ways" <|
+                \_ ->
+                    oppositeWays (meshModel [ gearAt "3648.dat" False 0, gearAt "4019.dat" False 50 ])
+                        |> Expect.equal -1
+            , test "a flipped co-axial gear turns with its partner" <|
+                \_ ->
+                    oppositeWays (meshModel [ gearAt "3648.dat" False 0, gearAt "3647.dat" True 0 ])
+                        |> Expect.equal 1
+            , test "a same-orientation co-axial gear turns with its partner" <|
+                \_ ->
+                    oppositeWays (meshModel [ gearAt "3648.dat" False 0, gearAt "3647.dat" False 0 ])
+                        |> Expect.equal 1
+            , test "a driven axle on a flipped gear turns with it" <|
+                \_ ->
+                    let
+                        m =
+                            meshModel [ gearAt "3648.dat" True 0, axleAlongZ 0 0 ]
+                    in
+                    case ( m.componentMeshes, Dict.get 0 m.gearAngles ) of
+                        ( [ axle ], Just angle ) ->
+                            Expect.equal (gearSense m 0) (Just (visualSense angle axle.axis))
+
+                        _ ->
+                            Expect.fail "expected one driven axle on the gear"
+            ]
+        , describe "driven parts"
+            [ test "an axle threaded on a gear is driven by it; a free axle is not" <|
+                \_ ->
+                    drivenPartsFor [ 0, 1 ] drivenModel
+                        |> Expect.all
+                            [ \parts -> Expect.equal [ 1 ] (List.map .drivingGearId parts)
+                            , \parts -> Expect.equal [ "3705.dat" ] (List.map .file parts)
+                            , \parts -> Expect.equal [ 60 ] (List.map originX parts)
+                            ]
+            , test "the driven axle turns with its gear's angle" <|
+                \_ ->
+                    let
+                        at =
+                            Simulation.setTime 0.5 drivenModel
+                    in
+                    ( Dict.get 1 at.gearAngles, List.length (drivenEntities [ 1 ] at) )
+                        |> Expect.all
+                            [ \( angle, _ ) -> Expect.within (Expect.Absolute 0.0001) -pi (Maybe.withDefault 0 angle)
+                            , \( _, count ) -> Expect.equal 2 count
+                            ]
+            , test "only parts of the given gears are drawn turning" <|
+                \_ ->
+                    drivenEntities [ 0 ] drivenModel
+                        |> Expect.equal []
+            , test "an axle 2 LDU off the gear's axis is driven, 4 LDU off is not" <|
+                \_ ->
+                    let
+                        drivenCount y =
+                            Simulation.init config
+                                |> Simulation.analyse { lines = [ gear24 0, gear24 60, axleAlongZ 60 y ], cache = drivenCache }
+                                |> Tuple.first
+                                |> drivenPartsFor [ 0, 1 ]
+                                |> List.length
+                    in
+                    Expect.equal ( 1, 0 ) ( drivenCount 2, drivenCount 4 )
+            , test "a gear turned onto an X-axis axle on Brick Contraptions' axle line drives it" <|
+                \_ ->
+                    -- Contraptions adds gears and axles at Y -60 (its axle line); an axle
+                    -- runs along X by default, and a gear turned to X slides onto it.
+                    let
+                        turnedGear =
+                            SubFileRef
+                                { color = 7
+                                , transform = Mat4.mul (Mat4.makeTranslate3 40 -60 0) (Mat4.makeRotate (pi / 2) (Vec3.vec3 0 1 0))
+                                , file = "3648.dat"
+                                }
+
+                        axleX =
+                            SubFileRef { color = 0, transform = Mat4.makeTranslate3 40 -60 0, file = "3705.dat" }
+                    in
+                    Simulation.init config
+                        |> Simulation.analyse { lines = [ turnedGear, axleX ], cache = drivenCache }
+                        |> Tuple.first
+                        |> drivenPartsFor [ 0 ]
+                        |> List.map (\dp -> ( dp.drivingGearId, dp.file ))
+                        |> Expect.equal [ ( 0, "3705.dat" ) ]
+            , test "a driven part is only listed when its mesh has loaded" <|
+                \_ ->
+                    Simulation.init config
+                        |> Simulation.analyse { lines = drivenLines, cache = Dict.remove "3705.dat" drivenCache }
+                        |> Tuple.first
+                        |> drivenPartsFor [ 0, 1 ]
+                        |> Expect.equal []
             ]
         , describe "motor"
             [ test "SetMotorGear changes the driving gear" <|

@@ -18,6 +18,7 @@ import Render.Camera as Camera
 import Render.Style as Style
 import Set
 import Test exposing (Test, describe, test)
+import Time
 import Viewport exposing (CameraMode(..), Event(..), HeldControl(..), LoadPhase(..), Msg(..))
 import Viewport.Shortcuts as Shortcuts
 
@@ -58,6 +59,20 @@ update : Msg -> Viewport.Model -> ( Viewport.Model, List Event )
 update msg model =
     Viewport.update msg model
         |> (\( m, _, events ) -> ( m, events ))
+
+
+{-| Events a press sends from an idle viewport.
+-}
+pressEvents : Msg -> List Event
+pressEvents msg =
+    update msg idle |> Tuple.second
+
+
+{-| Events a press sends from the given viewport.
+-}
+pressedEvents : Viewport.Model -> Msg -> List Event
+pressedEvents model msg =
+    update msg model |> Tuple.second
 
 
 suite : Test
@@ -126,7 +141,7 @@ suite =
             , test "press and release without moving is a click" <|
                 \_ ->
                     idle
-                        |> update (MouseDown 10 20 False)
+                        |> update (MouseButtonDown 10 20 0 False False)
                         |> Tuple.first
                         |> update (MouseUp 10 20)
                         |> Tuple.second
@@ -134,7 +149,7 @@ suite =
             , test "a canvas placed away from the window origin reports canvas pixels" <|
                 \_ ->
                     Viewport.setCanvasOrigin 300 56 idle
-                        |> update (MouseDown 310 76 False)
+                        |> update (MouseButtonDown 310 76 0 False False)
                         |> Tuple.first
                         |> update (MouseUp 310 76)
                         |> Tuple.second
@@ -198,7 +213,7 @@ suite =
             , test "CanvasPressed dynamically updates canvasOrigin from event" <|
                 \_ ->
                     idle
-                        |> update (CanvasPressed ( 250, 80 ) (MouseDown 260 100 False))
+                        |> update (CanvasPressed ( 250, 80 ) (MouseButtonDown 260 100 0 False False))
                         |> Tuple.first
                         |> update (MouseUp 260 100)
                         |> Tuple.second
@@ -211,10 +226,24 @@ suite =
                         |> update (PointerTouchEnd 1)
                         |> Tuple.second
                         |> Expect.equal [ Tapped 15 25, CameraSettled ]
+            , test "a hover (no button down) does not end auto-fit; a drag does" <|
+                \_ ->
+                    Expect.all
+                        [ \_ -> Expect.equal CameraAutoFit (idle |> update (MouseMove 60 20) |> Tuple.first |> .cameraMode)
+                        , \_ ->
+                            idle
+                                |> update (MouseButtonDown 10 20 0 False False)
+                                |> Tuple.first
+                                |> update (MouseMove 60 20)
+                                |> Tuple.first
+                                |> .cameraMode
+                                |> Expect.equal CameraManual
+                        ]
+                        ()
             , test "press, drag and release settles the camera instead" <|
                 \_ ->
                     idle
-                        |> update (MouseDown 10 20 False)
+                        |> update (MouseButtonDown 10 20 0 False False)
                         |> Tuple.first
                         |> update (MouseMove 60 20)
                         |> Tuple.first
@@ -229,7 +258,7 @@ suite =
                                 |> update (PointerTouchStart { id = 1, x = 5, y = 5 })
                                 |> Tuple.first
                     in
-                    update (MouseDown 10 20 False) touching
+                    update (MouseButtonDown 10 20 0 False False) touching
                         |> Tuple.first
                         |> Expect.equal touching
             , test "releasing a touch that moved settles the camera" <|
@@ -242,16 +271,173 @@ suite =
                         |> update (PointerTouchEnd 1)
                         |> Tuple.second
                         |> Expect.equal [ CameraSettled ]
+            , test "right and middle clicks report nothing" <|
+                \_ ->
+                    let
+                        rightClick =
+                            idle
+                                |> update (MouseButtonDown 10 20 2 False False)
+                                |> Tuple.first
+                                |> update (MouseUp 10 20)
+
+                        middleClick =
+                            idle
+                                |> update (MouseButtonDown 10 20 1 False False)
+                                |> Tuple.first
+                                |> update (MouseUp 10 20)
+                    in
+                    Expect.equal [ [], [] ] [ Tuple.second rightClick, Tuple.second middleClick ]
             , test "ending a touch that never started does nothing" <|
                 \_ ->
                     update (PointerTouchEnd 9) idle
                         |> Tuple.second
                         |> Expect.equal []
             ]
+        , describe "mouse buttons and modifiers"
+            [ test "only a plain left press may grab a part" <|
+                \_ ->
+                    Expect.equal
+                        [ [ PressStarted 10 20 ], [], [], [], [] ]
+                        [ pressEvents (MouseButtonDown 10 20 0 False False)
+                        , pressEvents (MouseButtonDown 10 20 2 False False)
+                        , pressEvents (MouseButtonDown 10 20 1 False False)
+                        , pressEvents (MouseButtonDown 10 20 0 True False)
+                        , pressEvents (MouseButtonDown 10 20 0 False True)
+                        ]
+            , test "a right drag orbits and never pans or grabs" <|
+                \_ ->
+                    let
+                        ( pressed, _ ) =
+                            update (MouseButtonDown 10 20 2 False False) idle
+
+                        ( moved, _ ) =
+                            update (MouseMove 60 20) pressed
+                    in
+                    Expect.all
+                        [ \_ -> Expect.notWithin (Expect.Absolute 1.0e-9) idle.camera.azimuth moved.camera.azimuth
+                        , \_ -> Expect.within (Expect.Absolute 1.0e-6) (Vec3.getX idle.camera.target) (Vec3.getX moved.camera.target)
+                        ]
+                        ()
+            , test "a middle drag pans the target" <|
+                \_ ->
+                    let
+                        ( pressed, _ ) =
+                            update (MouseButtonDown 10 20 1 False False) idle
+
+                        ( moved, _ ) =
+                            update (MouseMove 60 20) pressed
+                    in
+                    Expect.all
+                        [ \_ -> Expect.within (Expect.Absolute 1.0e-9) idle.camera.azimuth moved.camera.azimuth
+                        , \_ -> Expect.notWithin (Expect.Absolute 1.0e-6) (Vec3.getX idle.camera.target) (Vec3.getX moved.camera.target)
+                        ]
+                        ()
+            , test "Ctrl+left click toggles selection" <|
+                \_ ->
+                    idle
+                        |> update (MouseButtonDown 10 20 0 False True)
+                        |> Tuple.first
+                        |> update (MouseUp 10 20)
+                        |> Tuple.second
+                        |> Expect.equal [ Clicked 10 20 True ]
+            , test "a right press cancels a captured drag and reports it" <|
+                \_ ->
+                    let
+                        captured =
+                            update (MouseButtonDown 10 20 0 False False) idle
+                                |> Tuple.first
+                                |> Viewport.captureDrag
+
+                        ( after, events ) =
+                            update (MouseButtonDown 10 20 2 False False) captured
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ DragCancelled ] events
+                        , \_ -> Expect.equal False after.captured
+                        ]
+                        ()
+            , test "held keys do not move the camera while a drag is captured" <|
+                \_ ->
+                    let
+                        held =
+                            idle
+                                |> update (KeyPressed (keyEvent "w"))
+                                |> Tuple.first
+                                |> Viewport.captureDrag
+                    in
+                    Viewport.update (Viewport.AnimationFrame (Time.millisToPosix 1000)) held
+                        |> (\( m, _, _ ) -> Expect.equal held.camera m.camera)
+            , test "a space-held drag pans only when space panning is enabled" <|
+                \_ ->
+                    let
+                        spaceDown =
+                            idle
+                                |> update (KeyPressed (keyEvent " "))
+                                |> Tuple.first
+
+                        ( enabled, _ ) =
+                            update (MouseButtonDown 10 20 0 False False) (Viewport.setSpacePan True spaceDown)
+
+                        ( disabled, pressEvents_ ) =
+                            update (MouseButtonDown 10 20 0 False False) spaceDown
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal True enabled.mousePanDragging
+                        , \_ -> Expect.equal False disabled.mousePanDragging
+                        , \_ -> Expect.equal [ PressStarted 10 20 ] pressEvents_
+                        ]
+                        ()
+            , test "a Shift + left press pans, and never emits PressStarted, by default" <|
+                \_ ->
+                    let
+                        ( pressed, events ) =
+                            update (MouseButtonDown 10 20 0 True False) idle
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [] events
+                        , \_ -> Expect.equal True pressed.mousePanDragging
+                        ]
+                        ()
+            , test "with setShiftPressGrabs a Shift + left press emits PressStarted and does not pan yet" <|
+                \_ ->
+                    let
+                        grabbing =
+                            Viewport.setShiftPressGrabs True idle
+
+                        ( pressed, events ) =
+                            update (MouseButtonDown 10 20 0 True False) grabbing
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ PressStarted 10 20 ] events
+                        , \_ -> Expect.equal False pressed.mousePanDragging
+                        , \_ -> Expect.equal True (Viewport.pressedWithShift pressed)
+                        ]
+                        ()
+            , test "with setShiftPressGrabs Shift + Ctrl, right and middle presses still never grab" <|
+                \_ ->
+                    let
+                        grabbing =
+                            Viewport.setShiftPressGrabs True idle
+                    in
+                    Expect.equal
+                        [ [], [], [], [] ]
+                        [ pressedEvents grabbing (MouseButtonDown 10 20 0 True True)
+                        , pressedEvents grabbing (MouseButtonDown 10 20 2 True False)
+                        , pressedEvents grabbing (MouseButtonDown 10 20 1 True False)
+                        , pressedEvents grabbing (MouseButtonDown 10 20 0 False True)
+                        ]
+            , test "a plain press is unchanged with setShiftPressGrabs on" <|
+                \_ ->
+                    Expect.all
+                        [ \_ -> Expect.equal [ PressStarted 10 20 ] (pressedEvents (Viewport.setShiftPressGrabs True idle) (MouseButtonDown 10 20 0 False False))
+                        , \_ -> Expect.equal False (Viewport.pressedWithShift idle)
+                        ]
+                        ()
+            ]
         , describe "capturing a gesture"
             [ test "a mouse press reports where it started" <|
                 \_ ->
-                    update (MouseDown 10 20 False) idle
+                    update (MouseButtonDown 10 20 0 False False) idle
                         |> Tuple.second
                         |> Expect.equal [ PressStarted 10 20 ]
             , test "a release that did not start on the canvas is not a click" <|
@@ -262,7 +448,7 @@ suite =
             , test "a shift-click says so" <|
                 \_ ->
                     idle
-                        |> update (MouseDown 10 20 True)
+                        |> update (MouseButtonDown 10 20 0 True False)
                         |> Tuple.first
                         |> update (MouseUp 10 20)
                         |> Tuple.second
@@ -271,7 +457,7 @@ suite =
                 \_ ->
                     let
                         pressed =
-                            update (MouseDown 10 20 False) idle
+                            update (MouseButtonDown 10 20 0 False False) idle
                                 |> Tuple.first
                                 |> Viewport.captureDrag
 
@@ -291,12 +477,12 @@ suite =
             , test "after a captured drag the camera follows the mouse again" <|
                 \_ ->
                     idle
-                        |> update (MouseDown 10 20 False)
+                        |> update (MouseButtonDown 10 20 0 False False)
                         |> Tuple.first
                         |> Viewport.captureDrag
                         |> update (MouseUp 10 20)
                         |> Tuple.first
-                        |> update (MouseDown 10 20 False)
+                        |> update (MouseButtonDown 10 20 0 False False)
                         |> Tuple.first
                         |> update (MouseMove 70 20)
                         |> Tuple.second
@@ -351,6 +537,96 @@ suite =
                             [ \( _, events ) -> Expect.equal [ DragEnded 30 40 ] events
                             , \( m, _ ) -> Expect.equal False m.captured
                             ]
+            ]
+        , describe "panCurrentGesture"
+            [ test "a plain left drag turned into a pan moves the target, not the angle" <|
+                \_ ->
+                    let
+                        pressed =
+                            update (MouseButtonDown 100 100 0 False False) idle
+                                |> Tuple.first
+                                |> Viewport.panCurrentGesture
+
+                        ( moved, _ ) =
+                            update (MouseMove 160 120) pressed
+
+                        ( _, upEvents ) =
+                            update (MouseUp 160 120) moved
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal True pressed.mousePanDragging
+                        , \_ -> Expect.notEqual pressed.camera.target moved.camera.target
+                        , \_ -> Expect.within (Expect.Absolute 1.0e-9) pressed.camera.azimuth moved.camera.azimuth
+                        , \_ -> Expect.within (Expect.Absolute 1.0e-9) pressed.camera.elevation moved.camera.elevation
+                        , \_ -> Expect.equal [ CameraSettled ] upEvents
+                        ]
+                        ()
+            , test "it pans exactly like Shift + drag" <|
+                \_ ->
+                    let
+                        dragWith press =
+                            press
+                                |> Tuple.first
+                                |> update (MouseMove 160 120)
+                                |> Tuple.first
+                                |> .camera
+
+                        flipped =
+                            dragWith (update (MouseButtonDown 100 100 0 False False) idle |> Tuple.mapFirst Viewport.panCurrentGesture)
+
+                        shifted =
+                            dragWith (update (MouseButtonDown 100 100 0 True False) idle)
+                    in
+                    Expect.equal shifted.target flipped.target
+            , test "a press-release without travel is still a click" <|
+                \_ ->
+                    update (MouseButtonDown 100 100 0 False False) idle
+                        |> Tuple.first
+                        |> Viewport.panCurrentGesture
+                        |> update (MouseUp 100 100)
+                        |> Tuple.second
+                        |> Expect.equal [ Clicked 100 100 False ]
+            , test "a one-finger drag turned into a pan moves the target, not the angle" <|
+                \_ ->
+                    let
+                        down =
+                            update (PointerTouchStart { id = 1, x = 30, y = 40 }) idle
+                                |> Tuple.first
+                                |> Viewport.panCurrentGesture
+
+                        ( moved, _ ) =
+                            update (PointerTouchMove { id = 1, x = 90, y = 70 }) down
+                    in
+                    Expect.all
+                        [ \_ -> Expect.notEqual down.camera.target moved.camera.target
+                        , \_ -> Expect.within (Expect.Absolute 1.0e-9) down.camera.azimuth moved.camera.azimuth
+                        , \_ -> Expect.equal True (Viewport.isTouchGesture down)
+                        ]
+                        ()
+            , test "without it one finger orbits" <|
+                \_ ->
+                    let
+                        down =
+                            update (PointerTouchStart { id = 1, x = 30, y = 40 }) idle |> Tuple.first
+
+                        ( moved, _ ) =
+                            update (PointerTouchMove { id = 1, x = 90, y = 70 }) down
+                    in
+                    Expect.greaterThan 1.0e-6 (abs (down.camera.azimuth - moved.camera.azimuth))
+            , test "does nothing to a captured gesture or with nothing pressed" <|
+                \_ ->
+                    let
+                        captured =
+                            update (MouseButtonDown 100 100 0 False False) idle
+                                |> Tuple.first
+                                |> Viewport.captureDrag
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal False (Viewport.panCurrentGesture captured).mousePanDragging
+                        , \_ -> Expect.equal False (Viewport.panCurrentGesture idle).mousePanDragging
+                        , \_ -> Expect.equal False (Viewport.isTouchGesture captured)
+                        ]
+                        ()
             ]
         , describe "keyboard"
             [ test "a plain key press is handed to the host and held" <|
@@ -549,6 +825,17 @@ loaded doc =
         |> (\( m, _, _ ) -> m)
 
 
+{-| Run a `pivotOn` glide to the end.
+-}
+settle : Viewport.Model -> Viewport.Model
+settle model =
+    model
+        |> update (AnimationFrame (Time.millisToPosix 0))
+        |> Tuple.first
+        |> update (AnimationFrame (Time.millisToPosix 1000))
+        |> Tuple.first
+
+
 sources : Viewport.Model -> List Int
 sources model =
     model.instancedScene
@@ -696,6 +983,57 @@ documentSuite =
                 in
                 ( Viewport.pickSource 400 300 framed, Viewport.pickSource 5 5 framed )
                     |> Expect.equal ( Just 0, Nothing )
+        , test "hidden sources are left out of the drawing only: still pickable, and empty by default" <|
+            \_ ->
+                let
+                    framed =
+                        loaded (bricks 1)
+                            |> (\m -> { m | width = 800, height = 600 })
+                            |> Viewport.applyDocument (bricks 1)
+                            |> (\( m, _, _ ) -> m)
+
+                    hidden =
+                        Viewport.setHiddenSources (Set.singleton 0) framed
+                in
+                Expect.all
+                    [ \_ -> Expect.equal Set.empty framed.hiddenSources
+                    , \_ -> Expect.equal (Set.singleton 0) hidden.hiddenSources
+                    , \_ -> Expect.equal (Just 0) (Viewport.pickSource 400 300 hidden)
+                    ]
+                    ()
+        , test "a body pick through an empty axle hole grabs the part; a click there picks nothing" <|
+            \_ ->
+                let
+                    -- A flat ring with an empty 6 x 6 hole at its centre: no triangle covers the middle.
+                    ringGeometry =
+                        String.join "\n"
+                            [ "3 16 -10 0 -10 10 0 -10 10 0 -3"
+                            , "3 16 -10 0 -10 10 0 -3 -10 0 -3"
+                            , "3 16 -10 0 3 10 0 3 10 0 10"
+                            , "3 16 -10 0 3 10 0 10 -10 0 10"
+                            , "3 16 -10 0 -3 -3 0 -3 -3 0 3"
+                            , "3 16 -10 0 -3 -3 0 3 -10 0 3"
+                            , "3 16 3 0 -3 10 0 -3 10 0 3"
+                            , "3 16 3 0 -3 10 0 3 3 0 3"
+                            ]
+
+                    doc =
+                        Document.empty
+                            |> Document.addPlacement "" { part = "ring.dat", color = 4, matrix = Mat4.identity }
+                            |> Tuple.first
+
+                    customCache =
+                        Dict.fromList [ ( "ring.dat", Loaded (Parser.parseFile ringGeometry) ) ]
+
+                    ( model, _, _ ) =
+                        Viewport.loadDocument doc { studio | partCache = customCache, width = 800, height = 600 }
+                in
+                Expect.all
+                    [ \_ -> Expect.equal Nothing (Viewport.pickPoint 400 300 model |> Maybe.map .source)
+                    , \_ -> Expect.equal (Just 0) (Viewport.pickBodyPoint 400 300 model |> Maybe.map .source)
+                    , \_ -> Expect.equal Nothing (Viewport.pickBodyPoint 5 5 model |> Maybe.map .source)
+                    ]
+                    ()
         , test "pickSource prefers a smaller brick sitting on a large baseplate" <|
             \_ ->
                 let
@@ -1033,4 +1371,83 @@ documentSuite =
 
                     Nothing ->
                         Expect.fail "expected ground intersection"
+        , test "pivotOn slides the view onto the pivot without turning or zooming, and makes the camera manual" <|
+            \_ ->
+                let
+                    model =
+                        loaded (bricks 3)
+
+                    pivot =
+                        vec3 80 10 0
+
+                    pivoted =
+                        settle (Viewport.pivotOn pivot model)
+                in
+                Expect.all
+                    [ \m -> Expect.equal pivot m.camera.target
+                    , \m ->
+                        Expect.equal
+                            ( model.camera.azimuth, model.camera.elevation, model.camera.distance )
+                            ( m.camera.azimuth, m.camera.elevation, m.camera.distance )
+                    , \m ->
+                        Vec3.distance
+                            (Vec3.add (Camera.position model.camera) (Vec3.sub pivot model.camera.target))
+                            (Camera.position m.camera)
+                            |> Expect.within (Expect.Absolute 1.0e-6) 0
+                    , \m -> Expect.equal CameraManual m.cameraMode
+                    ]
+                    pivoted
+        , test "FitView recentres after pivotOn" <|
+            \_ ->
+                let
+                    model =
+                        loaded (bricks 3)
+
+                    ( refit, _ ) =
+                        update FitView (settle (Viewport.pivotOn (vec3 80 10 0) model))
+                in
+                Expect.equal model.camera.target refit.camera.target
+        , test "pivotOn glides: half-way the target is part-way there, the view unturned" <|
+            \_ ->
+                let
+                    model =
+                        loaded (bricks 3)
+
+                    ( halfway, _ ) =
+                        Viewport.pivotOn (vec3 80 10 0) model
+                            |> update (AnimationFrame (Time.millisToPosix 0))
+                            |> Tuple.first
+                            |> update (AnimationFrame (Time.millisToPosix 140))
+                in
+                Expect.all
+                    [ \m -> Expect.notEqual model.camera.target m.camera.target
+                    , \m -> Expect.notEqual (vec3 80 10 0) m.camera.target
+                    , \m ->
+                        Expect.equal
+                            ( model.camera.azimuth, model.camera.elevation, model.camera.distance )
+                            ( m.camera.azimuth, m.camera.elevation, m.camera.distance )
+                    , \m -> Expect.equal True (Viewport.needsAnimationFrame m)
+                    ]
+                    halfway
+        , test "a camera move abandons the glide" <|
+            \_ ->
+                let
+                    model =
+                        loaded (bricks 3)
+
+                    ( orbited, _ ) =
+                        Viewport.pivotOn (vec3 80 10 0) model
+                            |> update (RotateCameraBy 0.3 0)
+                            |> Tuple.first
+                            |> update (AnimationFrame (Time.millisToPosix 0))
+                in
+                Expect.equal Nothing orbited.pivotTween
+        , test "pivotOn waits for content before taking over the camera" <|
+            \_ ->
+                let
+                    model =
+                        loaded Document.empty
+                in
+                Viewport.pivotOn (vec3 80 10 0) model
+                    |> Expect.equal model
         ]

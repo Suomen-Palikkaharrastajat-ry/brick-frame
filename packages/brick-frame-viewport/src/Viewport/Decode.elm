@@ -1,8 +1,10 @@
 module Viewport.Decode exposing
     ( TouchPoint
+    , accelKeyDecoder
     , canvasOriginDecoder
     , coordinateDecoder
     , keyEventDecoder
+    , mouseButtonDecoder
     , pointerTouchIdDecoder
     , pointerTouchPointDecoder
     , touchesDecoder
@@ -103,6 +105,21 @@ keyEventDecoder =
         )
         -- `Element.role` reflects the `role` attribute; it is null when unset.
         (Decode.oneOf [ Decode.at [ "target", "role" ] Decode.string, Decode.succeed "" ])
+
+
+{-| The button of a `mousedown`: 0 left, 1 middle, 2 right. Left when absent.
+-}
+mouseButtonDecoder : Decode.Decoder Int
+mouseButtonDecoder =
+    Decode.oneOf [ Decode.field "button" intLikeDecoder, Decode.succeed 0 ]
+
+
+{-| Whether Ctrl or Cmd (Meta) was held. On macOS Cmd-click and Ctrl-click
+both mean "modifier click" to the viewport, so either counts.
+-}
+accelKeyDecoder : Decode.Decoder Bool
+accelKeyDecoder =
+    Decode.map2 (||) (optionalFlag "ctrlKey") (optionalFlag "metaKey")
 
 
 {-| A boolean event field, defaulting to `False` when absent.

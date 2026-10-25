@@ -1,11 +1,12 @@
 import './main.css'
 import { initBricksRuntime } from '../packages/brick-frame-viewport/runtime/initBricksRuntime.js'
+import { initThumbnails } from '../packages/brick-frame-viewport/runtime/thumbnail-pipeline.js'
 import { Elm } from './src/Main.elm'
 
 const siteRoot = new URL(import.meta.env.VITE_SITE_ROOT ?? '../', window.location.href).href
 const ldrawBase = import.meta.env.VITE_LDRAW_BASE ?? `${siteRoot}ldraw`
 
-initBricksRuntime({
+const runtime = initBricksRuntime({
   elm: Elm.Main,
   node: document.getElementById('app'),
   mode: 'simulator',
@@ -20,3 +21,6 @@ initBricksRuntime({
   dragDropTarget: window,
   suppressGestureTarget: window,
 })
+
+// Rendered part images for the kit dock, with the parts' .dat titles as names.
+initThumbnails(runtime.app?.ports, ldrawBase, { titles: true })

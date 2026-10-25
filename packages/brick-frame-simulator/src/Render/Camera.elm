@@ -17,6 +17,7 @@ module Render.Camera exposing
     , orbitBy
     , position
     , projectionMatrix
+    , repivot
     , setNavigation
     , setSceneRadius
     , setViewportHeight
@@ -45,7 +46,7 @@ to drop to street level; there is no collision detection.
 fixed. A city-scale model sits thousands of LDU from its centre, so constant
 planes either clip the whole model away or waste the depth buffer's precision
 on empty space in front of it. `sceneRadius` extends the far plane for the case
-the orbit distance cannot describe: standing *inside* the model, where the
+the orbit distance cannot describe: standing _inside_ the model, where the
 geometry is far away but the pivot is not.
 
 
@@ -184,7 +185,7 @@ setSceneRadius radius cam =
 
 {-| Switch between orbit and walk navigation, leaving the viewpoint alone.
 
-To *enter* walk mode at street level, use `enterWalk` instead — it also places
+To _enter_ walk mode at street level, use `enterWalk` instead — it also places
 the eye on the ground and levels the horizon.
 
 -}
@@ -260,7 +261,7 @@ Two terms, whichever is larger:
   - `distance * 10` covers the orbit case. Auto-fit places the camera roughly
     2.6 model radii from the target, so ten times the orbit distance clears the
     far side of any framed model with room to spare.
-  - `distance + 2.5 * sceneRadius` covers standing *inside* the model, where the
+  - `distance + 2.5 * sceneRadius` covers standing _inside_ the model, where the
     orbit distance says nothing about how far away the geometry is. Walking a
     city at a 40 LDU eye height would otherwise get a 400 LDU far plane on a
     model thousands of LDU across — twenty studs of street and then nothing.
@@ -368,6 +369,24 @@ wrapAngle angle =
 
     else
         wrapped
+
+
+{-| Move the orbit pivot (`target`) to a new render-space point by
+**translating** the view: azimuth, elevation and distance are kept, so the eye
+slides along with the target. Nothing rotates and nothing zooms — the new pivot
+simply ends up in the centre of the screen, and screen-relative directions
+(camera-left, away from the camera) stay the same.
+
+Leaves the camera alone in `Walk` navigation (the eye already is the pivot).
+
+-}
+repivot : Vec3 -> Camera -> Camera
+repivot newTarget cam =
+    if cam.navigation == Walk then
+        cam
+
+    else
+        { cam | target = newTarget }
 
 
 {-| End a drag. Call on global mouseup.

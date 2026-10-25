@@ -20,8 +20,12 @@ static scene so they can be rotated each frame about their own axis. This module
 builds those meshes once, when a model has loaded, together with the axis and
 centre each one turns about. Each moving part carries a triangle mesh and an
 edge mesh (its LDraw edge lines as screen-aligned quads), so it is outlined like
-the static scene. All axes are canonicalised to the render space's Y-up
-convention.
+the static scene. A gear turns about its own true axis: the Y-up image of its local +Z through
+its world matrix, not a canonicalised sign. The gear angle from
+`Gear.Physics` is measured about that axis, so a flipped gear turns the right
+way round. Parts that ride on a gear are turned about the same line: their
+axis is oriented to the driving gear's true axis (`alignToGear`), so the same
+angle applies to them.
 
 -}
 
@@ -115,7 +119,7 @@ buildGearMeshes lodCache cache instances =
                                     Vec3.vec3 0 1 0
 
                                 else
-                                    canonicalizeAxis (Vec3.scale (1 / axisLen) axisRaw)
+                                    Vec3.scale (1 / axisLen) axisRaw
                         in
                         Dict.insert
                             inst.id
@@ -207,7 +211,9 @@ buildComponentRenders cache components gears =
             (\component ->
                 let
                     axis =
-                        inferComponentAxis cache component
+                        alignToGear (componentDrivingGear cache component gears)
+                            gears
+                            (inferComponentAxis cache component)
 
                     lines =
                         componentArrowLines component axis
@@ -243,7 +249,10 @@ buildComponentMeshRenders cache components gears =
                             , edges = edgeMesh geom.lines
                             , center = toYUpPoint component.worldPosition
                             , rotationCenter = toYUpPoint component.worldPosition
-                            , axis = inferComponentAxis cache component
+                            , axis =
+                                alignToGear (componentDrivingGear cache component gears)
+                                    gears
+                                    (inferComponentAxis cache component)
                             , drivingGearId = componentDrivingGear cache component gears
                             }
 
@@ -608,6 +617,8 @@ type alias DrivenAxle =
     { center : Vec3.Vec3
     , axis : Vec3.Vec3
     , drivingGearId : GearId
+    , file : String
+    , transform : Mat4.Mat4
     }
 
 
@@ -621,8 +632,11 @@ buildDrivenAxles cache components gears =
                     |> Maybe.map
                         (\gearId ->
                             { center = toYUpPoint component.worldPosition
-                            , axis = inferComponentAxis cache component
+                            , axis =
+                                alignToGear (Just gearId) gears (inferComponentAxis cache component)
                             , drivingGearId = gearId
+                            , file = component.partFile
+                            , transform = component.worldMatrix
                             }
                         )
             )
@@ -690,10 +704,29 @@ gearAxisInfoById targetId gears =
                             Vec3.vec3 0 1 0
 
                         else
-                            canonicalizeAxis (Vec3.scale (1 / axisLen) rawAxis)
+                            Vec3.scale (1 / axisLen) rawAxis
                 in
                 { center = center, axis = axis }
             )
+
+
+{-| The axis a driven part turns about, oriented like its driving gear's true
+axis. Turning about `-a` by `-θ` is the same motion, so a part whose own axis
+points against its gear gets the flipped axis and the gear's angle unchanged.
+Without a driving gear the axis is returned as it is.
+-}
+alignToGear : Maybe GearId -> List GearInstance -> Vec3.Vec3 -> Vec3.Vec3
+alignToGear drivingGear gears axis =
+    case Maybe.andThen (\gearId -> gearAxisInfoById gearId gears) drivingGear of
+        Just info ->
+            if Vec3.dot axis info.axis < 0 then
+                Vec3.scale -1 axis
+
+            else
+                axis
+
+        Nothing ->
+            axis
 
 
 inferComponentAxis : PartCache -> Components.ComponentInstance -> Vec3.Vec3

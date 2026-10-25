@@ -13,6 +13,7 @@ module Studio.Gizmo exposing
     , jointArcHandle
     , jointArcHandleWithFrame
     , orthogonalBasis
+    , outerArcHandles
     , project
     , toRender
     , transformDirection
@@ -217,13 +218,27 @@ orthogonalBasis n =
 {-| Create a rotational arc handle around an arbitrary axis vector at `center`.
 -}
 jointArcHandle : Camera -> Int -> Int -> Vec3 -> Vec3 -> Maybe ArcHandle
-jointArcHandle camera width height center axis =
+jointArcHandle =
+    arcHandleSized 0.14
+
+
+{-| How large the arcs are drawn when they share the gizmo with the move
+arrows: far enough outside the arrow tips (`0.14`) that the two never overlap
+on screen, so a press picks one or the other unambiguously.
+-}
+outerArcScale : Float
+outerArcScale =
+    0.22
+
+
+arcHandleSized : Float -> Camera -> Int -> Int -> Vec3 -> Vec3 -> Maybe ArcHandle
+arcHandleSized scale camera width height center axis =
     let
         eye =
             Camera.position camera
 
         radius =
-            0.14 * max 1 (Vec3.distance eye (toRender center))
+            scale * max 1 (Vec3.distance eye (toRender center))
 
         ( u, v ) =
             orthogonalBasis axis
@@ -271,14 +286,34 @@ jointArcHandle camera width height center axis =
 oriented according to `frameTransform`.
 -}
 arcHandlesWithFrame : Mat4 -> Camera -> Int -> Int -> Vec3 -> List ArcHandle
-arcHandlesWithFrame frameTransform camera width height worldCenter =
+arcHandlesWithFrame =
+    principalArcHandles jointArcHandle
+
+
+{-| The three principal arc handles around `worldCenter`, drawn outside the move
+arrows so both gizmos can be shown at once.
+-}
+outerArcHandles : Camera -> Int -> Int -> Vec3 -> List ArcHandle
+outerArcHandles =
+    principalArcHandles (arcHandleSized outerArcScale) Mat4.identity
+
+
+principalArcHandles :
+    (Camera -> Int -> Int -> Vec3 -> Vec3 -> Maybe ArcHandle)
+    -> Mat4
+    -> Camera
+    -> Int
+    -> Int
+    -> Vec3
+    -> List ArcHandle
+principalArcHandles makeArc frameTransform camera width height worldCenter =
     let
         make ( axis, kind ) =
             let
                 transformedAxis =
                     transformDirection frameTransform axis
             in
-            case jointArcHandle camera width height worldCenter transformedAxis of
+            case makeArc camera width height worldCenter transformedAxis of
                 Just h ->
                     Just { h | axisKind = Just kind }
 

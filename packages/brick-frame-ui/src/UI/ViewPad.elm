@@ -1,4 +1,4 @@
-module UI.ViewPad exposing (Config, Play, view)
+module UI.ViewPad exposing (Config, Play, view, viewKeepingFocus)
 
 {-| The on-screen navigation pad: fit view, rotate, walk, help and (optionally)
 play/pause.
@@ -16,6 +16,7 @@ import Html exposing (Html, button, div)
 import Html.Attributes as Attr
 import Html.Events
 import Json.Decode as Decode
+import UI.Focus as Focus
 import UI.Icon as Icon
 import UI.Theme as Theme
 import UI.Touch as Touch
@@ -47,6 +48,20 @@ type alias Config msg =
 -}
 view : Config msg -> Html msg
 view config =
+    viewWith [] config
+
+
+{-| `view`, with every button also keeping focus off itself after a mouse
+press (`UI.Focus.keepFocusOnCanvas`), so the host's keyboard shortcuts keep
+working after a click. The message is sent by nothing; hosts pass a no-op.
+-}
+viewKeepingFocus : msg -> Config msg -> Html msg
+viewKeepingFocus noOp config =
+    viewWith [ Focus.keepFocusOnCanvas noOp ] config
+
+
+viewWith : List (Html.Attribute msg) -> Config msg -> Html msg
+viewWith guard config =
     let
         step =
             0.08
@@ -69,20 +84,20 @@ view config =
         , Attr.style "border-radius" "8px"
         , Attr.style "box-shadow" "0 10px 32px color-mix(in srgb, var(--color-brand) 8%, transparent)"
         ]
-        [ fitViewButton config.onFit
-        , rotateButton config "Orbit up" (Icon.feather "chevron-up") (config.onStartRotate 0 step)
-        , walkButton config
-        , rotateButton config "Orbit left" (Icon.feather "chevron-left") (config.onStartRotate step 0)
+        [ fitViewButton guard config.onFit
+        , rotateButton guard config "Orbit up" (Icon.feather "chevron-up") (config.onStartRotate 0 step)
+        , walkButton guard config
+        , rotateButton guard config "Orbit left" (Icon.feather "chevron-left") (config.onStartRotate step 0)
         , case config.play of
             Just play ->
-                playButton play
+                playButton guard play
 
             Nothing ->
                 div [] []
-        , rotateButton config "Orbit right" (Icon.feather "chevron-right") (config.onStartRotate -step 0)
+        , rotateButton guard config "Orbit right" (Icon.feather "chevron-right") (config.onStartRotate -step 0)
         , div [] []
-        , rotateButton config "Orbit down" (Icon.feather "chevron-down") (config.onStartRotate 0 -step)
-        , helpButton config
+        , rotateButton guard config "Orbit down" (Icon.feather "chevron-down") (config.onStartRotate 0 -step)
+        , helpButton guard config
         ]
 
 
@@ -92,8 +107,8 @@ Shown as engaged while walking, following the play button's precedent, because
 the same drag means two different things depending on the mode.
 
 -}
-walkButton : Config msg -> Html msg
-walkButton config =
+walkButton : List (Html.Attribute msg) -> Config msg -> Html msg
+walkButton guard config =
     let
         label =
             "Street level view (G)"
@@ -106,14 +121,15 @@ walkButton config =
             :: ariaFlag "aria-pressed" config.walking
             :: Attr.class "pad-button"
             :: toggleStyles config.walking
+            ++ guard
         )
         [ Icon.feather "user" ]
 
 
 {-| Show or hide the keyboard shortcut list.
 -}
-helpButton : Config msg -> Html msg
-helpButton config =
+helpButton : List (Html.Attribute msg) -> Config msg -> Html msg
+helpButton guard config =
     let
         label =
             "Keyboard shortcuts (?)"
@@ -127,6 +143,7 @@ helpButton config =
             :: ariaFlag "aria-expanded" config.helpOpen
             :: Attr.class "pad-button"
             :: toggleStyles config.helpOpen
+            ++ guard
         )
         [ Icon.feather "help-circle" ]
 
@@ -168,8 +185,8 @@ toggleStyles active =
 {-| Re-frame the whole model. The only way back to the auto-fit view once the
 user has orbited away from it.
 -}
-fitViewButton : msg -> Html msg
-fitViewButton onFit =
+fitViewButton : List (Html.Attribute msg) -> msg -> Html msg
+fitViewButton guard onFit =
     let
         label =
             "Fit model to view (F)"
@@ -181,6 +198,7 @@ fitViewButton onFit =
             :: labelled label
             :: Attr.class "pad-button"
             :: toggleStyles False
+            ++ guard
         )
         [ Icon.feather "maximize" ]
 
@@ -188,8 +206,8 @@ fitViewButton onFit =
 {-| A press-and-hold button. Pointer, touch and keyboard (Enter or Space, while
 focused) all start the rotation with `startMsg` and stop it on release.
 -}
-rotateButton : Config msg -> String -> Html msg -> msg -> Html msg
-rotateButton config label icon startMsg =
+rotateButton : List (Html.Attribute msg) -> Config msg -> String -> Html msg -> msg -> Html msg
+rotateButton guard config label icon startMsg =
     button
         (Html.Events.on "pointerdown" (Decode.succeed startMsg)
             :: Html.Events.on "pointerup" (Decode.succeed config.onEndRotate)
@@ -219,6 +237,7 @@ rotateButton config label icon startMsg =
             :: Attr.style "align-items" "center"
             :: Attr.style "justify-content" "center"
             :: []
+            ++ guard
         )
         [ icon ]
 
@@ -284,8 +303,8 @@ ariaFlag name value =
         )
 
 
-playButton : Play msg -> Html msg
-playButton play =
+playButton : List (Html.Attribute msg) -> Play msg -> Html msg
+playButton guard play =
     let
         label =
             if play.running then
@@ -303,6 +322,7 @@ playButton play =
             :: Attr.style "font-family" "monospace"
             :: Attr.style "font-size" "12px"
             :: toggleStyles play.running
+            ++ guard
         )
         [ Icon.feather
             (if play.running then

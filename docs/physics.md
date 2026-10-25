@@ -98,31 +98,76 @@ world matrix. The test depends on gear type:
 
 ## Rotation propagation
 
+Gears are rendered about their true axis (the Y-up image of local +Z through
+the world matrix), never a canonicalised sign, so a gear's rendered angle and
+the angle the physics computes refer to the same axis.
+
 `Gear.Physics.propagate` performs a BFS from the motor gear through the
 adjacency graph. At each edge the ratio is updated:
 
 ```elm
-meshRatio t1 t2 =
-    if t1 == 1 || t2 == 1 then
-        toFloat t1 / toFloat t2          -- worm: no sign flip
+meshRatio g1 g2 =
+    if g1.teeth == 1 || g2.teeth == 1 then
+        toFloat g1.teeth / toFloat g2.teeth      -- worm: no sign flip
     else
-        -(toFloat t1 / toFloat t2)       -- spur/bevel/crown: direction inverts
+        toFloat g1.teeth / toFloat g2.teeth * meshSign g1 g2
 ```
 
-The sign flip models the fact that two external spur gears rotate in opposite
-directions. Worm gears (tooth count 1) are an exception — the output gear
-rotates in the same direction as the worm.
+The magnitude is always the tooth-count ratio. The sign is the no-slip sign at
+the pitch point `P`. With `v_X = n_X × (P − C_X)` (`n_X` the gear's axis, `C_X`
+its centre), the signed ratio is `k = (v_1·v_2) / |v_2|²`, and `meshSign` is
+its sign. Two spur gears with the same axis orientation give `−teeth1/teeth2`.
+Flipping one gear's axis gives a positive ratio. Crown and bevel pairs take
+their sign from the same formula. If the geometry is degenerate (coincident
+centres, no pitch point), `meshSign` falls back to `−1`.
 
-**Example:** Motor on gear A (8T) drives gear B (24T):
+Co-axial (rigid) neighbours share one axle, so they turn with the same
+angular velocity. Each gear's angle is measured about its own true axis, so
+the ratio is `+1` when the two axes point the same way and `-1` when one gear
+is flipped (`Gear.Physics.rigidSign`).
+
+**Example:** Motor on gear A (8T) drives gear B (24T), same orientation:
 - `ratio_B = -(8/24) = −0.333`
 - Gear B rotates at 1/3 the motor speed, in the opposite direction.
 
-If gear B also drives gear C (8T):
+If gear B also drives gear C (8T), same orientation:
 - `ratio_C = ratio_B × -(24/8) = (−0.333) × (−3) = 1.0`
 - Gear C rotates at the same speed and direction as the motor.
 
 Gears not reachable from the motor are absent from the result dict.
 Cycles are handled by the BFS visited set — each gear appears at most once.
+
+## Tooth phase
+
+`Gear.Phase` answers where the teeth of a gear sit at a mesh, so that a
+gear dropped next to another can be turned until teeth interlock. It is a
+pure geometry module and is not used by `propagate`.
+
+- Every spur, crown and bevel gear has tooth 0 on its local +X (`phaseOf` is 0),
+  except bevel `32198.dat`, whose measured value (~+0.8°) is not trusted and is
+  also treated as 0. Worms (`4716.dat`, `32905.dat`, or `teeth == 1`) have no
+  phase (`Nothing`) and are never aligned.
+- `contactPoint` gives the pitch point `P`: on the centre line at the first
+  gear's pitch radius for spur pairs, or on the crown's rim toward the other gear.
+- `residual gear P Tooth|Gap` is the signed offset (radians, within half a pitch)
+  of the nearest tooth from the target. A tooth targets `beta(P)`; a gap targets
+  `beta(P) + pi/N`. `toothFraction` divides by the pitch, so `0.5` is half a tooth off.
+- Rotating a gear about its own `+axis` by `d` changes its residual by `+d`, so
+  `meshCorrection {fixed, moving}` returns `d = −residual` for the option that
+  leaves the fixed gear best aligned. `groupCorrection` does a min-max
+  over several meshes on one rigid axle.
+- **Tie-break rule.** A fixed partner's offset (`fixedFraction`) cannot be changed
+  by turning the group, so the rotation minimises only the moving-side residuals.
+  The fixed offset is reported as `Correction.fixedFloor`. Option combinations are
+  ranked by `max(fixedFloor, worstFraction)`, then by `|radians|`, then by the
+  smaller `fixedFloor`. Without this, a fixed offset that is the same for every
+  rotation made all candidates tie and the zero rotation won, so a new mesh stayed
+  open. A single mesh still picks the option whose fixed side is aligned, because
+  its floor is part of the score.
+
+Rotation changes only the rigid group (gears and axles on the same axis line).
+Re-seating a gear on an axle in 90° steps never changes its tooth phase for the
+standard gears (tooth counts divisible by 4).
 
 ## Motor and playback
 
@@ -165,6 +210,29 @@ parts are drawn separately by `Simulation.entities`. The studio's preview uses t
 same flow on a snapshot of the document (`Writer.writeDocument`) in a fresh
 `Viewport` + `Simulation`, so editing never disturbs the running simulation.
 
+## Driven axles and parts
+
+An axle a gear sits on turns with that gear, and so does any other top-level
+part threaded onto the gear's axis. `Simulation.analyse` finds them as
+*driven parts*: an axle (an axle-like component) whose centre lies within 2.5 LDU
+of a gear's axis line with the same axis direction (`componentDrivingGear`), or a
+non-gear, non-axle top-level part that `topLevelCoaxialGear` matches to a gear
+(for parts it also accepts the rotational connectors of the part). Each one is
+rotated by its driving gear's angle about the gear's true axis. A part whose own
+axis points against the gear's is given the flipped axis (`alignToGear` in
+`Simulation.Meshes`), so the same angle turns it the same way as the gear.
+
+- `Simulation.drivenPartsFor` lists the driven parts (file and transform) of the
+  given gears, so a host can find their placements.
+- `Simulation.drivenEntitiesFor` draws only those parts, turning. Use it with
+  `gearEntitiesFor` and hide the same placements from the host's static scene.
+  The viewer keeps using `Simulation.entities`, which draws every axle and part.
+
+Brick Contraptions places gears and axles on its axle line (Y −60). A gear turned
+to the axle's direction (along Z for a Z-axis axle, or along X for the default
+axle) is driven when its centre lies within 2.5 LDU of the axle's line, measured
+from the axle's origin (the middle of the axle).
+
 ## Click-to-select motor gear
 
 On `MouseUp`, if the total mouse drag was < 3 px, the host (via `Simulation.pickGear`) fires a ray-sphere
@@ -177,8 +245,9 @@ The nearest intersected gear is selected as the new motor gear.
   detects non-gear, non-component `SubFileRef` nodes in the root file that share
   an axle with a detected gear (parallel axis, centre within 2.5 LDU of the
   gear's axle line). Those parts are excluded from the static scene and rendered
-  with the same rotation angle as their driving gear. Parts nested inside
-  sub-assemblies are not detected and remain static.
+  with the same rotation angle as their driving gear (see "Driven axles and
+  parts" above). Parts nested inside sub-assemblies are not detected and remain
+  static.
 - **No torque or force model.** All gears spin freely regardless of load. There is
   no simulation of mechanical advantage, torque multiplication, or stalling.
 - **Worm gear back-driving is not prevented.** In a real worm drive the worm gear

@@ -12,7 +12,7 @@ machine where every gear is meshed and rotating together in real time.
 -}
 
 import Data
-import Dict exposing (Dict)
+import Dict
 import Gear.Detect as Detect
 import Gear.Physics as Physics
 import Gear.Types exposing (GearGraph, GearId, GearInstance)

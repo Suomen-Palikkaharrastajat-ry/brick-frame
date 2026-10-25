@@ -309,6 +309,23 @@ out of the box without layout arithmetic. Explicitly setting `Viewport.setCanvas
 remains supported as an optimisation or override (e.g. before any interaction occurs).
 The studio also calls it from `Studio.Layout`.
 
+### Camera and visibility hooks
+
+For a host with its own editing and camera chrome (Brick Play, Brick Contraptions):
+
+- `Viewport.pivotOn : Vec3 -> Viewport.Model -> Viewport.Model` glides the orbit
+  pivot to a point over ~280 ms by translating the view (azimuth, elevation and
+  distance are kept). It is a no-op before content is measured and in walk mode.
+  Call it only on an explicit click or tap that selects a part; see
+  `docs/studio.md` (Follow the clicked part).
+- `Viewport.setHiddenSources : Set Int -> Viewport.Model -> Viewport.Model` hides
+  the document placements whose source ids are given, from the instanced scene
+  only. Hidden placements stay pickable and collide as before. Brick Contraptions
+  uses it so a turning gear does not show its static copy.
+- `Viewport.setSpacePan : Bool -> Viewport.Model -> Viewport.Model` lets Space +
+  drag pan. It is off by default, because Space may mean something else to the host
+  (the studio workspace turns it on; Brick Play and Brick Contraptions leave it off).
+
 ---
 
 ## The Simulation component
@@ -354,6 +371,24 @@ Playback messages are `Play`, `Pause`, `Stop`, `ToggleMotor`, `SetMotorGear`,
 `Simulation.entities` for drawing complete the contract. Panels that show gears,
 the motor and the clock are the host's: read the fields of `Simulation.Model`.
 
+### Drawing only some gears
+
+A host that keeps the rest of the model in its own static scene can animate just
+the turning parts (Brick Contraptions does this):
+
+- `Simulation.rotatingGearIds : Simulation.Model -> Set GearId` — the gears that turn
+  with the motor and have a mesh to draw them with.
+- `Simulation.gearEntitiesFor : Set GearId -> Camera -> Style.Style -> Float -> Simulation.Model -> List WebGL.Entity`
+  — only those gears, each at its current angle (the `Float` is the aspect ratio).
+- `Simulation.drivenEntitiesFor` — the same signature, for the driven parts turning
+  with those gears.
+- `Simulation.drivenPartsFor : Set GearId -> Simulation.Model -> List DrivenPart` —
+  the driven parts (file and transform) behind those gears, so the host can hide
+  their static placements.
+- `Simulation.setTime : Float -> Simulation.Model -> Simulation.Model` puts the
+  playback clock at a given time and recomputes every angle from it, for a host that
+  runs its own clock instead of `Tick`. The angles are a pure function of the time.
+
 ---
 
 ## The Studio.Core component
@@ -382,14 +417,55 @@ config =
 ( studio, cmd ) = Core.init config
 ```
 
-`Studio.Core.update` returns `( Model, Cmd Msg, List Event )` where `Event` includes `DocumentChanged Document`, `SelectionChanged (Set Int)`, `StatusChanged String`, etc.
+`Studio.Core.update` returns `( Model, Cmd Msg, List Event )` where `Event` is one of
+`FlattenRequested String`, `CameraSettled`, `DocumentChanged Document`,
+`SelectionChanged (Set Int)` or `KeyAccepted ViewportShortcuts.KeyEvent`.
 
 Helper functions provide high-level controls for host applications:
-- `Core.addPart`, `Core.addPartCentered`: insert parts into the document
+- `Core.addPart : String -> Int -> Vec3 -> Model -> ( Model, Cmd Msg, List Event )`
+  (part file, LDraw colour, position; rests the part on the ground at that spot) and
+  `Core.addPartCentered : String -> Int -> Model -> ( Model, Cmd Msg, List Event )`
+- `Core.addPartAt : String -> Int -> Mat4 -> Model -> ( Model, Cmd Msg, List Event )`:
+  adds a part at exactly the given placement, keeping the host's height
 - `Core.undo`, `Core.redo`: step through the command history
 - `Core.deleteSelection`, `Core.rotateSelection`: modify selected parts
-- `Core.fitView`: reframe the camera around the placed model
+- `Core.turnSelected : TurnDirection -> Model -> ( Model, Cmd Msg, List Event )`,
+  `Core.raiseSelected` and `Core.lowerSelected : Model -> ( Model, Cmd Msg, List Event )`:
+  the arrow keys and E / Q as functions, for host buttons. `TurnDirection` is from
+  `Studio.Shortcuts` (`TurnLeft`, `TurnRight`, `TipForward`, `TipBackward`). The camera
+  stays where it is, and each is one undo step.
+- `Core.cancelDrag : Model -> ( Model, Cmd Msg, List Event )`: abandons a drag in
+  progress, restoring the document with no undo step; with no drag running it clears
+  the selection (the Escape key).
+- `Core.fitView : Model -> ( Model, Cmd Msg )`: reframes the camera around the placed model
+- `Core.freeSpotFor : String -> Model -> Vec3`: the nearest free ground position for a
+  part, searched ring by ring from the selection (or the camera target), so a new part
+  overlaps nothing. Pass it to `addPart`.
+- `Core.freeSpotForPlacement : String -> Mat4 -> Model -> Mat4`: the same for a
+  placement matrix, keeping its height and orientation. Pass it to `addPartAt`.
 - `Core.getPlacements`: retrieve currently placed parts
+
+Host options. Set them on the model after `Core.init`:
+- `Core.setDragMode : DragMode -> Model -> Model` chooses what a drag on empty canvas
+  does: `DragPartsOrOrbit` (the default; orbit), `DragPartsOnly` (nothing; the host
+  has its own camera controls, and Shift still pans) or `DragPartsOrPan oneFinger`
+  (a left drag pans; `oneFinger` is `OneFingerOrbits` or `OneFingerPans`). A part under
+  the pointer is always picked up first.
+- `Core.setGizmoStyle : GizmoStyle -> Model -> Model`: `NoGizmo` (no handles, a drag
+  moves the part on the view-relative plane), `MoveGizmo` (the default) or
+  `MoveAndRotateGizmo`.
+- `Core.setDragSettles : Bool -> Model -> Model`: `False` keeps dragged parts at their
+  press-time height instead of settling them onto their support.
+- `Core.setHelpVisible : Bool -> Model -> Model`: tell the studio the host's shortcut
+  dialog is open, so editing keys pause and the viewport can close it.
+- `Core.setGearAlignment` (below) turns tooth alignment on.
+- `Core.setGearAlignment : Bool -> Model -> Model`: turn tooth alignment on or off
+  (default `False`). When on, a committed move or add that meshes a gear turns the
+  gear's rigid group (the gears and axles on its axle line, connected along the
+  line) so the teeth interlock. The turn is recorded in the same undo step as the
+  edit. A host that does not place gears on axles can leave it off. Brick
+  Contraptions turns it on at init (`brick-contraptions/src/Main.elm`); Brick Play
+  leaves it off. See `docs/studio.md` (Gear alignment).
 
 `brick-play` and `brick-contraptions` both embed `Studio.Core` directly to power their 3D interaction.
 

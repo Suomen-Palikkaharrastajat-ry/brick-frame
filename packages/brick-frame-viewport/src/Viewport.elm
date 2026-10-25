@@ -14,15 +14,23 @@ module Viewport exposing
     , captureDrag
     , groundIntersection
     , init
+    , isTouchGesture
     , loadDocument
     , needsAnimationFrame
+    , panCurrentGesture
+    , pickBodyPoint
     , pickPoint
     , pickSource
     , pickSurfaceExcluding
+    , pivotOn
+    , pressedWithShift
     , setActivePath
     , setActiveSources
     , setCanvasOrigin
+    , setHiddenSources
     , setRenderQuality
+    , setShiftPressGrabs
+    , setSpacePan
     , subscriptions
     , update
     , view
@@ -106,6 +114,27 @@ type CameraMode
     | CameraManual
 
 
+{-| A pivot change in progress (`pivotOn`): the orbit target glides from `from`
+to `to` over `pivotTweenMillis`, the eye sliding along with it (azimuth,
+elevation and distance held), so the view pans smoothly onto the new pivot
+instead of snapping. `last` is the camera the tween
+last produced; any other change to the camera (the user orbiting, Fit View, a
+part drag capturing the pointer) abandons the tween where it is.
+-}
+type alias PivotTween =
+    { from : Vec3.Vec3
+    , to : Vec3.Vec3
+    , base : Camera
+    , last : Camera
+    , startedAt : Maybe Time.Posix
+    }
+
+
+pivotTweenMillis : Float
+pivotTweenMillis =
+    280
+
+
 type TouchGesture
     = NoTouchGesture
     | SingleTouchGesture Int
@@ -149,6 +178,7 @@ but change them only through `update`.
 -}
 type alias Model =
     { camera : Camera
+    , pivotTween : Maybe PivotTween
     , width : Int
     , height : Int
     , loadPhase : LoadPhase
@@ -174,6 +204,11 @@ type alias Model =
     , touchGesture : TouchGesture
     , activeTouches : Dict Int TouchPoint
     , mousePanDragging : Bool
+    , pressButton : Int
+    , pressToggle : Bool
+    , pressShift : Bool
+    , shiftPressGrabs : Bool
+    , spacePan : Bool
     , loadingProgressPct : Float
     , loadingProgressTick : Maybe Time.Posix
     , heldControl : HeldControl
@@ -184,6 +219,7 @@ type alias Model =
     , supportsPointerEvents : Bool
     , renderStyle : Style.Style
     , activeSources : Maybe (Set Int)
+    , hiddenSources : Set Int
     , activePath : List Int
     , canvasOrigin : ( Float, Float )
     }
@@ -267,6 +303,7 @@ init config =
                 Idle
     in
     ( { camera = initialCamera
+      , pivotTween = Nothing
       , width = 800
       , height = 600
       , loadPhase = initialLoadPhase
@@ -292,6 +329,11 @@ init config =
       , touchGesture = NoTouchGesture
       , activeTouches = Dict.empty
       , mousePanDragging = False
+      , pressButton = 0
+      , pressToggle = False
+      , pressShift = False
+      , shiftPressGrabs = False
+      , spacePan = False
       , loadingProgressPct = 0.0
       , loadingProgressTick = Nothing
       , heldControl = NoHeldControl
@@ -302,6 +344,7 @@ init config =
       , supportsPointerEvents = config.supportsPointerEvents
       , renderStyle = config.renderStyle
       , activeSources = Nothing
+      , hiddenSources = Set.empty
       , activePath = []
       , canvasOrigin = ( 0, 0 )
       }
@@ -347,7 +390,7 @@ Pointer messages carry window (client) coordinates, as the DOM reports them;
 type Msg
     = WindowResize Int Int
     | CanvasPressed ( Float, Float ) Msg
-    | MouseDown Float Float Bool
+    | MouseButtonDown Float Float Int Bool Bool
     | MouseMove Float Float
     | MouseUp Float Float
     | DoubleClick Float Float
@@ -364,6 +407,7 @@ type Msg
     | FileLoadError String
     | GeometryFlattened String
     | GeometryFlattenFailed String
+    | ContextMenuOpened
     | DismissError
     | AnimationFrame Time.Posix
     | RotateCameraBy Float Float
@@ -382,15 +426,22 @@ type Msg
 
   - `CameraSettled` — the camera came to rest (or moved discretely); a good time
     to write the URL hash. Not sent on every drag step.
-  - `Clicked` — a mouse press-release that did not drag, in canvas pixels (see
-    `setCanvasOrigin`), and whether Shift was held. The host decides what is
+  - `Clicked` — a left-button press-release that did not drag, in canvas pixels
+    (see `setCanvasOrigin`). The Bool is the toggle modifier: Shift, Ctrl or Cmd
+    was held. Right and middle clicks emit nothing. The host decides what is
     under it.
   - `Tapped` — the same for a one-finger touch.
-  - `PressStarted` — a mouse button or a single finger went down at this point.
-    The camera has started to follow it; call `captureDrag` to take the gesture
-    for the host instead (to drag a handle, say).
+  - `PressStarted` — a plain left-button press (no Shift, Ctrl or Cmd, and not
+    Space-panning), a Shift + left press when `setShiftPressGrabs` is on, or a
+    single finger went down at this point. The camera has started to follow it;
+    call `captureDrag` to take the gesture for the host instead (to drag a
+    handle, say), or `panCurrentGesture` to pan. Right, middle and other
+    modified presses never emit it, so hosts cannot grab parts with them.
   - `DragMoved` / `DragEnded` — while a gesture is captured, where it is now and
     where it ended. The camera does not move.
+  - `DragCancelled` — a right-button press arrived while a gesture was captured.
+    The capture has been released (the host should abandon the drag, restoring
+    anything it changed mid-drag), and the right drag orbits the camera.
   - `WheelScrolled` — the mouse wheel scrolled while a gesture was captured
     (see `captureDrag`). The camera did not move.
   - `LoadStarted` — a new model replaces the old one; drop anything derived from
@@ -414,6 +465,7 @@ type Event
     | PressStarted Float Float
     | DragMoved Float Float
     | DragEnded Float Float
+    | DragCancelled
     | WheelScrolled Float
     | LoadStarted
     | PartsReady
@@ -514,8 +566,8 @@ toCanvasPixels ( left, top ) msg =
         CanvasPressed origin innerMsg ->
             CanvasPressed origin (toCanvasPixels ( left, top ) innerMsg)
 
-        MouseDown x y shift ->
-            MouseDown (x - left) (y - top) shift
+        MouseButtonDown x y button shift accel ->
+            MouseButtonDown (x - left) (y - top) button shift accel
 
         MouseMove x y ->
             MouseMove (x - left) (y - top)
@@ -596,21 +648,60 @@ updateInner msg model =
             , []
             )
 
-        MouseDown x y shiftHeld ->
+        ContextMenuOpened ->
+            ( model, Cmd.none, [] )
+
+        MouseButtonDown x y button shiftHeld accelHeld ->
             if touchInputActive model then
                 ( model, Cmd.none, [] )
 
             else
+                let
+                    -- Right-press during a captured left drag cancels it. Orbit
+                    -- follows the right button from there on.
+                    cancelling =
+                        button == 2 && model.captured
+
+                    spacePanning =
+                        model.spacePan && isSpaceHeld model
+
+                    -- A Shift + left press on a host that asked for it
+                    -- (`setShiftPressGrabs`) is offered to the host as a press,
+                    -- which decides between grabbing a part and panning.
+                    shiftGrab =
+                        model.shiftPressGrabs && shiftHeld && button == 0 && not (accelHeld || spacePanning)
+
+                    -- Shift, the middle button and Space pan; Ctrl/Cmd and the
+                    -- right button orbit.
+                    panning =
+                        (shiftHeld && not shiftGrab) || button == 1 || spacePanning
+
+                    -- Only a plain left press (or a Shift + left press offered
+                    -- for grabbing) may grab a part.
+                    plainLeft =
+                        (button == 0 && not (shiftHeld || accelHeld || spacePanning)) || shiftGrab
+                in
                 ( { model
                     | camera = Camera.onMouseDown x y model.camera
                     , dragTravel = 0.0
                     , cameraMode = CameraManual
-                    , mousePanDragging = shiftHeld
+                    , mousePanDragging = panning
+                    , pressButton = button
+                    , pressToggle = shiftHeld || accelHeld
+                    , pressShift = shiftHeld
                     , mousePressed = True
+                    , captured = model.captured && not cancelling
                     , lastPointer = ( x, y )
                   }
                 , Cmd.none
-                , [ PressStarted x y ]
+                , if cancelling then
+                    [ DragCancelled ]
+
+                  else if plainLeft then
+                    [ PressStarted x y ]
+
+                  else
+                    []
                 )
 
         MouseMove x y ->
@@ -646,7 +737,16 @@ updateInner msg model =
                 ( { model
                     | camera = nextCamera
                     , dragTravel = model.dragTravel + stepDist
-                    , cameraMode = CameraManual
+
+                    -- The move subscription is document-global: a hover (no
+                    -- button down, the camera unchanged) is not a camera move
+                    -- and must not end auto-fit.
+                    , cameraMode =
+                        if model.mousePressed then
+                            CameraManual
+
+                        else
+                            model.cameraMode
                     , lastPointer = ( x, y )
                   }
                 , Cmd.none
@@ -690,11 +790,15 @@ updateInner msg model =
                 , if model.captured then
                     [ DragEnded x y ]
 
-                  else if model.dragTravel < 3.0 then
-                    [ Clicked x y model.mousePanDragging ]
+                  else if model.dragTravel >= 3.0 then
+                    [ CameraSettled ]
+
+                  else if model.pressButton == 0 then
+                    [ Clicked x y model.pressToggle ]
 
                   else
-                    [ CameraSettled ]
+                    -- Right and middle clicks select nothing.
+                    []
                 )
 
         DoubleClick x y ->
@@ -848,8 +952,11 @@ updateInner msg model =
 
                 ( heldModel, keyEvents ) =
                     applyHeldKeys now buttonModel
+
+                ( pivotModel, pivotEvents ) =
+                    stepPivotTween now heldModel
             in
-            ( heldModel, Cmd.none, buttonEvents ++ keyEvents )
+            ( pivotModel, Cmd.none, buttonEvents ++ keyEvents ++ pivotEvents )
 
         RotateCameraBy azimuthDelta elevationDelta ->
             ( { model
@@ -946,6 +1053,13 @@ failLoad message model =
     )
 
 
+{-| Whether Space is currently down, for Space-to-pan.
+-}
+isSpaceHeld : Model -> Bool
+isSpaceHeld model =
+    Set.member " " model.heldKeys || Set.member "Spacebar" model.heldKeys
+
+
 {-| Move and look according to the keys currently held down.
 
 Shares `heldControlTick` with the on-screen rotate buttons so there is a single
@@ -955,7 +1069,9 @@ so movement speed is independent of the OS repeat rate.
 -}
 applyHeldKeys : Time.Posix -> Model -> ( Model, List Event )
 applyHeldKeys now model =
-    if not (Shortcuts.hasContinuousInput model.heldKeys) then
+    -- A captured drag belongs to the host, so keys must not move the camera
+    -- underneath it.
+    if model.captured || not (Shortcuts.hasContinuousInput model.heldKeys) then
         ( { model | heldKeysTick = Nothing }, [] )
 
     else
@@ -1242,6 +1358,35 @@ tapSlop =
     8.0
 
 
+{-| Let a Shift + left press on empty canvas or on a part reach the host as
+`PressStarted`, instead of always panning. The host then decides: `captureDrag`
+to grab the part, or `panCurrentGesture` to pan. Off by default, so Shift +
+drag pans (studio, the viewer). Brick Play and Brick Contraptions turn it on
+(through `Studio.Core.setDragMode`). A Shift press that is not captured and does
+not travel is still a `Clicked` with the toggle flag set.
+-}
+setShiftPressGrabs : Bool -> Model -> Model
+setShiftPressGrabs enabled model =
+    { model | shiftPressGrabs = enabled }
+
+
+{-| Whether the press that started the current mouse gesture had Shift held.
+Lets a host that receives `PressStarted` for a Shift press tell it apart from a
+plain press, even when its own key tracking missed the Shift key-down.
+-}
+pressedWithShift : Model -> Bool
+pressedWithShift model =
+    model.pressShift
+
+
+{-| Let Space + drag pan the camera, for hosts that use Space for something else
+otherwise (studio workspace). Off by default.
+-}
+setSpacePan : Bool -> Model -> Model
+setSpacePan enabled model =
+    { model | spacePan = enabled }
+
+
 {-| Take the current mouse or touch gesture for the host: the camera stops
 following it, and the host receives `DragMoved` and `DragEnded` instead. Call
 from the handler of `PressStarted`.
@@ -1249,6 +1394,46 @@ from the handler of `PressStarted`.
 captureDrag : Model -> Model
 captureDrag model =
     { model | captured = True, camera = Camera.onMouseUp model.camera }
+
+
+{-| Turn the gesture in progress into a pan, as if it had started with Shift
+held: the rest of a plain left drag (or a one-finger drag) moves the camera
+target with the pointer instead of orbiting. Call from the handler of
+`PressStarted` — for a press that hit nothing the host wants to grab, say, so
+left-drag on empty canvas pans.
+
+The gesture stays the viewport's: a press-release without travel is still a
+`Clicked` (or `Tapped`), and a drag ends in `CameraSettled`. Does nothing for a
+captured gesture, a two-finger gesture, or when no button or finger is down.
+
+-}
+panCurrentGesture : Model -> Model
+panCurrentGesture model =
+    let
+        oneFinger =
+            case model.touchGesture of
+                SingleTouchGesture _ ->
+                    True
+
+                _ ->
+                    False
+    in
+    if model.captured then
+        model
+
+    else if oneFinger || (model.mousePressed && not (touchInputActive model)) then
+        { model | mousePanDragging = True }
+
+    else
+        model
+
+
+{-| Whether the gesture in progress is a touch (one or more fingers) rather than
+the mouse. Lets a `PressStarted` handler treat fingers and the mouse apart.
+-}
+isTouchGesture : Model -> Bool
+isTouchGesture =
+    touchInputActive
 
 
 beginTouchGesture : List TouchPoint -> Model -> Model
@@ -1287,8 +1472,19 @@ advanceTouchGesture touches model =
         SingleTouchGesture touchId ->
             case findTouch touchId touches of
                 Just point ->
+                    let
+                        -- `panCurrentGesture` makes one finger pan, like Shift + drag.
+                        nextCamera =
+                            case ( model.mousePanDragging, model.camera.lastMousePos ) of
+                                ( True, Just ( lx, ly ) ) ->
+                                    Camera.onPan (point.x - lx) (point.y - ly) model.camera
+                                        |> (\cam -> { cam | lastMousePos = Just ( point.x, point.y ) })
+
+                                _ ->
+                                    Camera.onMouseMove point.x point.y model.camera
+                    in
                     { model
-                        | camera = Camera.onMouseMove point.x point.y model.camera
+                        | camera = nextCamera
                         , cameraMode = CameraManual
                     }
 
@@ -1465,6 +1661,83 @@ frameModelBounds model =
 
         Nothing ->
             model
+
+
+{-| Orbit around `target` (render space, Y up) from now on, by sliding the view
+onto it: see `Render.Camera.repivot`. Azimuth, elevation and distance are kept —
+no rotation, no zoom — so the new pivot ends up in the centre of the screen and
+screen-relative directions (camera-left, away) do not change. The camera becomes
+manual, so auto-fit no longer overrides it; `FitView` recentres on the model
+again.
+
+The view slides over a few animation frames rather than snapping. Any other
+camera change, or a drag capturing the pointer, ends the glide where it is.
+
+A no-op before any model content has been measured (the first content still
+auto-fits) and in walk navigation.
+
+-}
+pivotOn : Vec3.Vec3 -> Model -> Model
+pivotOn target model =
+    case model.modelBounds of
+        Just _ ->
+            if Camera.repivot target model.camera == model.camera then
+                model
+
+            else
+                { model
+                    | cameraMode = CameraManual
+                    , pivotTween =
+                        Just
+                            { from = model.camera.target
+                            , to = target
+                            , base = model.camera
+                            , last = model.camera
+                            , startedAt = Nothing
+                            }
+                }
+
+        Nothing ->
+            model
+
+
+{-| Advance a running `pivotOn` glide by one animation frame.
+-}
+stepPivotTween : Time.Posix -> Model -> ( Model, List Event )
+stepPivotTween now model =
+    case model.pivotTween of
+        Just tween ->
+            if model.captured || model.camera /= tween.last then
+                ( { model | pivotTween = Nothing }, [] )
+
+            else
+                let
+                    started =
+                        Maybe.withDefault now tween.startedAt
+
+                    elapsed =
+                        toFloat (Time.posixToMillis now - Time.posixToMillis started)
+
+                    s =
+                        clamp 0 1 (elapsed / pivotTweenMillis)
+
+                    eased =
+                        s * s * (3 - 2 * s)
+
+                    target =
+                        Vec3.add tween.from (Vec3.scale eased (Vec3.sub tween.to tween.from))
+
+                    camera =
+                        Camera.repivot target tween.base
+                in
+                if s >= 1 then
+                    ( { model | camera = camera, pivotTween = Nothing }, [ CameraSettled ] )
+
+                else
+                    ( { model | camera = camera, pivotTween = Just { tween | last = camera, startedAt = Just started } }, [] )
+
+        Nothing ->
+            ( model, [] )
 
 
 {-| Drop to street level, or step back out to orbit.
@@ -1880,7 +2153,31 @@ point under the pointer. A host dragging a part by its surface keeps that point
 under the cursor.
 -}
 pickPoint : Float -> Float -> Model -> Maybe { source : Int, point : Vec3.Vec3 }
-pickPoint x y model =
+pickPoint =
+    pickWith False
+
+
+{-| The body-drag pick: `pickPoint`, then, when the ray touches no triangle,
+the axle-hole fallback described at `axleHoleFraction`. Used to grab a part by
+its body; click selection keeps using `pickPoint`.
+-}
+pickBodyPoint : Float -> Float -> Model -> Maybe { source : Int, point : Vec3.Vec3 }
+pickBodyPoint =
+    pickWith True
+
+
+{-| Fraction of a placement's bounding radius within which a ray that touches no
+triangle still hits the part, measured from the part's centre to the ray's
+closest approach. A gear's axle hole is empty space in the mesh, so a press on
+it would otherwise pan the camera instead of grabbing the gear.
+-}
+axleHoleFraction : Float
+axleHoleFraction =
+    0.35
+
+
+pickWith : Bool -> Float -> Float -> Model -> Maybe { source : Int, point : Vec3.Vec3 }
+pickWith fallback x y model =
     case ( model.instancedScene, Pick.screenRay model.camera model.width model.height x y ) of
         ( Just scene, Just ( origin, direction ) ) ->
             let
@@ -2010,12 +2307,50 @@ pickPoint x y model =
                                 Nothing ->
                                     Nothing
             in
-            scene.placements
-                |> List.filter isPickable
-                |> List.filterMap boxCandidate
-                |> List.sortBy .boxT
-                |> List.foldl closer Nothing
-                |> Maybe.map (\( t, p ) -> { source = p.source, point = Vec3.add origin (Vec3.scale t direction) })
+            let
+                candidates =
+                    scene.placements
+                        |> List.filter isPickable
+                        |> List.filterMap boxCandidate
+                        |> List.sortBy .boxT
+
+                -- Where the ray passes closest to the centre, if that is near enough.
+                axleHole =
+                    candidates
+                        |> List.filter
+                            (\c ->
+                                let
+                                    towardCentre =
+                                        Vec3.sub c.placement.center origin
+
+                                    along =
+                                        Vec3.dot towardCentre direction
+
+                                    offAxis =
+                                        Vec3.length (Vec3.sub towardCentre (Vec3.scale along direction))
+                                in
+                                along >= nearPlane && offAxis <= axleHoleFraction * c.placement.radius
+                            )
+                        |> List.head
+                        |> Maybe.map
+                            (\c ->
+                                { source = c.placement.source
+                                , point =
+                                    Vec3.add origin
+                                        (Vec3.scale (Vec3.dot (Vec3.sub c.placement.center origin) direction) direction)
+                                }
+                            )
+            in
+            case List.foldl closer Nothing candidates of
+                Just ( t, p ) ->
+                    Just { source = p.source, point = Vec3.add origin (Vec3.scale t direction) }
+
+                Nothing ->
+                    if fallback then
+                        axleHole
+
+                    else
+                        Nothing
 
         _ ->
             Nothing
@@ -2493,6 +2828,7 @@ frame gets drawn after the camera stops.
 needsAnimationFrame : Model -> Bool
 needsAnimationFrame model =
     (model.loadPhase == FlatteningGeometry)
+        || (model.pivotTween /= Nothing)
         || model.refineFrames
         > 0
         || Shortcuts.hasContinuousInput model.heldKeys
@@ -2552,6 +2888,19 @@ while all other geometry is rendered in ghost mode. `Nothing` disables ghost mod
 setActiveSources : Maybe (Set Int) -> Model -> Model
 setActiveSources sources model =
     { model | activeSources = sources }
+
+
+{-| Placement sources the instanced render leaves out, for a host that draws
+those placements itself — Brick Contraptions hides the gears it animates so the
+static copies do not show through the turning ones. Rendering only: hidden
+placements stay pickable, collide and snap as before. `Set.empty` (the default)
+draws everything. Applies to the instanced scene (documents); placements far
+enough away to fall into a merged proxy chunk (only when every part of its
+cell is that small) are still drawn by that chunk.
+-}
+setHiddenSources : Set Int -> Model -> Model
+setHiddenSources sources model =
+    { model | hiddenSources = sources }
 
 
 {-| Where the canvas's top-left corner sits in the window, in CSS pixels.
@@ -2615,6 +2964,36 @@ setRenderQuality quality model =
     { model | renderStyle = Style.fromQuality quality }
 
 
+{-| The instanced scene with the placements of `hidden` drawn as nothing (see
+`setHiddenSources`).
+
+They are collapsed to a point (a zero-scale model matrix, so every triangle and
+edge is degenerate) rather than dropped: the renderer decides whether a spatial
+cell draws its merged far-away proxy box by whether any placement in it is
+resolved, and dropping a near placement would bring its cell's grey box back in
+its place.
+
+-}
+withoutHidden : Set Int -> InstancedScene -> InstancedScene
+withoutHidden hidden scene =
+    if Set.isEmpty hidden then
+        scene
+
+    else
+        { scene
+            | placements =
+                List.map
+                    (\p ->
+                        if Set.member p.source hidden then
+                            { p | matrix = Mat4.makeScale3 0 0 0 }
+
+                        else
+                            p
+                    )
+                    scene.placements
+        }
+
+
 {-| The WebGL canvas with its mouse, wheel and touch/pointer listeners.
 -}
 view : ViewConfig -> Model -> Html Msg
@@ -2638,7 +3017,7 @@ view config model =
                         , coarsen = config.coarsenWhileMoving && model.refineFrames > 0
                         , activeSources = model.activeSources
                         }
-                        instanced
+                        (withoutHidden model.hiddenSources instanced)
                         ++ config.extraEntities model.camera model.renderStyle aspect
 
                 ( Nothing, Nothing ) ->
@@ -2656,25 +3035,31 @@ view config model =
          , Attr.style "width" "100%"
          , Attr.style "height" "100%"
          , Attr.style "touch-action" "none"
-         , Html.Events.on "mousedown"
-            (Decode.map4
-                (\origin clientX clientY shift ->
+         , Html.Events.preventDefaultOn "mousedown"
+            (Decode.map6
+                (\origin clientX clientY button shift accel ->
                     let
                         down =
-                            MouseDown clientX clientY shift
+                            MouseButtonDown clientX clientY button shift accel
                     in
                     case origin of
                         Just o ->
-                            CanvasPressed o down
+                            ( CanvasPressed o down, button == 1 )
 
                         Nothing ->
-                            down
+                            ( down, button == 1 )
                 )
                 ViewportDecode.canvasOriginDecoder
                 (Decode.field "clientX" Decode.float)
                 (Decode.field "clientY" Decode.float)
+                ViewportDecode.mouseButtonDecoder
                 (Decode.field "shiftKey" Decode.bool)
+                ViewportDecode.accelKeyDecoder
             )
+
+         -- The browser menu would open over the right-drag orbit.
+         , Html.Events.preventDefaultOn "contextmenu"
+            (Decode.succeed ( ContextMenuOpened, True ))
          , Html.Events.on "dblclick"
             (Decode.map2 DoubleClick
                 (Decode.field "clientX" Decode.float)

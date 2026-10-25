@@ -1,18 +1,24 @@
 module Simulation exposing
     ( Analysis
     , Config
+    , DrivenPart
     , Event(..)
     , Model
     , Msg(..)
     , PlaybackState
     , analyse
+    , drivenEntitiesFor
+    , drivenPartsFor
     , entities
+    , gearEntitiesFor
     , init
     , markUnavailable
     , needsAnimationFrame
     , pickGear
     , refreshLods
     , reset
+    , rotatingGearIds
+    , setTime
     , subscriptions
     , update
     )
@@ -44,7 +50,7 @@ import Gear.Components as Components
 import Gear.Detect as Detect
 import Gear.Lod as Lod exposing (Lod)
 import Gear.Types exposing (GearGraph, GearId, GearInstance, GearSpec)
-import LDraw.Resolve exposing (PartCache)
+import LDraw.Resolve exposing (PartCache, PartStatus(..))
 import LDraw.Types exposing (LDrawLine(..))
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3
@@ -54,6 +60,7 @@ import Render.GuideShader as GuideShader
 import Render.Pick as Pick
 import Render.Shader as Shader
 import Render.Style as Style
+import Set exposing (Set)
 import Simulation.Meshes as Meshes
     exposing
         ( ComponentMeshRender
@@ -109,6 +116,7 @@ type alias Model =
     , components : List Components.ComponentInstance
     , componentMeshes : List ComponentMeshRender
     , componentRenders : List ComponentRender
+    , drivenParts : List DrivenPart
     , motor : MotorState
     , playback : PlaybackState
     , maxRpm : Float
@@ -142,6 +150,7 @@ init config =
     , components = []
     , componentMeshes = []
     , componentRenders = []
+    , drivenParts = []
     , motor = { defaultMotor | speedRadPerSec = initialMotorRpm * 2 * pi / 60 }
     , playback =
         { running = False
@@ -171,6 +180,7 @@ reset model =
         , components = []
         , componentMeshes = []
         , componentRenders = []
+        , drivenParts = []
         , motor = Animate.defaultMotor
         , playback =
             { running = False
@@ -197,6 +207,7 @@ markUnavailable model =
         , components = []
         , componentMeshes = []
         , componentRenders = []
+        , drivenParts = []
         , gearAngles = Dict.empty
         , simulationChecked = True
         , simulationAvailable = False
@@ -270,6 +281,19 @@ analyse { lines, cache } model =
                                 Nothing
                     )
 
+        -- Axles driven by a gear and parts riding on them, with the file and
+        -- placement a host needs to draw them turning and hide their static copy.
+        -- Only parts whose mesh loaded are listed, as those are the ones drawn.
+        drivenParts =
+            (List.map
+                (\axle -> { drivingGearId = axle.drivingGearId, file = axle.file, transform = axle.transform })
+                drivenAxles
+                ++ List.map
+                    (\part -> { drivingGearId = part.drivingGearId, file = part.file, transform = part.transform })
+                    coaxialPartData
+            )
+                |> List.filter (\part -> isLoaded cache part.file)
+
         gearMeshes =
             Meshes.buildGearMeshes model.lodCache cache gearInstances
 
@@ -318,6 +342,7 @@ analyse { lines, cache } model =
             Meshes.buildComponentMeshRenders cache components gearInstances
                 ++ Meshes.buildCoaxialMeshRenders cache gearInstances coaxialPartData
         , componentRenders = Meshes.buildComponentRenders cache components gearInstances
+        , drivenParts = drivenParts
         , motor = motor
         , playback =
             { playbackState
@@ -335,6 +360,16 @@ analyse { lines, cache } model =
       , gearCount = List.length gearInstances
       }
     )
+
+
+isLoaded : PartCache -> String -> Bool
+isLoaded cache file =
+    case Dict.get file cache of
+        Just (Loaded _) ->
+            True
+
+        _ ->
+            False
 
 
 isTopLevelGearRef : List GearSpec -> LDrawLine -> Bool
@@ -625,6 +660,75 @@ resolveMotorGearId model =
                             Nothing
 
 
+{-| Put the playback clock at `seconds` and recompute every gear angle from it,
+for a host that runs its own clock instead of `Tick` (Brick Contraptions).
+Pure in the time: `setTime t` gives the same angles however it is reached.
+-}
+setTime : Float -> Model -> Model
+setTime seconds model =
+    let
+        playbackState =
+            model.playback
+    in
+    { model
+        | playback = { playbackState | currentTime = seconds }
+        , gearAngles =
+            case model.gearGraph of
+                Just graph ->
+                    Animate.gearAngles model.motor graph seconds
+
+                Nothing ->
+                    Dict.empty
+    }
+
+
+{-| The gears that turn with the motor and have a mesh to draw them with — the
+gears `gearEntitiesFor` can animate. Gears outside the motor's gear train, or
+whose part has not loaded, are left out.
+-}
+rotatingGearIds : Model -> Set GearId
+rotatingGearIds model =
+    Dict.keys model.gearAngles
+        |> List.filter (\gid -> Dict.member gid model.gearMeshes)
+        |> Set.fromList
+
+
+{-| A top-level part that turns with a gear without being a gear: an axle the
+gear sits on, or a part threaded onto a gear's axle. `file` and `transform` are
+the part's line in the analysed model, so a host can find its placement.
+-}
+type alias DrivenPart =
+    { drivingGearId : GearId
+    , file : String
+    , transform : Mat4.Mat4
+    }
+
+
+{-| The driven parts (see `DrivenPart`) turning with one of the given gears.
+Parts outside the gear train, or on a gear not in the set, are left out.
+-}
+drivenPartsFor : Set GearId -> Model -> List DrivenPart
+drivenPartsFor ids model =
+    List.filter (\part -> Set.member part.drivingGearId ids) model.drivenParts
+
+
+{-| Only the driven parts turning with one of the given gears, each rotated
+about its own axis to its driving gear's current angle. Pair it with
+`gearEntitiesFor` and hide the parts' static placements from the host's scene.
+-}
+drivenEntitiesFor : Set GearId -> Camera -> Style.Style -> Float -> Model -> List WebGL.Entity
+drivenEntitiesFor ids =
+    componentEntitiesWhere
+        (\component ->
+            case component.drivingGearId of
+                Just gid ->
+                    Set.member gid ids
+
+                Nothing ->
+                    False
+        )
+
+
 {-| Recompute each gear's level of detail from its distance to the camera,
 starting from its previous LOD so the switch has hysteresis (see `Gear.Lod`).
 Call after every update that may have moved the camera.
@@ -741,7 +845,21 @@ entities camera style aspect model =
 
 
 gearEntities : Camera -> Style.Style -> Float -> Model -> List WebGL.Entity
-gearEntities camera styleInput aspect model =
+gearEntities =
+    gearEntitiesWhere (\_ -> True)
+
+
+{-| Only the gears in `ids`, each turned to its current angle. A host that keeps
+the rest of the model (non-turning gears included) in its own static scene
+draws just the turning ones with this, e.g. `gearEntitiesFor (rotatingGearIds model)`.
+-}
+gearEntitiesFor : Set GearId -> Camera -> Style.Style -> Float -> Model -> List WebGL.Entity
+gearEntitiesFor ids =
+    gearEntitiesWhere (\gid -> Set.member gid ids)
+
+
+gearEntitiesWhere : (GearId -> Bool) -> Camera -> Style.Style -> Float -> Model -> List WebGL.Entity
+gearEntitiesWhere include camera styleInput aspect model =
     case model.gearGraph of
         Nothing ->
             []
@@ -762,6 +880,7 @@ gearEntities camera styleInput aspect model =
             in
             graph.instances
                 |> Array.toList
+                |> List.filter (\inst -> include inst.id)
                 |> List.filterMap
                     (\inst ->
                         case Dict.get inst.id model.gearMeshes of
@@ -832,7 +951,12 @@ gearEntities camera styleInput aspect model =
 
 
 componentEntities : Camera -> Style.Style -> Float -> Model -> List WebGL.Entity
-componentEntities camera styleInput aspect model =
+componentEntities =
+    componentEntitiesWhere (\_ -> True)
+
+
+componentEntitiesWhere : (ComponentMeshRender -> Bool) -> Camera -> Style.Style -> Float -> Model -> List WebGL.Entity
+componentEntitiesWhere include camera styleInput aspect model =
     let
         style =
             Style.clampStyle styleInput
@@ -847,6 +971,7 @@ componentEntities camera styleInput aspect model =
             Camera.position camera
     in
     model.componentMeshes
+        |> List.filter include
         |> List.filter (\c -> Pick.isSphereVisible camera aspect c.center 10.0)
         |> List.concatMap
             (\component ->
