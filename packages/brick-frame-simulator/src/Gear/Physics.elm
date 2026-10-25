@@ -40,7 +40,8 @@ pitch point `P`: with `v_X = n_X × (P − C_X)`, the signed ratio is
 `−teeth1/teeth2`. Flipping one gear's axis gives a positive ratio. Crown and
 bevel pairs take their sign from the same formula.
 
-Coaxial (rigid) neighbours always turn at ratio `+1`.
+Coaxial (rigid) neighbours turn at ratio `+1` when their true axes point the
+same way, and `-1` when one is flipped (`rigidSign`).
 
 Worm gear simplification:
 if either side has `teeth == 1`, treat it as a worm mesh and do not invert
@@ -294,9 +295,18 @@ bfsStep graph queue visited angles =
                 ( newVisited2, newAngles2, newEntries2 ) =
                     List.foldl
                         (\neighbourId ( vis, ang, entries ) ->
+                            let
+                                neighbourAngle =
+                                    case ( gearInstance graph currentId, gearInstance graph neighbourId ) of
+                                        ( Just g1, Just g2 ) ->
+                                            currentAngle * rigidSign g1 g2
+
+                                        _ ->
+                                            currentAngle
+                            in
                             ( Set.insert neighbourId vis
-                            , Dict.insert neighbourId currentAngle ang
-                            , ( neighbourId, currentAngle ) :: entries
+                            , Dict.insert neighbourId neighbourAngle ang
+                            , ( neighbourId, neighbourAngle ) :: entries
                             )
                         )
                         ( newVisited, newAngles, [] )
@@ -306,6 +316,23 @@ bfsStep graph queue visited angles =
                 (rest ++ List.reverse newEntries ++ List.reverse newEntries2)
                 newVisited2
                 newAngles2
+
+
+{-| Ratio for a co-axial (rigid) pair, `angle(g2) / angle(g1)`.
+
+The gears share one axle, so they turn with the same angular velocity about
+the same line. Each gear's angle is measured about its own true axis, so a
+gear whose axis points against its partner's turns at the negated angle:
+`+1` for matching axis directions, `-1` otherwise.
+
+-}
+rigidSign : GearInstance -> GearInstance -> Float
+rigidSign g1 g2 =
+    if Vec3.dot (Phase.gearFrame g1).axis (Phase.gearFrame g2).axis < 0 then
+        -1
+
+    else
+        1
 
 
 gearInstance : GearGraph -> GearId -> Maybe GearInstance

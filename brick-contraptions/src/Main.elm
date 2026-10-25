@@ -1281,6 +1281,7 @@ helpRows =
     [ ( "Build"
       , [ ( "Add from the dock", "Gears, axles, beams and pins go on one axle line, next to the selection" )
         , ( "Drag a part", "Slide it at its height, as seen from the camera; it snaps to studs and axles. Grab a gear by its axle hole too" )
+        , ( "Shift + drag a part", "Fine move: 1 LDU steps (Shift held during a drag works too)" )
         , ( "Gears turn to mesh automatically", "A gear that meets another turns its axle line so the teeth interlock" )
         , ( "Action bar (above the dock)", "Turn left / right, tip, raise, lower or remove the selection" )
         , ( "Wheel while dragging", "Raise / lower (Shift: coarser, Alt: finer)" )
@@ -1304,7 +1305,7 @@ helpRows =
         , ( "Reset view, or F", "Fit the whole model in view" )
         , ( "Drag empty space", "Pan" )
         , ( "Right-drag", "Orbit" )
-        , ( "Middle drag / Shift + drag", "Pan" )
+        , ( "Middle drag", "Pan" )
         , ( "One finger on empty space", "Pan (two fingers: pan and pinch-zoom; the globe orbits)" )
         , ( "Wheel", "Zoom" )
         , ( "W A S D", "Move the camera, when nothing is selected" )

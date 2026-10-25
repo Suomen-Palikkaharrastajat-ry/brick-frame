@@ -98,6 +98,10 @@ world matrix. The test depends on gear type:
 
 ## Rotation propagation
 
+Gears are rendered about their true axis (the Y-up image of local +Z through
+the world matrix), never a canonicalised sign, so a gear's rendered angle and
+the angle the physics computes refer to the same axis.
+
 `Gear.Physics.propagate` performs a BFS from the motor gear through the
 adjacency graph. At each edge the ratio is updated:
 
@@ -117,7 +121,10 @@ Flipping one gear's axis gives a positive ratio. Crown and bevel pairs take
 their sign from the same formula. If the geometry is degenerate (coincident
 centres, no pitch point), `meshSign` falls back to `−1`.
 
-Co-axial (rigid) neighbours always turn at ratio `+1`.
+Co-axial (rigid) neighbours share one axle, so they turn with the same
+angular velocity. Each gear's angle is measured about its own true axis, so
+the ratio is `+1` when the two axes point the same way and `-1` when one gear
+is flipped (`Gear.Physics.rigidSign`).
 
 **Example:** Motor on gear A (8T) drives gear B (24T), same orientation:
 - `ratio_B = -(8/24) = −0.333`
@@ -211,7 +218,9 @@ part threaded onto the gear's axis. `Simulation.analyse` finds them as
 of a gear's axis line with the same axis direction (`componentDrivingGear`), or a
 non-gear, non-axle top-level part that `topLevelCoaxialGear` matches to a gear
 (for parts it also accepts the rotational connectors of the part). Each one is
-rotated by its driving gear's angle about the gear's axis.
+rotated by its driving gear's angle about the gear's true axis. A part whose own
+axis points against the gear's is given the flipped axis (`alignToGear` in
+`Simulation.Meshes`), so the same angle turns it the same way as the gear.
 
 - `Simulation.drivenPartsFor` lists the driven parts (file and transform) of the
   given gears, so a host can find their placements.

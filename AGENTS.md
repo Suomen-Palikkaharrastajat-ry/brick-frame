@@ -92,9 +92,9 @@ In-depth documentation for agents and contributors:
 ## Current Runtime Notes
 
 - **Controls panel:** Gear/motor controls are collapsible via a `Minimize` / `Maximize` toggle in the top-right panel.
-- **Desktop camera controls** (per host; wheel = zoom everywhere). Right drag = orbit, Ctrl/Cmd + drag = orbit, middle drag = pan, Shift + drag = pan. Only a plain left press emits `PressStarted`; right/middle/modified presses never grab parts. Space + drag pans only when `Viewport.setSpacePan True`.
+- **Desktop camera controls** (per host; wheel = zoom everywhere). Right drag = orbit, Ctrl/Cmd + drag = orbit, middle drag = pan, Shift + drag = pan. Only a plain left press emits `PressStarted` (a Shift + left press too, when `Viewport.setShiftPressGrabs` is on); right/middle/modified presses never grab parts. Space + drag pans only when `Viewport.setSpacePan True`.
   - Viewer and studio (`DragPartsOrOrbit`, the default): left drag on empty canvas orbits; in the studio, left drag on a part moves it.
-  - Brick Play and Brick Contraptions (`DragPartsOrPan`): left drag on empty canvas pans; left drag on a part moves it.
+  - Brick Play and Brick Contraptions (`DragPartsOrPan`): left drag on empty canvas pans; left drag on a part moves it. Shift + left press on a part grabs it for a fine move (1 LDU, also when Shift is held during a drag); Shift + press on empty canvas pans. `Core.setDragMode` switches the Shift grab on.
   See docs/rendering.md § Interaction controls.
 - **Touch controls:** 2-finger pan + pinch (zoom engages past a 12 px dead-zone). One finger orbits in the viewer, the studio and Brick Play (`OneFingerOrbits`); in Brick Contraptions one finger pans (`OneFingerPans`), because the camera globe does the orbiting. Exactly one of the Touch or Pointer listener families is bound, chosen by the `supportsPointerEvents` flag.
 - **Fit view:** the fit (maximize icon) button in the viewer control pad, labelled 'Fit model to view (F)', re-frames the model; in Brick Contraptions the reset-view button on the camera globe does the same, and in Brick Play it is the toolbar's Fit View. `F` fits in every host. It is the only way back to auto-fit after a manual camera move.

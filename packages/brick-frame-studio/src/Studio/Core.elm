@@ -129,6 +129,11 @@ type alias Drag =
     , axisLock : Maybe Axis
     , modeAnchor : ( Float, Float )
     , baseElevation : Float
+
+    -- A Shift + press on a part in a `DragPartsOrPan` host: the part it hit and
+    -- the selection before the press. Released without moving, the press toggles
+    -- the part in that selection (Shift + click), as it does without a drag.
+    , shiftToggle : Maybe ( Int, Set Int )
     }
 
 
@@ -153,6 +158,21 @@ type DragMode
     = DragPartsOrOrbit
     | DragPartsOnly
     | DragPartsOrPan OneFinger
+
+
+{-| Whether a host in this drag mode gets Shift + drag fine moves: a Shift +
+left press on a part grabs it (see `Viewport.setShiftPressGrabs`), and holding
+Shift during a body drag moves on a 1 LDU grid. `DragPartsOrOrbit` and
+`DragPartsOnly` keep Shift + drag as a pan and the normal grid.
+-}
+dragModeGrabsWithShift : DragMode -> Bool
+dragModeGrabsWithShift mode =
+    case mode of
+        DragPartsOrPan _ ->
+            True
+
+        _ ->
+            False
 
 
 {-| What one finger dragged on empty canvas does in `DragPartsOrPan` mode.
@@ -410,7 +430,10 @@ setTool tool model =
 -}
 setDragMode : DragMode -> Model -> Model
 setDragMode mode model =
-    { model | dragMode = mode }
+    { model
+        | dragMode = mode
+        , viewport = Viewport.setShiftPressGrabs (dragModeGrabsWithShift mode) model.viewport
+    }
 
 
 {-| Whether a body drag on the horizontal working plane settles the parts onto
@@ -1115,7 +1138,18 @@ updateInner : Msg -> Model -> ( Model, Cmd Msg, List Event )
 updateInner msg model =
     case msg of
         ViewportMsg (Viewport.KeyPressed keyEvent) ->
-            handleCanvasKey keyEvent model
+            let
+                ( keyedModel, keyCmd, keyEvents ) =
+                    handleCanvasKey keyEvent model
+
+                ( refreshed, refreshCmd, refreshEvents ) =
+                    if keyEvent.key == "Shift" then
+                        refreshPlaneDrag keyedModel
+
+                    else
+                        ( keyedModel, Cmd.none, [] )
+            in
+            ( refreshed, Cmd.batch [ keyCmd, refreshCmd ], keyEvents ++ refreshEvents )
 
         ViewportMsg viewportMsg ->
             let
@@ -1657,13 +1691,35 @@ handleViewportEvent event ( model, cmds, outEvents ) =
             )
 
         Viewport.PressStarted x y ->
-            case startDrag ( x, y ) model of
-                Just drag ->
+            let
+                -- A Shift + left press (offered to the host by
+                -- `Viewport.setShiftPressGrabs`) counts as Shift held from the
+                -- first move on, whatever the key tracking saw.
+                shiftPress =
+                    Viewport.pressedWithShift model.viewport
+
+                pressModel =
+                    if shiftPress then
+                        { model | shiftHeld = True }
+
+                    else
+                        model
+            in
+            case startDrag ( x, y ) pressModel of
+                Just drag0 ->
                     let
+                        drag =
+                            case ( shiftPress, drag0.kind, Viewport.pickSource x y model.viewport ) of
+                                ( True, PlaneDrag _, Just hit ) ->
+                                    { drag0 | shiftToggle = Just ( hit, model.selection ) }
+
+                                _ ->
+                                    drag0
+
                         dragSel =
                             Set.fromList drag.ids
                     in
-                    ( { model
+                    ( { pressModel
                         | viewport = Viewport.captureDrag model.viewport
                         , drag = Just drag
                         , selection = dragSel
@@ -1675,24 +1731,24 @@ handleViewportEvent event ( model, cmds, outEvents ) =
                     )
 
                 Nothing ->
-                    if model.dragMode == DragPartsOnly && not model.viewport.mousePanDragging then
+                    if pressModel.dragMode == DragPartsOnly && not pressModel.viewport.mousePanDragging then
                         -- Nothing to pick up and the camera is not ours to move:
                         -- hold the gesture so it does not orbit. The release then
                         -- arrives as `DragEnded`, never `Clicked`, so clear here.
                         let
                             newSel =
-                                if model.shiftHeld then
-                                    model.selection
+                                if pressModel.shiftHeld then
+                                    pressModel.selection
 
                                 else
                                     Set.empty
                         in
-                        ( { model
-                            | viewport = Viewport.captureDrag model.viewport
+                        ( { pressModel
+                            | viewport = Viewport.captureDrag pressModel.viewport
                             , selection = newSel
                           }
                         , cmds
-                        , if newSel == model.selection then
+                        , if newSel == pressModel.selection then
                             outEvents
 
                           else
@@ -1700,7 +1756,7 @@ handleViewportEvent event ( model, cmds, outEvents ) =
                         )
 
                     else
-                        ( { model | viewport = panEmptyPress model.dragMode model.viewport }, cmds, outEvents )
+                        ( { pressModel | viewport = panEmptyPress pressModel.dragMode pressModel.viewport }, cmds, outEvents )
 
         Viewport.DragMoved x y ->
             case model.drag of
@@ -1804,6 +1860,7 @@ startDrag point model =
             , axisLock = Nothing
             , modeAnchor = point
             , baseElevation = 0.0
+            , shiftToggle = Nothing
             }
 
         arcDrag =
@@ -1855,8 +1912,44 @@ grabPart ( x, y ) model =
                     , axisLock = Nothing
                     , modeAnchor = ( x, y )
                     , baseElevation = 0.0
+                    , shiftToggle = Nothing
                     }
                 )
+
+
+{-| The grid step of a body drag on the working plane: 1 LDU while Shift is
+held in a `DragPartsOrPan` host, else the grid.
+-}
+dragGridStep : Model -> Float
+dragGridStep model =
+    if model.shiftHeld && dragModeGrabsWithShift model.dragMode then
+        1
+
+    else
+        toFloat (max 1 model.gridStep)
+
+
+{-| Re-run the body drag in progress after Shift went down, so the grid change
+applies without waiting for the mouse to move. Only for a host that grabs with
+Shift (see `dragModeGrabsWithShift`).
+-}
+refreshPlaneDrag : Model -> ( Model, Cmd Msg, List Event )
+refreshPlaneDrag model =
+    case model.drag of
+        Just drag ->
+            case drag.kind of
+                PlaneDrag _ ->
+                    if dragModeGrabsWithShift model.dragMode then
+                        moveDrag drag drag.lastPoint model
+
+                    else
+                        ( model, Cmd.none, [] )
+
+                _ ->
+                    ( model, Cmd.none, [] )
+
+        Nothing ->
+            ( model, Cmd.none, [] )
 
 
 moveDrag : Drag -> ( Float, Float ) -> Model -> ( Model, Cmd Msg, List Event )
@@ -1981,7 +2074,7 @@ movePlaneDrag initialDrag grab ( x, y ) model =
                         { plane = plane
                         , cursor = cursorPoint
                         , original = origPos
-                        , gridStep = toFloat (max 1 model.gridStep)
+                        , gridStep = dragGridStep model
                         , elevationOffset = drag.elevationOffset
                         , footprint = footprint
                         , others = otherBoxes
@@ -2120,15 +2213,31 @@ endDrag model =
                 in
                 -- A part pressed and released without moving is a click on it
                 -- (in the drag modes it never arrives as `Clicked`).
-                ( case drag.kind of
-                    PlaneDrag _ ->
-                        pivotOnSelection released
+                case drag.shiftToggle of
+                    Just ( hit, prior ) ->
+                        let
+                            toggled =
+                                if Set.member hit prior then
+                                    Set.remove hit prior
 
-                    _ ->
-                        released
-                , Cmd.none
-                , []
-                )
+                                else
+                                    Set.insert hit prior
+                        in
+                        ( pivotOnSelection { released | selection = toggled }
+                        , Cmd.none
+                        , [ SelectionChanged toggled ]
+                        )
+
+                    Nothing ->
+                        ( case drag.kind of
+                            PlaneDrag _ ->
+                                pivotOnSelection released
+
+                            _ ->
+                                released
+                        , Cmd.none
+                        , []
+                        )
 
             else
                 let

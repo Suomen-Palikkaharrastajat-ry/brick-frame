@@ -192,6 +192,12 @@ action bar and toolbar to the component.
 - **Drag mode.** Brick Play uses `DragPartsOrPan OneFingerOrbits`; Brick
   Contraptions uses `DragPartsOrPan OneFingerPans` and a camera globe (see
   [rendering.md](rendering.md) § Interaction controls).
+- **Shift fine moves.** In `DragPartsOrPan` a Shift + left press on a part grabs
+  it (Shift + press on empty canvas pans), and holding Shift during a body drag
+  moves on a 1 LDU grid instead of the move step. Shift + click still toggles the
+  part in the selection when released without moving. `Core.setDragMode` turns
+  `Viewport.setShiftPressGrabs` on for this mode only; the studio workspace keeps
+  Shift + drag as a pan.
 - **Action bar.** While something is selected, a floating bar above the dock shows
   Turn left, Turn right, Tip, Raise, Lower and Delete. Each calls the same command
   as its key (`Core.turnSelected`, `Core.raiseSelected`, `Core.lowerSelected`,

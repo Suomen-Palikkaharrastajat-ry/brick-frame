@@ -295,12 +295,15 @@ same figure as before.
     In the studio a left drag on a part moves it.
   - Brick Play and Brick Contraptions (`DragPartsOrPan OneFinger…`): left drag on empty
     canvas pans, exactly like Shift + drag (`Viewport.panCurrentGesture`). A left drag on
-    a part moves it. A click on empty canvas still clears the selection.
+    a part moves it. A click on empty canvas still clears the selection. Shift + left
+    press on a part grabs it for a fine move (`Viewport.setShiftPressGrabs`, switched on by
+    `Core.setDragMode`); Shift + left press on empty canvas pans. Holding Shift during a
+    body drag moves on a 1 LDU grid (the normal grid returns on release).
 
   | Input | Viewer, studio | Brick Play, Brick Contraptions | Event |
   |---|---|---|---|
   | Left drag, plain | Orbit (empty canvas); a part is picked up if pressed | Pan (empty canvas); a part is picked up if pressed | `PressStarted`, host may `captureDrag` |
-  | Left drag + Shift | Pan | Pan | none (never grabs) |
+  | Left drag + Shift | Pan | Pan on empty canvas; grabs a part (fine, 1 LDU) | `PressStarted` on a part (Play, Contraptions only), else none |
   | Left drag + Ctrl / Cmd | Orbit | Orbit | none (never grabs) |
   | Right drag | Orbit | Orbit | none (never grabs) |
   | Middle drag | Pan | Pan | none (never grabs) |

@@ -228,6 +228,7 @@ suite =
                                     , axisLock = Nothing
                                     , modeAnchor = ( 0, 0 )
                                     , baseElevation = 0
+                                    , shiftToggle = Nothing
                                     }
                         }
 
@@ -398,6 +399,7 @@ suite =
         , noGizmoSuite
         , selectionActionSuite
         , emptyDragPanSuite
+        , shiftFineSuite
         , restingSuite
         ]
 
@@ -689,6 +691,7 @@ gearGrabbed id model =
                 , axisLock = Nothing
                 , modeAnchor = ( 400, 300 )
                 , baseElevation = 0
+                , shiftToggle = Nothing
                 }
     }
 
@@ -1204,6 +1207,7 @@ grabbedAt positions =
                 , axisLock = Nothing
                 , modeAnchor = ( 400, 300 )
                 , baseElevation = 0
+                , shiftToggle = Nothing
                 }
     }
 
@@ -1292,6 +1296,7 @@ draggingModel model1 =
                 , axisLock = Nothing
                 , modeAnchor = ( 0, 0 )
                 , baseElevation = 0
+                , shiftToggle = Nothing
                 }
     }
 
@@ -1394,6 +1399,139 @@ emptyDragPanSuite =
             \_ -> orbits (touchEmpty (Core.DragPartsOrPan Core.OneFingerOrbits))
         , test "OneFingerPans: one finger on empty canvas pans" <|
             \_ -> pans (touchEmpty (Core.DragPartsOrPan Core.OneFingerPans))
+        ]
+
+
+{-| Shift in `DragPartsOrPan` hosts (Play, Contraptions): a Shift + press on a
+part grabs it, holding Shift during a body drag moves on a 1 LDU grid, and a
+Shift + press on empty canvas pans. The default mode keeps Shift + drag as a pan.
+-}
+shiftFineSuite : Test
+shiftFineSuite =
+    let
+        shiftKey =
+            let
+                keyDown =
+                    pressOn "BODY" "Shift"
+            in
+            { keyDown | shift = True }
+
+        shiftDown model =
+            Core.update (Core.ViewportMsg (Viewport.KeyPressed shiftKey)) model
+                |> (\( m, _, _ ) -> m)
+
+        shiftUp model =
+            Core.update (Core.KeyUp "Shift") model
+                |> (\( m, _, _ ) -> m)
+
+        send msg model =
+            Core.update (Core.ViewportMsg msg) model |> (\( m, _, _ ) -> m)
+
+        -- The brick at the origin, grabbed at its top centre on a 20 LDU grid. The
+        -- cursor aims at X = 37: a 1 LDU step lands there, the 20 LDU grid on 40.
+        grabbed mode =
+            grabbedAt [ vec3 0 -24 0 ]
+                |> Core.setGridStep 20
+                |> Core.setDragMode mode
+
+        xAfterMove model =
+            moveTo (screenOf model (vec3 37 0 -52)) model
+                |> (\( m, _, _ ) -> firstPosition m)
+                |> Maybe.map Vec3.getX
+
+        xIs expected model =
+            case xAfterMove model of
+                Just x ->
+                    Expect.within (Expect.Absolute 0.51) expected x
+
+                Nothing ->
+                    Expect.fail "the part vanished"
+
+        -- The brick aimed at, selected, in a host's mode.
+        aimed mode =
+            aimedAt (vec3 0 -24 0)
+                |> Core.setGizmoStyle Core.NoGizmo
+                |> Core.setDragMode mode
+
+        partsOrPan =
+            Core.DragPartsOrPan Core.OneFingerOrbits
+    in
+    describe "Shift fine moves (DragPartsOrPan)"
+        [ test "Shift held before a body drag moves on a 1 LDU grid" <|
+            \_ ->
+                grabbed partsOrPan
+                    |> shiftDown
+                    |> xIs 37
+        , test "Shift pressed mid-drag applies to the next move" <|
+            \_ ->
+                grabbed partsOrPan
+                    |> shiftDown
+                    |> xIs 37
+        , test "releasing Shift returns to the 20 LDU grid" <|
+            \_ ->
+                grabbed partsOrPan
+                    |> shiftDown
+                    |> shiftUp
+                    |> xIs 40
+        , test "the default mode keeps the 20 LDU grid with Shift held" <|
+            \_ ->
+                grabbed Core.DragPartsOrOrbit
+                    |> shiftDown
+                    |> xIs 40
+        , test "a Shift + press on a part grabs it" <|
+            \_ ->
+                let
+                    pressed =
+                        aimed partsOrPan
+                            |> send (Viewport.MouseButtonDown 400 300 0 True False)
+                in
+                Expect.all
+                    [ \m -> Expect.equal True (m.drag /= Nothing)
+                    , \m -> Expect.equal False m.viewport.mousePanDragging
+                    ]
+                    pressed
+        , test "a Shift + press on empty canvas pans" <|
+            \_ ->
+                let
+                    before =
+                        aimed partsOrPan
+
+                    after =
+                        before
+                            |> send (Viewport.MouseButtonDown 10 10 0 True False)
+                            |> send (Viewport.MouseMove 70 40)
+                in
+                Expect.all
+                    [ \_ -> Expect.equal Nothing after.drag
+                    , \_ -> Expect.notEqual before.viewport.camera.target after.viewport.camera.target
+                    ]
+                    ()
+        , test "the default mode turns a Shift + press into a pan, not a grab" <|
+            \_ ->
+                aimed Core.DragPartsOrOrbit
+                    |> send (Viewport.MouseButtonDown 400 300 0 True False)
+                    |> .drag
+                    |> Expect.equal Nothing
+        , test "a Shift + click on a part toggles it in the selection" <|
+            \_ ->
+                let
+                    base =
+                        aimed partsOrPan
+
+                    firstId =
+                        Core.getPlacements base |> List.head |> Maybe.map .id |> Maybe.withDefault -1
+
+                    clicked model =
+                        model
+                            |> send (Viewport.MouseButtonDown 400 300 0 True False)
+                            |> send (Viewport.MouseUp 400 300)
+                            |> .selection
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Set.singleton firstId) (clicked { base | selection = Set.empty })
+                    , \_ -> Expect.equal Set.empty (clicked base)
+                    ]
+                    ()
         ]
 
 

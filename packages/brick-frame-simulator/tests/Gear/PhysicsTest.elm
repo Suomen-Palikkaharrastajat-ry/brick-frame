@@ -238,6 +238,35 @@ suite =
                         |> angleAt
                         |> (\f -> f 2)
                         |> Expect.within (Expect.Absolute 1.0e-6) -0.5
+            , test "co-axial gear with its axis flipped turns at the negated angle" <|
+                \_ ->
+                    -- Gear 1 is turned 180° about X, so its true axis points against gear 0's.
+                    let
+                        flippedGraph =
+                            geometryGraph
+                                [ placedGear "3648.dat" 0 24 Mat4.identity
+                                , placedGear "3647.dat" 1 8 (Mat4.makeRotate pi (vec3 1 0 0))
+                                ]
+                                |> (\g -> { g | rigidAxles = Dict.fromList [ ( 0, [ 1 ] ), ( 1, [ 0 ] ) ], connections = Dict.empty })
+                    in
+                    propagate flippedGraph 0 2.0
+                        |> angleAt
+                        |> (\f -> f 1)
+                        |> Expect.within (Expect.Absolute 1.0e-6) -2.0
+            , test "co-axial gears with matching axes keep the same angle" <|
+                \_ ->
+                    let
+                        sameGraph =
+                            geometryGraph
+                                [ placedGear "3648.dat" 0 24 Mat4.identity
+                                , placedGear "3647.dat" 1 8 Mat4.identity
+                                ]
+                                |> (\g -> { g | rigidAxles = Dict.fromList [ ( 0, [ 1 ] ), ( 1, [ 0 ] ) ], connections = Dict.empty })
+                    in
+                    propagate sameGraph 0 2.0
+                        |> angleAt
+                        |> (\f -> f 1)
+                        |> Expect.within (Expect.Absolute 1.0e-6) 2.0
             ]
         , describe "propagate — signed ratios from gear geometry"
             [ test "same-orientation 8T driving 24T along X: -1/3 (unchanged rule)" <|

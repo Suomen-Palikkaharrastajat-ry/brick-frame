@@ -122,6 +122,65 @@ analysed =
         |> Tuple.first
 
 
+{-| An analysed model of the given lines, read at t = 1 s with the motor on gear 0.
+-}
+meshModel : List LDrawLine -> Simulation.Model
+meshModel lines =
+    Simulation.init config
+        |> Simulation.analyse { lines = lines, cache = Dict.union drivenCache cache }
+        |> Tuple.first
+        |> Simulation.setTime 1.0
+
+
+{-| A gear at (x, 0, 0), turned 180° about X when flipped, so its local +Z points the other way.
+-}
+gearAt : String -> Bool -> Float -> LDrawLine
+gearAt file flipped x =
+    let
+        turn =
+            if flipped then
+                Mat4.makeRotate pi (Vec3.vec3 1 0 0)
+
+            else
+                Mat4.identity
+    in
+    SubFileRef { color = 4, transform = Mat4.mul (Mat4.makeTranslate3 x 0 0) turn, file = file }
+
+
+signum : Float -> Float
+signum x =
+    if x < 0 then
+        -1
+
+    else
+        1
+
+
+{-| The sense, +1 or -1, in which a rotation by `angle` about `axis` turns as seen
+along the world Z axis (where all test gears point along ±Z).
+-}
+visualSense : Float -> Vec3.Vec3 -> Float
+visualSense angle axis =
+    signum (angle * Vec3.getZ axis)
+
+
+{-| The visual sense of a gear, from its rendered axis and its angle.
+-}
+gearSense : Simulation.Model -> Int -> Maybe Float
+gearSense m gearId =
+    Maybe.map2 visualSense
+        (Dict.get gearId m.gearAngles)
+        (Dict.get gearId m.gearMeshes |> Maybe.map .axis)
+
+
+{-| The product of the visual senses of gears 0 and 1: -1 when they turn opposite ways, +1 when together.
+-}
+oppositeWays : Simulation.Model -> Float
+oppositeWays m =
+    Maybe.map2 (*) (gearSense m 0) (gearSense m 1)
+        |> Maybe.withDefault 0
+
+
 time : Int -> Time.Posix
 time =
     Time.millisToPosix
@@ -305,6 +364,45 @@ suite =
                         |> Tuple.first
                         |> Simulation.rotatingGearIds
                         |> Expect.equal (Set.fromList [ 0 ])
+            ]
+        , describe "true axes"
+            [ test "a flipped gear is rendered about its own true axis" <|
+                \_ ->
+                    let
+                        m =
+                            meshModel [ gearAt "3648.dat" False 0, gearAt "4019.dat" True 50 ]
+                    in
+                    [ Dict.get 0 m.gearMeshes, Dict.get 1 m.gearMeshes ]
+                        |> List.map (Maybe.map (\g -> signum (Vec3.getZ g.axis)))
+                        |> Expect.equal [ Just -1, Just 1 ]
+            , test "a meshing pair turns opposite ways on screen when one gear is flipped" <|
+                \_ ->
+                    oppositeWays (meshModel [ gearAt "3648.dat" False 0, gearAt "4019.dat" True 50 ])
+                        |> Expect.equal -1
+            , test "a same-orientation meshing pair still turns opposite ways" <|
+                \_ ->
+                    oppositeWays (meshModel [ gearAt "3648.dat" False 0, gearAt "4019.dat" False 50 ])
+                        |> Expect.equal -1
+            , test "a flipped co-axial gear turns with its partner" <|
+                \_ ->
+                    oppositeWays (meshModel [ gearAt "3648.dat" False 0, gearAt "3647.dat" True 0 ])
+                        |> Expect.equal 1
+            , test "a same-orientation co-axial gear turns with its partner" <|
+                \_ ->
+                    oppositeWays (meshModel [ gearAt "3648.dat" False 0, gearAt "3647.dat" False 0 ])
+                        |> Expect.equal 1
+            , test "a driven axle on a flipped gear turns with it" <|
+                \_ ->
+                    let
+                        m =
+                            meshModel [ gearAt "3648.dat" True 0, axleAlongZ 0 0 ]
+                    in
+                    case ( m.componentMeshes, Dict.get 0 m.gearAngles ) of
+                        ( [ axle ], Just angle ) ->
+                            Expect.equal (gearSense m 0) (Just (visualSense angle axle.axis))
+
+                        _ ->
+                            Expect.fail "expected one driven axle on the gear"
             ]
         , describe "driven parts"
             [ test "an axle threaded on a gear is driven by it; a free axle is not" <|

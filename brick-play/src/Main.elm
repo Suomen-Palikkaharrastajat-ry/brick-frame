@@ -491,6 +491,7 @@ helpRows : List ( String, List ( String, String ) )
 helpRows =
     [ ( "Build"
       , [ ( "Drag a brick", "Move it as seen from the camera (snaps to studs)" )
+        , ( "Shift + drag a brick", "Fine move: 1 LDU steps (Shift held during a drag works too)" )
         , ( "Wheel while dragging", "Raise / lower the brick" )
         , ( "Action bar (above the dock)", "Turn left / right, tip, raise, lower or remove the selected brick" )
         , ( "W A S D  Q E", "Move the selected brick (Shift: fine steps)" )
@@ -505,7 +506,7 @@ helpRows =
     , ( "Camera"
       , [ ( "Drag empty space", "Pan" )
         , ( "Right-drag", "Orbit" )
-        , ( "Middle drag  Shift + drag", "Pan" )
+        , ( "Middle drag", "Pan" )
         , ( "One finger on empty space", "Orbit (two fingers: pan and pinch-zoom)" )
         , ( "Wheel  + -", "Zoom" )
         , ( "F  Home", "Fit the whole model" )

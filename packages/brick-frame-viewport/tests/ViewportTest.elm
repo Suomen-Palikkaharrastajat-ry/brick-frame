@@ -68,6 +68,13 @@ pressEvents msg =
     update msg idle |> Tuple.second
 
 
+{-| Events a press sends from the given viewport.
+-}
+pressedEvents : Viewport.Model -> Msg -> List Event
+pressedEvents model msg =
+    update msg model |> Tuple.second
+
+
 suite : Test
 suite =
     describe "Viewport"
@@ -378,6 +385,52 @@ suite =
                         [ \_ -> Expect.equal True enabled.mousePanDragging
                         , \_ -> Expect.equal False disabled.mousePanDragging
                         , \_ -> Expect.equal [ PressStarted 10 20 ] pressEvents_
+                        ]
+                        ()
+            , test "a Shift + left press pans, and never emits PressStarted, by default" <|
+                \_ ->
+                    let
+                        ( pressed, events ) =
+                            update (MouseButtonDown 10 20 0 True False) idle
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [] events
+                        , \_ -> Expect.equal True pressed.mousePanDragging
+                        ]
+                        ()
+            , test "with setShiftPressGrabs a Shift + left press emits PressStarted and does not pan yet" <|
+                \_ ->
+                    let
+                        grabbing =
+                            Viewport.setShiftPressGrabs True idle
+
+                        ( pressed, events ) =
+                            update (MouseButtonDown 10 20 0 True False) grabbing
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ PressStarted 10 20 ] events
+                        , \_ -> Expect.equal False pressed.mousePanDragging
+                        , \_ -> Expect.equal True (Viewport.pressedWithShift pressed)
+                        ]
+                        ()
+            , test "with setShiftPressGrabs Shift + Ctrl, right and middle presses still never grab" <|
+                \_ ->
+                    let
+                        grabbing =
+                            Viewport.setShiftPressGrabs True idle
+                    in
+                    Expect.equal
+                        [ [], [], [], [] ]
+                        [ pressedEvents grabbing (MouseButtonDown 10 20 0 True True)
+                        , pressedEvents grabbing (MouseButtonDown 10 20 2 True False)
+                        , pressedEvents grabbing (MouseButtonDown 10 20 1 True False)
+                        , pressedEvents grabbing (MouseButtonDown 10 20 0 False True)
+                        ]
+            , test "a plain press is unchanged with setShiftPressGrabs on" <|
+                \_ ->
+                    Expect.all
+                        [ \_ -> Expect.equal [ PressStarted 10 20 ] (pressedEvents (Viewport.setShiftPressGrabs True idle) (MouseButtonDown 10 20 0 False False))
+                        , \_ -> Expect.equal False (Viewport.pressedWithShift idle)
                         ]
                         ()
             ]

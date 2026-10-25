@@ -23,11 +23,13 @@ module Viewport exposing
     , pickSource
     , pickSurfaceExcluding
     , pivotOn
+    , pressedWithShift
     , setActivePath
     , setActiveSources
     , setCanvasOrigin
     , setHiddenSources
     , setRenderQuality
+    , setShiftPressGrabs
     , setSpacePan
     , subscriptions
     , update
@@ -204,6 +206,8 @@ type alias Model =
     , mousePanDragging : Bool
     , pressButton : Int
     , pressToggle : Bool
+    , pressShift : Bool
+    , shiftPressGrabs : Bool
     , spacePan : Bool
     , loadingProgressPct : Float
     , loadingProgressTick : Maybe Time.Posix
@@ -327,6 +331,8 @@ init config =
       , mousePanDragging = False
       , pressButton = 0
       , pressToggle = False
+      , pressShift = False
+      , shiftPressGrabs = False
       , spacePan = False
       , loadingProgressPct = 0.0
       , loadingProgressTick = Nothing
@@ -426,10 +432,11 @@ type Msg
     under it.
   - `Tapped` — the same for a one-finger touch.
   - `PressStarted` — a plain left-button press (no Shift, Ctrl or Cmd, and not
-    Space-panning) or a single finger went down at this point. The camera has
-    started to follow it; call `captureDrag` to take the gesture for the host
-    instead (to drag a handle, say). Right, middle and modified presses never
-    emit it, so hosts cannot grab parts with them.
+    Space-panning), a Shift + left press when `setShiftPressGrabs` is on, or a
+    single finger went down at this point. The camera has started to follow it;
+    call `captureDrag` to take the gesture for the host instead (to drag a
+    handle, say), or `panCurrentGesture` to pan. Right, middle and other
+    modified presses never emit it, so hosts cannot grab parts with them.
   - `DragMoved` / `DragEnded` — while a gesture is captured, where it is now and
     where it ended. The camera does not move.
   - `DragCancelled` — a right-button press arrived while a gesture was captured.
@@ -658,14 +665,21 @@ updateInner msg model =
                     spacePanning =
                         model.spacePan && isSpaceHeld model
 
+                    -- A Shift + left press on a host that asked for it
+                    -- (`setShiftPressGrabs`) is offered to the host as a press,
+                    -- which decides between grabbing a part and panning.
+                    shiftGrab =
+                        model.shiftPressGrabs && shiftHeld && button == 0 && not (accelHeld || spacePanning)
+
                     -- Shift, the middle button and Space pan; Ctrl/Cmd and the
                     -- right button orbit.
                     panning =
-                        shiftHeld || button == 1 || spacePanning
+                        (shiftHeld && not shiftGrab) || button == 1 || spacePanning
 
-                    -- Only a plain left press may grab a part.
+                    -- Only a plain left press (or a Shift + left press offered
+                    -- for grabbing) may grab a part.
                     plainLeft =
-                        button == 0 && not (shiftHeld || accelHeld || spacePanning)
+                        (button == 0 && not (shiftHeld || accelHeld || spacePanning)) || shiftGrab
                 in
                 ( { model
                     | camera = Camera.onMouseDown x y model.camera
@@ -674,6 +688,7 @@ updateInner msg model =
                     , mousePanDragging = panning
                     , pressButton = button
                     , pressToggle = shiftHeld || accelHeld
+                    , pressShift = shiftHeld
                     , mousePressed = True
                     , captured = model.captured && not cancelling
                     , lastPointer = ( x, y )
@@ -1341,6 +1356,27 @@ touchesUp touches model =
 tapSlop : Float
 tapSlop =
     8.0
+
+
+{-| Let a Shift + left press on empty canvas or on a part reach the host as
+`PressStarted`, instead of always panning. The host then decides: `captureDrag`
+to grab the part, or `panCurrentGesture` to pan. Off by default, so Shift +
+drag pans (studio, the viewer). Brick Play and Brick Contraptions turn it on
+(through `Studio.Core.setDragMode`). A Shift press that is not captured and does
+not travel is still a `Clicked` with the toggle flag set.
+-}
+setShiftPressGrabs : Bool -> Model -> Model
+setShiftPressGrabs enabled model =
+    { model | shiftPressGrabs = enabled }
+
+
+{-| Whether the press that started the current mouse gesture had Shift held.
+Lets a host that receives `PressStarted` for a Shift press tell it apart from a
+plain press, even when its own key tracking missed the Shift key-down.
+-}
+pressedWithShift : Model -> Bool
+pressedWithShift model =
+    model.pressShift
 
 
 {-| Let Space + drag pan the camera, for hosts that use Space for something else
