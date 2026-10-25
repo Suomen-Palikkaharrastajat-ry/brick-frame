@@ -29,6 +29,7 @@ packages/brick-frame-simulator/src/
 
 packages/brick-frame-viewport/   # Viewport component (camera, input, loading, document scenes) + runtime/ JS + geometry-worker.js
 packages/brick-frame-simulation/ # Simulation component (gear analysis, playback, moving-part meshes)
+packages/brick-frame-studio/     # Reusable 3D studio TEA component (Core, Edit, Gizmo, Overlay, Transform, Shortcuts, Snapping, UrlPayload)
 packages/brick-frame-ui/         # Theme tokens, shared view widgets, theme.css
 packages/brick-frame-data/src/   # Data.elm (generated, never edit) + EmbeddedParts.elm
 
@@ -37,9 +38,20 @@ viewer-app/src/                  # Viewer + Web Components host
   Ports.elm             # JS interop (file reading, geometry worker, URL hash)
   UI/                   # Viewer-only panels
 
-studio-app/src/                  # LDraw studio (editor) host — see docs/studio.md
+studio-app/src/                  # Full-featured LDraw studio (editor) host — see docs/studio.md
   Main.elm              # Pages: Workspace and Preview (nested WorkspaceMsg / PreviewMsg)
-  Studio/               # Workspace, Edit (commands + history), Gizmo, Palette, Inspector, Preview, ...
+  Studio/               # Workspace, Preview, Instructions, Inspector, Palette, Tree, BOM
+
+brick-play/src/                  # Brick Play: minimal 10-brick free-building studio
+  Main.elm              # Model, Msg, inventory tracking, wraps StudioMsg (Studio.Core)
+  Ports.elm             # JS interop (file reading, geometry worker, URL hash)
+
+brick-contraptions/src/          # Brick Contraptions: Technic gear machine builder & simulation
+  Main.elm              # Model, Msg, mode toggle, wraps StudioMsg (Studio.Core)
+  Contraption/
+    Machine.elm         # Technic machine analysis & accomplishment condition
+    Catalog.elm         # Curated Technic parts catalog (gears, beams, axles, pins)
+  Ports.elm             # JS interop (file reading, geometry worker, URL hash)
 
 src/
   Lib.hs                # LDrawColor, GearSpec, Elm module generation
@@ -65,6 +77,7 @@ In-depth documentation for agents and contributors:
 - **Key gear parts:** `3647.dat` (8T), `4019.dat` (16T), `3648.dat` (24T), `3649.dat` (40T)
 - **Color inheritance:** Color `16` and Studio `-1` inherit from parent; Color `24` is edge color (render black).
 - **Gear physics:** Pure function of time — angle = ratio × motorSpeed × t (enables free scrubbing).
+- **Cross-app export / deep linking:** Studio models can be exported to Brick Play (as a limited part kit) and Brick Contraptions (as an assembled mechanism + parts catalog) via URL hash fragments (`#parts=...` and `#model=...&parts=...`) handled by `Studio.UrlPayload`.
 - **Msg architecture:** Each app's `Main.elm` owns its `Msg`; the stateful `Viewport` and `Simulation` components are the exception (own `Model`/`Msg`/`update`, no ports, effects returned as events). The studio nests page Msgs. Everything else is pure functions.
 
 ## Current Runtime Notes
@@ -85,42 +98,51 @@ In-depth documentation for agents and contributors:
 Uses **devenv** (Nix). Always run Elm/Haskell commands inside the devenv shell:
 
 ```sh
-make shell     # Enter the devenv shell interactively
-make dev       # Start the viewer's Vite dev server (hot reload)
-make studio-dev # Start the studio's Vite dev server
-make generate  # Run Haskell generator (writes packages/brick-frame-data/src/Data.elm)
+make shell            # Enter the devenv shell interactively
+make dev              # Start the viewer's Vite dev server (hot reload, port 5173)
+make studio-dev        # Start the studio's Vite dev server (port 5174)
+make play-dev          # Start the brick-play Vite dev server (port 5175)
+make contraptions-dev  # Start the brick-contraptions Vite dev server (port 5176)
+make preview           # Serve unified production build of all apps (port 4173)
+make generate         # Run Haskell generator (writes packages/brick-frame-data/src/Data.elm)
 ```
 
 ## Build Commands
 
 | Command | Description |
 |---------|-------------|
-| `make dev` | Start Vite dev server with hot reload |
-| `make studio-dev` | Start the studio dev server (serves `/ldraw` from the viewer's public dir) |
-| `make build` | Production build (viewer + studio at `/studio/`) → `build/` |
-| `make studio-build` | Build the studio only |
+| `make dev` | Start Vite dev server for viewer with hot reload (port 5173) |
+| `make studio-dev` | Start the studio dev server (serves `/ldraw` from viewer public dir, port 5174) |
+| `make play-dev` | Start the brick-play dev server (port 5175) |
+| `make contraptions-dev` | Start the brick-contraptions dev server (port 5176) |
+| `make build` | Production build of all apps (`viewer` at root, `build/studio/`, `build/play/`, `build/contraptions/`) |
+| `make studio-build` | Build the studio only → `build/studio/` |
+| `make play-build` | Build brick-play only → `build/play/` |
+| `make contraptions-build` | Build brick-contraptions only → `build/contraptions/` |
+| `make preview` / `make serve` | Serve unified production build of all apps locally on port 4173 |
+| `make dist-ci` | Full CI production build including CI generator derivation |
 | `make ldraw-index` | Rebuild `parts-index.json` (part palette search index) |
 | `make generate` | Run Haskell generator only |
-| `make test` | hlint + cabal test + elm-test |
-| `make test-lib` | Run tests in the four `packages/` only |
-| `make check` | Validate formatting + hlint + elm-review (no changes) |
+| `make test` | hlint + cabal test + node index tests + elm-test (all apps and packages) |
+| `make test-lib` | Run tests in the five `packages/` (simulator, viewport, simulation, ui, studio) |
+| `make check` | Validate formatting + hlint + elm-review across all apps and packages |
 | `make format` | Auto-format Haskell (fourmolu) and Elm (elm-format) |
-| `make elm-review` | Run elm-review LLM-agent rules only |
+| `make elm-review` | Run elm-review LLM-agent rules only across all apps and packages |
 | `make elm-review-fix` | Run elm-review with auto-fix |
 | `make clean` | Remove build artifacts |
 
 ## Rules for Agent Sessions
 
 1. **Never edit `packages/brick-frame-data/src/Data.elm` or `packages/brick-frame-simulator/src/LDraw/ColorData.elm`** — both are auto-generated by the Haskell generator (`make generate`). Colours come from `viewer-app/public/ldraw/LDConfig.ldr`; add colours by syncing that file, not by hand-editing Elm.
-2. **Msg constructors live in an app's `Main.elm`** (studio pages have their own nested Msg) — sub-modules expose only pure functions, except the stateful `Viewport` and `Simulation` components.
-3. **Run `make check` before committing** — elm-format + hlint + elm-review must all pass.
+2. **Msg constructors live in an app's `Main.elm`** (studio pages have their own nested Msg; `brick-play` and `brick-contraptions` wrap `Studio.Core.Msg` in `StudioMsg`) — sub-modules expose only pure functions, except the stateful `Viewport`, `Simulation`, and `Studio.Core` components.
+3. **Run `make check` before committing** — elm-format + hlint + elm-review must all pass across all apps (`viewer-app`, `studio-app`, `brick-play`, `brick-contraptions`) and shared packages.
 4. **No new hex colour values** — use existing `@theme` CSS variables from `main.css`.
 5. **When adding Elm packages**, also verify they are available in devenv (run `elm-json install` inside the shell).
 6. **LDraw CDN** is CORS-friendly at `raw.githubusercontent.com` — no proxy needed.
 
 ## elm-review: LLM-Agent Rules
 
-Four custom rules in `viewer-app/review/src/ReviewConfig.elm` and `studio-app/review/src/ReviewConfig.elm` (backed by `vendor/master-builder/review/src/LlmAgent/`) enforce LLM-friendly code:
+Four custom rules in `viewer-app/review/src/ReviewConfig.elm`, `studio-app/review/src/ReviewConfig.elm`, `brick-play/review/src/ReviewConfig.elm`, and `brick-contraptions/review/src/ReviewConfig.elm` (backed by `vendor/master-builder/review/src/LlmAgent/`) enforce LLM-friendly code:
 
 | Rule | Failure mode it prevents |
 |------|--------------------------|
@@ -149,7 +171,9 @@ Configuration for `agent-sandbox` (proxied sessions). Only hosts needed to build
 
 ```toml agent-sandbox
 [ports]
-dev = 8180
+studio = 8180
+play = 8181
+contraptions = 8182
 
 [network]
 allowed_hosts = [

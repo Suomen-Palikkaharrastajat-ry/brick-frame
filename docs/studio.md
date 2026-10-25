@@ -7,8 +7,14 @@ read-only viewer and links here with "Edit in studio" when `studioUrl` is set.
 
 ## Decisions
 
-- **Two apps, shared packages.** `viewer-app/` (renamed from `elm-app/`) and
-  `studio-app/` both compile `packages/brick-frame-{simulator,viewport,simulation,ui,data}`.
+- **Apps and shared packages.** `viewer-app/`, `studio-app/`, `brick-play/`, and
+  `brick-contraptions/` compile the shared packages in `packages/brick-frame-{simulator,viewport,simulation,studio,ui,data}`.
+- **Reusable studio package.** `packages/brick-frame-studio` provides the core 3D editing
+  engine (`Studio.Core`, `Studio.Edit`, `Studio.Gizmo`, `Studio.Overlay`, `Studio.Transform`,
+  `Studio.Layout`, `Studio.Shortcuts`, `Studio.PartIndex`, `Studio.BuildGroups`, `Studio.Colours`, `Studio.Hints`).
+  This allows specialized applications like `brick-play` (minimal brick building) and
+  `brick-contraptions` (Technic playground) to reuse 3D editing, snapping, and gizmos
+  without duplicating editor code.
 - **Generated data is shared.** `Data.elm` is generated into
   `packages/brick-frame-data/src` (gitignored, never edited); `EmbeddedParts.elm`
   is hand-written in the same directory.
@@ -16,10 +22,10 @@ read-only viewer and links here with "Edit in studio" when `studioUrl` is set.
   In production the studio fetches `/ldraw` from the site root (the studio is
   served under `/studio/`); in dev a Vite middleware serves it from the viewer's
   public directory.
-- **Msg rule.** `Viewport` and `Simulation` are stateful components with their
+- **Msg rule.** `Viewport`, `Simulation`, and `Studio.Core` are stateful components with their
   own `Msg`; the studio nests page messages (`WorkspaceMsg`, `PreviewMsg`).
-- **Grid snapping only** in the first release; there is no connection-aware
-  snapping.
+- **Snapping.** Supports stud, hole, and axle snapping with collision avoidance,
+  in addition to grid snapping.
 
 ## Architecture
 
@@ -27,19 +33,28 @@ read-only viewer and links here with "Edit in studio" when `studioUrl` is set.
 ports: they return events and `Main` maps them to `Ports`. `Main` also intercepts
 `Workspace.SimulateRequested` (opens the preview) and `Preview.Leave`.
 
-| Module | Role |
-|--------|------|
-| `Studio.Workspace` | Document, selection, history, tools, panels; owns a `Viewport` |
-| `Studio.Edit` | Pure commands with inverses, and the undo/redo history |
-| `Studio.Gizmo` | Move gizmo: screen-space hit testing, drag, grid snap |
-| `Studio.Overlay` / `Studio.Shader` | Selection outlines and gizmo drawing as extra WebGL entities |
-| `Studio.Transform` | Matrix ⇄ position/Euler angles for the inspector |
-| `Studio.PartIndex` / `Studio.Palette` | Part search and the add-part palette |
-| `Studio.Colours` / `Studio.Inspector` / `Studio.Tree` | Colour picker, selection fields, submodel/placement tree |
-| `Studio.Shortcuts` | Editing keys, layered on `Viewport.Shortcuts` and its typing guard |
-| `Studio.Layout` | Wide/narrow layout, header height and canvas-size arithmetic |
-| `Studio.Hints` | Live gear hints for the document |
-| `Studio.Preview` | Simulation preview page |
+The studio modules are split between the reusable package (`packages/brick-frame-studio`)
+and studio-specific application UI (`studio-app/`):
+
+| Module | Location | Role |
+|--------|----------|------|
+| `Studio.Core` | `packages/brick-frame-studio` | Reusable 3D studio TEA component: viewport, selection, gizmo, snapping, history |
+| `Studio.Edit` | `packages/brick-frame-studio` | Pure commands with inverses, and undo/redo history |
+| `Studio.Gizmo` | `packages/brick-frame-studio` | Move and rotate gizmo: hit testing, drag, grid/stud snapping |
+| `Studio.Overlay` / `Studio.Shader` | `packages/brick-frame-studio` | Selection outlines, snap guides, and gizmo drawing entities |
+| `Studio.Transform` | `packages/brick-frame-studio` | Matrix ⇄ position/Euler angles for the inspector |
+| `Studio.PartIndex` / `Studio.BuildGroups` | `packages/brick-frame-studio` | Part search, curated classic build groups and metadata |
+| `Studio.Shortcuts` | `packages/brick-frame-studio` | Pure keyboard shortcuts layered on `Viewport.Shortcuts` |
+| `Studio.Layout` | `packages/brick-frame-studio` | Canvas-size and pane dimension arithmetic |
+| `Studio.Hints` | `packages/brick-frame-studio` | Live gear analysis hints for the document |
+| `Studio.Colours` | `packages/brick-frame-studio` | Curated color swatches and categorization |
+| `Studio.Workspace` | `studio-app` | Studio page wiring together document workspace, tools, and side panels |
+| `Studio.Palette` | `studio-app` | Categorized part drawer and search UI |
+| `Studio.Inspector` | `studio-app` | Part placement, transform fields, and submodel inspection |
+| `Studio.Tree` | `studio-app` | ARIA submodel / placement hierarchy tree |
+| `Studio.BOM` | `studio-app` | Bill of materials / parts list modal |
+| `Studio.Instructions` | `studio-app` | Step-by-step building instructions page |
+| `Studio.Preview` | `studio-app` | Simulation preview page |
 
 ## Document, commands and history
 
@@ -175,6 +190,30 @@ re-sent as commands (`Request` in `Workspace`).
 The document is saved to `localStorage` as a draft (an empty string is a draft)
 and restored on load. `Ctrl+S` is intercepted in `main.js` and downloads the file
 (`Ports.downloadFile`).
+
+## Export and Send to App
+
+The **Export** menu in the header provides both file downloads and instant cross-app deep links:
+
+1. **File exports**: Download the active document as an LDraw model (`.ldr`), multi-part archive (`.mpd`), WebGL/glTF 3D scene (`.gltf`), AR model (`.usdz` for iOS Quick Look), or take a 1080p picture (`.png`) of the current view.
+2. **Send to App**: Transfer the project directly into companion Palikkakehys applications without server roundtrips:
+   - **Brick Play**: Exports the document as a limited building kit inventory. Placements are grouped by part file and colour into a piece kit (`Studio.UrlPayload.extractKit`). In Brick Play, users build freely within the constraints of this kit, spawning bricks from inventory cards in the bottom dock until the available counts are exhausted.
+   - **Brick Contraptions**: Exports the complete assembled model alongside its part kit. In Brick Contraptions, the model loads directly onto the canvas for mechanism simulation, motor control, and accomplishment evaluation, while its parts appear in a dedicated "Project" tab in the Technic dock.
+
+Each companion app entry opens the target app in a new browser tab and includes a **Copy Link** button that copies the shareable URL to the clipboard, displaying an ephemeral toast confirmation.
+
+### URL Payload Format
+
+Cross-app deep-linking operates through URL hash fragments (`#...`), keeping sharing fully static and client-side:
+
+- **Brick Play URL**: `<playBaseUrl>#parts=<encoded-parts>`
+- **Brick Contraptions URL**: `<contraptionsBaseUrl>#model=<encoded-model>&parts=<encoded-parts>`
+
+Parameters:
+- `parts`: A comma-separated list of `<part-file>:<ldraw-color>:<count>` items (for example `3001.dat:14:5,3002.dat:4:2`), URL percent-encoded.
+- `model`: The full LDraw document text generated by `LDraw.Writer.writeDocument`, URL percent-encoded.
+
+Parsing and generation logic is implemented in `Studio.UrlPayload` (`packages/brick-frame-studio`).
 
 ## Simulation preview
 

@@ -80,6 +80,7 @@ import Studio.PartIndex as PartIndex exposing (Part)
 import Studio.Shortcuts as StudioShortcuts exposing (Tool(..))
 import Studio.Transform as Transform
 import Studio.Tree as Tree
+import Studio.UrlPayload as UrlPayload
 import Task
 import UI.Button as Button
 import UI.ShortcutHelp as ShortcutHelp
@@ -115,6 +116,8 @@ type alias Flags =
     , draft : Maybe String
     , favorites : Maybe (List String)
     , recentParts : Maybe (List String)
+    , playBaseUrl : Maybe String
+    , contraptionsBaseUrl : Maybe String
     }
 
 
@@ -184,6 +187,10 @@ type alias Model =
     , descriptions : Dict String String
     , treeFocus : Maybe String
     , inspectorFocus : Maybe String
+    , playBaseUrl : String
+    , contraptionsBaseUrl : String
+    , toast : Maybe { message : String, timerId : Int }
+    , toastCounter : Int
     }
 
 
@@ -240,6 +247,9 @@ type Msg
     | ToggleExportMenu
     | ExportFormat Export.ExportFormat
     | CaptureSnapshot
+    | CopyPlayUrl
+    | CopyContraptionsUrl
+    | ClearToast Int
     | WindowSized Int Int
     | PartIndexLoaded (Result Http.Error PartIndex.PartIndex)
     | PaletteQuery String
@@ -366,6 +376,10 @@ init flags =
             , descriptions = Dict.empty
             , treeFocus = Nothing
             , inspectorFocus = Nothing
+            , playBaseUrl = Maybe.withDefault "http://localhost:5175/" flags.playBaseUrl
+            , contraptionsBaseUrl = Maybe.withDefault "http://localhost:5176/" flags.contraptionsBaseUrl
+            , toast = Nothing
+            , toastCounter = 0
             }
 
         ( opened, openCmd ) =
@@ -1139,6 +1153,56 @@ updatePage msg model =
                 , filename = "palikkakehys-render.png"
                 }
             )
+
+        CopyPlayUrl ->
+            let
+                url =
+                    UrlPayload.buildPlayUrl model.playBaseUrl model.document
+
+                nextTimerId =
+                    model.toastCounter + 1
+            in
+            ( { model
+                | exportMenuOpen = False
+                , toast = Just { message = "Link copied to clipboard!", timerId = nextTimerId }
+                , toastCounter = nextTimerId
+              }
+            , Cmd.batch
+                [ Ports.copyToClipboard url
+                , Process.sleep 3000 |> Task.perform (\_ -> ClearToast nextTimerId)
+                ]
+            )
+
+        CopyContraptionsUrl ->
+            let
+                url =
+                    UrlPayload.buildContraptionsUrl model.contraptionsBaseUrl model.document
+
+                nextTimerId =
+                    model.toastCounter + 1
+            in
+            ( { model
+                | exportMenuOpen = False
+                , toast = Just { message = "Link copied to clipboard!", timerId = nextTimerId }
+                , toastCounter = nextTimerId
+              }
+            , Cmd.batch
+                [ Ports.copyToClipboard url
+                , Process.sleep 3000 |> Task.perform (\_ -> ClearToast nextTimerId)
+                ]
+            )
+
+        ClearToast timerId ->
+            case model.toast of
+                Just t ->
+                    if t.timerId == timerId then
+                        ( { model | toast = Nothing }, Cmd.none )
+
+                    else
+                        ( model, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
 
         WindowSized width height ->
             ( resized width height model, Cmd.none )
@@ -4215,7 +4279,40 @@ view model =
                 else
                     []
                )
+            ++ (case model.toast of
+                    Just t ->
+                        [ viewToast t.message ]
+
+                    Nothing ->
+                        []
+               )
         )
+
+
+viewToast : String -> Html Msg
+viewToast message =
+    div
+        [ Attr.attribute "role" "status"
+        , Attr.attribute "aria-live" "polite"
+        , Attr.style "position" "absolute"
+        , Attr.style "bottom" "24px"
+        , Attr.style "left" "50%"
+        , Attr.style "transform" "translateX(-50%)"
+        , Attr.style "background" "rgba(5, 19, 29, 0.95)"
+        , Attr.style "color" Theme.textPrimary
+        , Attr.style "padding" "10px 18px"
+        , Attr.style "border-radius" "8px"
+        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "box-shadow" "0 4px 12px rgba(0, 0, 0, 0.4)"
+        , Attr.style "font-size" "13px"
+        , Attr.style "font-weight" "500"
+        , Attr.style "z-index" "100"
+        , Attr.style "pointer-events" "none"
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "gap" "8px"
+        ]
+        [ text message ]
 
 
 viewBOMModal : Model -> Html Msg
@@ -5194,6 +5291,66 @@ viewExportMenu model =
                 [ span [ Attr.style "font-size" "13px", Attr.style "font-weight" "600" ] [ text label ]
                 , span [ Attr.style "font-size" "12px", Attr.style "color" Theme.textMuted ] [ text description ]
                 ]
+
+        pieceCount =
+            List.length (Document.mainPlacements model.document)
+
+        pieceWord =
+            if pieceCount == 1 then
+                "piece"
+
+            else
+                "pieces"
+
+        playUrl =
+            UrlPayload.buildPlayUrl model.playBaseUrl model.document
+
+        contraptionsUrl =
+            UrlPayload.buildContraptionsUrl model.contraptionsBaseUrl model.document
+
+        appItem targetUrl copyMsg label description =
+            div
+                [ Attr.style "display" "flex"
+                , Attr.style "align-items" "center"
+                , Attr.style "justify-content" "space-between"
+                , Attr.style "width" "100%"
+                , Attr.style "padding" "6px 8px 6px 12px"
+                , Attr.style "border-radius" "6px"
+                , Attr.style "box-sizing" "border-box"
+                ]
+                [ Html.a
+                    [ Attr.href targetUrl
+                    , Attr.target "_blank"
+                    , Attr.rel "noopener noreferrer"
+                    , Attr.style "display" "flex"
+                    , Attr.style "flex-direction" "column"
+                    , Attr.style "align-items" "flex-start"
+                    , Attr.style "gap" "2px"
+                    , Attr.style "flex-grow" "1"
+                    , Attr.style "text-decoration" "none"
+                    , Attr.style "color" Theme.textPrimary
+                    , Attr.style "cursor" "pointer"
+                    ]
+                    [ span [ Attr.style "font-size" "13px", Attr.style "font-weight" "600" ] [ text label ]
+                    , span [ Attr.style "font-size" "12px", Attr.style "color" Theme.textMuted ] [ text description ]
+                    ]
+                , button
+                    [ Attr.type_ "button"
+                    , Attr.class "ui-button"
+                    , Html.Events.onClick (MenuPick copyMsg)
+                    , Attr.title "Copy link to clipboard"
+                    , Attr.style "font-size" "11px"
+                    , Attr.style "font-weight" "500"
+                    , Attr.style "padding" "4px 8px"
+                    , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+                    , Attr.style "border-radius" "4px"
+                    , Attr.style "background" Theme.panelSubtleBackground
+                    , Attr.style "color" Theme.textPrimary
+                    , Attr.style "cursor" "pointer"
+                    , Attr.style "white-space" "nowrap"
+                    ]
+                    [ text "Copy Link" ]
+                ]
     in
     div
         [ Attr.id "export-menu"
@@ -5235,6 +5392,10 @@ viewExportMenu model =
                , item (ExportFormat Export.BlenderScript) "Blender script (.py)" "Rebuilds the model with bevelled parts"
                , item (ExportFormat Export.UsdzArchive) "AR model (.usdz)" "Quick Look on iPhone and iPad"
                , item CaptureSnapshot "Picture (.png)" "A 1080p render of the current view"
+               ]
+            ++ [ sectionTitle "Send to App"
+               , appItem playUrl CopyPlayUrl "Brick Play" ("Free build with this kit of " ++ String.fromInt pieceCount ++ " " ++ pieceWord)
+               , appItem contraptionsUrl CopyContraptionsUrl "Brick Contraptions" ("Simulate & test mechanisms with these " ++ String.fromInt pieceCount ++ " " ++ pieceWord)
                ]
         )
 

@@ -50,6 +50,8 @@ flags =
     , draft = Nothing
     , favorites = Nothing
     , recentParts = Nothing
+    , playBaseUrl = Nothing
+    , contraptionsBaseUrl = Nothing
     }
 
 
@@ -2689,5 +2691,34 @@ threeAxisMovementSuite =
                         , \_ -> Expect.equal Nothing dragged.drag
                         ]
                         ()
+            ]
+        , describe "Send to App URLs and Toast"
+            [ test "CopyPlayUrl sets toast and closes export menu" <|
+                \_ ->
+                    let
+                        opened =
+                            loaded |> step ToggleExportMenu
+
+                        ( copied, _ ) =
+                            Workspace.update CopyPlayUrl opened
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal False m.exportMenuOpen
+                        , \m -> Expect.equal (Just "Link copied to clipboard!") (Maybe.map .message m.toast)
+                        ]
+                        copied
+            , test "ClearToast clears active toast when timer matches" <|
+                \_ ->
+                    let
+                        ( copied, _ ) =
+                            Workspace.update CopyPlayUrl loaded
+
+                        timerId =
+                            copied.toastCounter
+
+                        ( cleared, _ ) =
+                            Workspace.update (ClearToast timerId) copied
+                    in
+                    Expect.equal Nothing cleared.toast
             ]
         ]

@@ -30,7 +30,9 @@ export function extractCuratedEssentials(elmSource) {
 
 test('every curated essential part in BuildGroups.elm exists in parts-index.json', () => {
   const indexPath = path.join(rootDir, 'viewer-app/public/ldraw/parts-index.json')
-  const buildGroupsPath = path.join(rootDir, 'studio-app/src/Studio/BuildGroups.elm')
+  const studioPkgBuildGroups = path.join(rootDir, 'packages/brick-frame-studio/src/Studio/BuildGroups.elm')
+  const studioAppBuildGroups = path.join(rootDir, 'studio-app/src/Studio/BuildGroups.elm')
+  const buildGroupsPath = fs.existsSync(studioPkgBuildGroups) ? studioPkgBuildGroups : studioAppBuildGroups
 
   assert(fs.existsSync(indexPath), `parts-index.json must exist at ${indexPath}`)
   assert(fs.existsSync(buildGroupsPath), `BuildGroups.elm must exist at ${buildGroupsPath}`)

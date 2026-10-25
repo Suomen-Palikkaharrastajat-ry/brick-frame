@@ -14,6 +14,10 @@ viewer-app/node_modules/
 viewer-app/packages
 studio-app/node_modules/
 studio-app/packages
+brick-play/node_modules/
+brick-play/packages
+brick-contraptions/node_modules/
+brick-contraptions/packages
 
 # --- Haskell build artifacts ---
 dist-newstyle/
@@ -23,10 +27,16 @@ brick-data-generator
 # --- Elm / frontend build artifacts ---
 viewer-app/elm-stuff/
 studio-app/elm-stuff/
+brick-play/elm-stuff/
+brick-contraptions/elm-stuff/
 viewer-app/.elm-tailwind/
 viewer-app/.vite/
 studio-app/.elm-tailwind/
 studio-app/.vite/
+brick-play/.elm-tailwind/
+brick-play/.vite/
+brick-contraptions/.elm-tailwind/
+brick-contraptions/.vite/
 viewer-app/public/ldraw/
 packages/*/elm-stuff/
 build/

@@ -39,6 +39,8 @@ flags =
     , draft = Nothing
     , favorites = Nothing
     , recentParts = Nothing
+    , playBaseUrl = Nothing
+    , contraptionsBaseUrl = Nothing
     }
 
 

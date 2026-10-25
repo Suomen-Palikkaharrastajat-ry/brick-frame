@@ -9,18 +9,20 @@ directories, not published packages):
 | `packages/brick-frame-simulator/` | LDraw parsing and writing, `LDraw.Document`, geometry, WebGL rendering, gear detection and physics | no — pure functions |
 | `packages/brick-frame-viewport/` | `Viewport`: camera, mouse/touch/keyboard input, model loading, picking, editable-document scene | yes — own `Model`/`Msg`/`update` |
 | `packages/brick-frame-simulation/` | `Simulation`: gear analysis, playback, motor, meshes of the moving parts | yes — own `Model`/`Msg`/`update` |
+| `packages/brick-frame-studio/` | `Studio.Core`: 3D building editor TEA component (selection, gizmo drag/transform, snapping, undo/redo history, overlays) + editing modules (`Edit`, `Gizmo`, `Layout`, `PartIndex`, `Shortcuts`, `Transform`, `UrlPayload`) | yes — own `Model`/`Msg`/`update`, returns `Event`s |
 | `packages/brick-frame-ui/` | Theme tokens, shared view widgets (`UI.ViewPad`, `UI.Status`, …) and `theme.css` | no |
 | `packages/brick-frame-data/` | Generated `Data.elm` (do not edit) and `EmbeddedParts` | no |
 
 None of them has ports. A host application owns the ports and the JavaScript,
-and talks to `Viewport` and `Simulation` through their messages and **events**.
-`viewer-app/` (the viewer and the Web Components) and `studio-app/` (the editor)
-are two hosts built this way; `viewer-app/src/Main.elm` is the shortest complete
-reference.
+and talks to `Viewport`, `Simulation`, and `Studio.Core` through their messages and **events**.
+Four hosts are built on these shared packages:
+- `viewer-app/`: Read-only viewer and custom Web Components (`<bricks-viewer>`)
+- `studio-app/`: Full-featured browser editor with submodels, parts list, instructions, and simulation preview
+- `brick-play/`: Minimal free-building app with an inventory of 10 classic yellow bricks
+- `brick-contraptions/`: Technic machine builder celebrating completed gear loops
 
-The two stateful packages are components with their own `Msg` type. A host wraps
-them in constructors of its own (`ViewportMsg Viewport.Msg`,
-`SimulationMsg Simulation.Msg`) and maps them with `Html.map`, `Cmd.map` and
+The stateful packages (`Viewport`, `Simulation`, `Studio.Core`) are TEA components with their own `Msg` and `Model`. A host wraps
+them in constructors of its own (`ViewportMsg Viewport.Msg`, `SimulationMsg Simulation.Msg`, `StudioMsg Studio.Core.Msg`) and maps them with `Html.map`, `Cmd.map` and
 `Sub.map`. See [Msg architecture](#msg-architecture).
 
 ## Web Components distribution
@@ -354,15 +356,98 @@ the motor and the clock are the host's: read the fields of `Simulation.Model`.
 
 ---
 
+## The Studio.Core component
+
+`Studio.Core` (`packages/brick-frame-studio`) provides a complete, reusable 3D brick editing TEA component. It combines an editable `LDraw.Document`, an instanced `Viewport`, 3D gizmo manipulation, stud/hole/axle snapping, and undo/redo history.
+
+```elm
+import Studio.Core as Core
+
+type alias Model = { studio : Core.Model, ... }
+type Msg = StudioMsg Core.Msg | ...
+
+config =
+    { ldrawBase = flags.ldrawBase
+    , ldrawFallbackBase = flags.ldrawFallbackBase
+    , defaultModelUrl = ""
+    , initialHash = flags.initialHash
+    , supportsPointerEvents = flags.supportsPointerEvents
+    , document = Document.empty
+    , gridStep = Just 20
+    , rotateStep = Just 90
+    , snapDistance = Just 24.0
+    , collisionMode = Nothing
+    }
+
+( studio, cmd ) = Core.init config
+```
+
+`Studio.Core.update` returns `( Model, Cmd Msg, List Event )` where `Event` includes `DocumentChanged Document`, `SelectionChanged (Set Int)`, `StatusChanged String`, etc.
+
+Helper functions provide high-level controls for host applications:
+- `Core.addPart`, `Core.addPartCentered`: insert parts into the document
+- `Core.undo`, `Core.redo`: step through the command history
+- `Core.deleteSelection`, `Core.rotateSelection`: modify selected parts
+- `Core.fitView`: reframe the camera around the placed model
+- `Core.getPlacements`: retrieve currently placed parts
+
+`brick-play` and `brick-contraptions` both embed `Studio.Core` directly to power their 3D interaction.
+
+### Cross-App Deep Linking with Studio.UrlPayload
+
+`Studio.UrlPayload` (`packages/brick-frame-studio`) provides pure functions for serialising and deserialising models and part kit inventories into URL hash fragments for cross-application export and sharing without backend storage:
+
+```elm
+import Studio.UrlPayload as UrlPayload
+
+-- Group document placements into a kit inventory
+kit : List UrlPayload.PartKitItem
+kit =
+    UrlPayload.extractKit document
+
+-- Build direct deep-link URLs
+playUrl : String
+playUrl =
+    UrlPayload.buildPlayUrl "https://example.com/play/" document
+
+contraptionsUrl : String
+contraptionsUrl =
+    UrlPayload.buildContraptionsUrl "https://example.com/contraptions/" document
+
+-- Decode URL hash fragment on startup in companion app
+payload : UrlPayload.Payload
+payload =
+    UrlPayload.decodeHash windowLocationHash
+```
+
+| Type | Description |
+|------|-------------|
+| `PartKitItem` | `{ part : String, color : Int, count : Int }` representing a part file, LDraw colour code, and quantity |
+| `Payload` | `{ parts : List PartKitItem, modelText : Maybe String }` parsed from a hash fragment |
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `extractKit` | `Document -> List PartKitItem` | Summarise main placements into unique part/colour counts |
+| `encodeParts` | `List PartKitItem -> String` | Encode parts to compact comma-separated string (`part:color:count,...`) |
+| `decodeParts` | `String -> List PartKitItem` | Parse compact parts string into kit items |
+| `encodePlayHash` | `Document -> String` | Encode document kit into a Brick Play hash fragment (`parts=...`) |
+| `encodeContraptionsHash` | `Document -> String` | Encode document into a Brick Contraptions hash fragment (`model=...&parts=...`) |
+| `decodeHash` | `String -> Payload` | Parse a URL hash fragment into its parts inventory and optional LDraw model text |
+| `buildPlayUrl` | `String -> Document -> String` | Generate a full Brick Play link given a base URL and document |
+| `buildContraptionsUrl` | `String -> Document -> String` | Generate a full Brick Contraptions link given a base URL and document |
+
+---
+
 ## Msg architecture
 
-`Viewport` and `Simulation` are the exception to "all `Msg` constructors live in
+`Viewport`, `Simulation`, and `Studio.Core` are the exception to "all `Msg` constructors live in
 the app's `Main`": they are stateful components with their own `Model`, `Msg` and
-`update`, so their input handling can be shared instead of copied. Everything
+`update`, so their input handling and interaction logic can be shared instead of copied. Everything
 else in the packages is pure functions. The viewer keeps one flat `Msg` for its
 own UI, with `ViewportMsg` and `SimulationMsg` wrappers; the studio gives each
-page its own nested `Msg` (`WorkspaceMsg`, `PreviewMsg`). Keyboard handling still
-goes through `Viewport.Shortcuts.actionFor`, which holds the guard that stops
+page its own nested `Msg` (`WorkspaceMsg`, `PreviewMsg`); `brick-play` and `brick-contraptions`
+wrap `StudioMsg Studio.Core.Msg`. Keyboard handling still
+goes through `Viewport.Shortcuts.actionFor` and `Studio.Shortcuts`, which hold the guard that stops
 document-wide keydowns hijacking a host page's form fields.
 
 ---
@@ -400,6 +485,11 @@ document-wide keydowns hijacking a host page's form fields.
 | `Viewport.Sync` | Plan scene updates from document edits | `plan`, `buildAll` |
 | `Simulation` | The simulation component | `init`, `analyse`, `update`, `entities`, `pickGear`, `refreshLods`, `reset` |
 | `Simulation.Meshes` | Meshes of gears, axles and parts that ride on them | `buildGearMeshes`, `buildComponentMeshRenders` |
+| `Studio.Core` | Reusable 3D studio TEA component | `init`, `update`, `view`, `subscriptions`, `addPart`, `undo`, `redo`, `fitView`, `deleteSelection` |
+| `Studio.Edit` | Document commands with inverses and history | `Command`, `History`, `apply`, `emptyHistory` |
+| `Studio.Gizmo` | Translation/rotation gizmo and handle hit testing | `Handle`, `DragHandle`, `renderGizmo` |
+| `Studio.Transform` | Transform matrix decomposition and Euler angles | `decompose`, `compose`, `snapRotation` |
+| `Studio.UrlPayload` | URL hash encoding and decoding for cross-app export | `extractKit`, `encodeParts`, `decodeParts`, `encodePlayHash`, `encodeContraptionsHash`, `decodeHash`, `buildPlayUrl`, `buildContraptionsUrl` |
 
 ---
 
