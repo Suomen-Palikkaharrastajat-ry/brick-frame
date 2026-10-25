@@ -86,18 +86,18 @@ elm-dev: packages/brick-frame-data/src/Data.elm ## Start Elm + Vite dev server (
 
 
 .PHONY: studio-dev
-studio-dev: packages/brick-frame-data/src/Data.elm studio-app/.elm-tailwind/.stamp ## Start the studio's Vite dev server (http://localhost:5174)
-	cd studio-app && $(VITE) --host 0.0.0.0 --port 5174
+studio-dev: packages/brick-frame-data/src/Data.elm studio-app/.elm-tailwind/.stamp ## Start the studio's Vite dev server (http://localhost:WATCH_PORT)
+	cd studio-app && $(VITE) --host 0.0.0.0 --port $(WATCH_PORT)
 
 
 .PHONY: play-dev
-play-dev: packages/brick-frame-data/src/Data.elm brick-play/.elm-tailwind/.stamp ## Start the brick-play Vite dev server (http://localhost:5175)
-	cd brick-play && $(VITE) --host 0.0.0.0 --port 5175
+play-dev: packages/brick-frame-data/src/Data.elm brick-play/.elm-tailwind/.stamp ## Start the brick-play Vite dev server (http://localhost:WATCH_PORT)
+	cd brick-play && $(VITE) --host 0.0.0.0 --port $(WATCH_PORT)
 
 
 .PHONY: contraptions-dev
-contraptions-dev: packages/brick-frame-data/src/Data.elm brick-contraptions/.elm-tailwind/.stamp ## Start the brick-contraptions Vite dev server (http://localhost:5176)
-	cd brick-contraptions && $(VITE) --host 0.0.0.0 --port 5176
+contraptions-dev: packages/brick-frame-data/src/Data.elm brick-contraptions/.elm-tailwind/.stamp ## Start the brick-contraptions Vite dev server (http://localhost:WATCH_PORT)
+	cd brick-contraptions && $(VITE) --host 0.0.0.0 --port $(WATCH_PORT)
 
 
 .PHONY: elm-tailwind-gen
