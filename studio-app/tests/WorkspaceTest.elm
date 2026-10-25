@@ -12,7 +12,8 @@ import LDraw.Document as Document
 import LDraw.Export as Export
 import LDraw.Writer as Writer
 import Math.Matrix4 as Mat4
-import Math.Vector3 as Vec3 exposing (vec3)
+import Math.Vector3 as Vec3 exposing (Vec3, vec3)
+import Render.Camera as Camera
 import Render.Style as Style
 import Set
 import Studio.BOM as BOM
@@ -25,6 +26,7 @@ import Studio.Shortcuts as Shortcuts exposing (Tool(..))
 import Studio.Transform as Transform
 import Studio.Workspace as Workspace exposing (CoordinateFrame(..), Msg(..))
 import Test exposing (Test, describe, test)
+import Time
 import Viewport
 import Viewport.Shortcuts as ViewportShortcuts
 
@@ -74,6 +76,7 @@ suite =
         , panelSuite
         , snappingSuite
         , threeAxisMovementSuite
+        , viewDragSuite
         , test "starts with an empty document that is ready to show" <|
             \_ ->
                 Expect.all
@@ -173,7 +176,7 @@ mouseDown x y shift model =
         ( left, top ) =
             model.viewport.canvasOrigin
     in
-    step (ViewportMsg (Viewport.MouseDown (x + left) (y + top) shift)) model
+    step (ViewportMsg (Viewport.MouseButtonDown (x + left) (y + top) 0 shift False)) model
 
 
 mouseMove : Float -> Float -> Workspace.Model -> Workspace.Model
@@ -796,24 +799,39 @@ editingSuite =
                     -- keys went dead until the canvas was clicked.
                     shortcut { key = "m", ctrl = False, shift = False, target = "BUTTON" }
                         |> Expect.equal (Just (Shortcuts.UseTool MoveTool))
-            , test "arrows nudge a selection, Shift nudges finely" <|
+            , test "WASD, Q/E and the Page keys move a selection, and Shift makes the move fine" <|
                 \_ ->
-                    [ nudge True "ArrowRight" False
-                    , nudge True "ArrowUp" True
-                    , nudge True "PageDown" False
+                    [ editKey True "d" False
+                    , editKey True "w" True
+                    , editKey True "PageDown" False
+                    , editKey True "e" False
                     ]
                         |> Expect.equal
-                            [ Just (Shortcuts.Nudge { direction = Shortcuts.Right, fine = False })
-                            , Just (Shortcuts.Nudge { direction = Shortcuts.Away, fine = True })
-                            , Just (Shortcuts.Nudge { direction = Shortcuts.Down, fine = False })
+                            [ Just (Shortcuts.MoveBy (Shortcuts.Nudge { direction = Shortcuts.Right, fine = False }))
+                            , Just (Shortcuts.MoveBy (Shortcuts.Nudge { direction = Shortcuts.Away, fine = True }))
+                            , Just (Shortcuts.MoveBy (Shortcuts.Nudge { direction = Shortcuts.Down, fine = False }))
+                            , Just (Shortcuts.MoveBy (Shortcuts.Nudge { direction = Shortcuts.Up, fine = False }))
                             ]
-            , test "without a selection the arrows stay with the camera" <|
+            , test "the arrows turn a selection, and Shift makes the turn 45°" <|
                 \_ ->
-                    nudge False "ArrowLeft" False
-                        |> Expect.equal Nothing
+                    [ editKey True "ArrowRight" False
+                    , editKey True "ArrowLeft" True
+                    , editKey True "ArrowUp" False
+                    , editKey True "ArrowDown" True
+                    ]
+                        |> Expect.equal
+                            [ Just (Shortcuts.RotateBy { direction = Shortcuts.TurnRight, fortyFive = False })
+                            , Just (Shortcuts.RotateBy { direction = Shortcuts.TurnLeft, fortyFive = True })
+                            , Just (Shortcuts.RotateBy { direction = Shortcuts.TipForward, fortyFive = False })
+                            , Just (Shortcuts.RotateBy { direction = Shortcuts.TipBackward, fortyFive = True })
+                            ]
+            , test "without a selection the arrows and WASD stay with the camera" <|
+                \_ ->
+                    [ editKey False "ArrowLeft" False, editKey False "d" False ]
+                        |> Expect.equal [ Nothing, Nothing ]
             , test "arrows inside the tree move focus, not parts" <|
                 \_ ->
-                    Shortcuts.nudgeFor { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False, menuOpen = False }
+                    Shortcuts.editKeyFor { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False, menuOpen = False }
                         { key = "ArrowDown"
                         , shift = False
                         , ctrl = False
@@ -839,13 +857,13 @@ editingSuite =
                     in
                     ( heightOf raised, heightOf (step Undo raised) )
                         |> Expect.equal ( Just -8, Just 0 )
-            , test "Alt modifier switches ArrowUp and ArrowDown to vertical axis (Up/Down)" <|
+            , test "Alt, Ctrl and Meta chords are left to the browser, not taken as edits" <|
                 \_ ->
                     let
-                        nudgeWithAlt key shift =
-                            Shortcuts.nudgeFor { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False, menuOpen = False }
+                        chord key =
+                            Shortcuts.editKeyFor { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False, menuOpen = False }
                                 { key = key
-                                , shift = shift
+                                , shift = False
                                 , ctrl = False
                                 , meta = False
                                 , alt = True
@@ -855,21 +873,228 @@ editingSuite =
                                 , targetRole = "application"
                                 }
                     in
-                    Expect.all
-                        [ \_ -> Expect.equal (Just (Shortcuts.Nudge { direction = Shortcuts.Up, fine = False })) (nudgeWithAlt "ArrowUp" False)
-                        , \_ -> Expect.equal (Just (Shortcuts.Nudge { direction = Shortcuts.Down, fine = False })) (nudgeWithAlt "ArrowDown" False)
-                        , \_ -> Expect.equal (Just (Shortcuts.Nudge { direction = Shortcuts.Up, fine = True })) (nudgeWithAlt "ArrowUp" True)
-                        , \_ -> Expect.equal (Just (Shortcuts.Nudge { direction = Shortcuts.Down, fine = True })) (nudgeWithAlt "ArrowDown" True)
-                        , \_ -> Expect.equal Nothing (nudgeWithAlt "ArrowLeft" False)
-                        , \_ -> Expect.equal Nothing (nudgeWithAlt "ArrowRight" False)
-                        ]
-                        ()
+                    List.map chord [ "ArrowUp", "ArrowLeft", "d" ]
+                        |> Expect.equal [ Nothing, Nothing, Nothing ]
             , test "the viewport keys are not taken" <|
                 \_ ->
                     [ "w", "a", "s", "d", "f", "g", "1", "+", "?" ]
                         |> List.map (shortcutIn { hasSelection = True, helpVisible = False, walking = False, inSubmodel = False, menuOpen = False })
                         |> List.all ((==) Nothing)
                         |> Expect.equal True
+            ]
+        , describe "editing keys"
+            [ test "with a selection, the arrows turn it and the camera stays put" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded |> step SelectAll
+
+                        turned =
+                            step (ViewportMsg (Viewport.KeyPressed (pressed "ArrowRight" False))) ready
+                    in
+                    Expect.all
+                        [ \m -> Expect.within (Expect.Absolute 0.01) 150 (Maybe.withDefault 0 (positionOf 0 m))
+                        , \m -> Expect.equal (cameraView ready) (cameraView m)
+                        , \m -> Expect.equal False (Set.member "ArrowRight" m.viewport.heldKeys)
+                        ]
+                        turned
+            , test "with a selection, D moves it and the camera stays put" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded |> step (SelectPlacement 0 False)
+
+                        moved =
+                            step (ViewportMsg (Viewport.KeyPressed (pressed "d" False))) ready
+                    in
+                    Expect.all
+                        [ \m -> Expect.notEqual (groundOf 0 ready) (groundOf 0 m)
+                        , \m -> Expect.equal (cameraView ready) (cameraView m)
+                        ]
+                        moved
+            , test "Escape during a drag puts the parts back and records no undo step" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded |> step (UseTool MoveTool)
+
+                        ( x, y ) =
+                            screenOf 0 ready
+
+                        dragging =
+                            ready
+                                |> mouseDown x y False
+                                |> mouseMove (x + 60) (y + 20)
+
+                        cancelled =
+                            dragging
+                                |> step (ViewportMsg (Viewport.KeyPressed (pressed "Escape" False)))
+                                |> mouseUp (x + 60) (y + 20)
+                    in
+                    Expect.all
+                        [ \_ -> Expect.notEqual (groundOf 0 ready) (groundOf 0 dragging)
+                        , \m -> Expect.equal (groundOf 0 ready) (groundOf 0 m)
+                        , \m -> Expect.equal True (m.drag == Nothing)
+                        , \m -> Expect.equal Edit.emptyHistory m.history
+                        ]
+                        cancelled
+            , test "a right press during a drag restores the parts and records no undo step" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded |> step (UseTool MoveTool)
+
+                        ( x, y ) =
+                            screenOf 0 ready
+
+                        ( left, top ) =
+                            ready.viewport.canvasOrigin
+
+                        dragging =
+                            ready
+                                |> mouseDown x y False
+                                |> mouseMove (x + 60) (y + 20)
+
+                        cancelled =
+                            step (ViewportMsg (Viewport.MouseButtonDown (x + left) (y + top) 2 False False)) dragging
+                    in
+                    Expect.all
+                        [ \_ -> Expect.notEqual (groundOf 0 ready) (groundOf 0 dragging)
+                        , \m -> Expect.equal (groundOf 0 ready) (groundOf 0 m)
+                        , \m -> Expect.equal True (m.drag == Nothing)
+                        , \m -> Expect.equal Edit.emptyHistory m.history
+                        ]
+                        cancelled
+            , test "with the help dialog open, Delete, D and the arrows leave the document alone" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded |> step SelectAll |> step ToggleHelp
+
+                        pressedAll =
+                            [ "Delete", "Backspace", "d", "ArrowRight" ]
+                                |> List.foldl (\key m -> step (ViewportMsg (Viewport.KeyPressed (pressed key False))) m) ready
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal ready.document m.document
+                        , \m -> Expect.equal Edit.emptyHistory m.history
+                        , \m -> Expect.equal True m.helpOpen
+                        ]
+                        pressedAll
+            , test "with the help dialog open, Ctrl Z does not undo" <|
+                \_ ->
+                    let
+                        edited =
+                            loaded |> step SelectAll |> step DeleteSelection
+
+                        ready =
+                            step ToggleHelp edited
+
+                        undoKey =
+                            pressed "z" False
+
+                        afterUndo =
+                            step (ViewportMsg (Viewport.KeyPressed { undoKey | ctrl = True })) ready
+                    in
+                    Expect.equal ready.document afterUndo.document
+            , test "Delete during a drag is ignored and records no removal" <|
+                \_ ->
+                    let
+                        ( x, y ) =
+                            screenOf 0 loaded
+
+                        dropped =
+                            loaded
+                                |> mouseDown x y False
+                                |> mouseMove (x + 60) (y + 20)
+                                |> step (ViewportMsg (Viewport.KeyPressed (pressed "Delete" False)))
+                                |> step (ViewportMsg (Viewport.KeyPressed (pressed "Backspace" False)))
+                                |> mouseUp (x + 60) (y + 20)
+
+                        undone =
+                            step Undo dropped
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal 2 (List.length (Document.placements m.document))
+                        , \m -> Expect.notEqual (groundOf 0 loaded) (groundOf 0 m)
+                        , \_ -> Expect.equal (groundOf 0 loaded) (groundOf 0 undone)
+                        , \_ -> Expect.equal False (Edit.canUndo undone.history)
+                        ]
+                        dropped
+            , test "with the select tool, dragging a part moves it and the camera stays put" <|
+                \_ ->
+                    let
+                        ( x, y ) =
+                            screenOf 0 loaded
+
+                        dragged =
+                            loaded
+                                |> mouseDown x y False
+                                |> mouseMove (x + 60) (y + 20)
+                                |> mouseUp (x + 60) (y + 20)
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal SelectTool m.tool
+                        , \m -> Expect.notEqual (groundOf 0 loaded) (groundOf 0 m)
+                        , \m -> Expect.equal (groundOf 1 loaded) (groundOf 1 m)
+                        , \m -> Expect.equal (cameraView loaded) (cameraView m)
+                        , \m -> Expect.equal [ 0 ] (selected m)
+                        , \m -> Expect.equal True (Edit.canUndo m.history)
+                        ]
+                        dragged
+            , test "with the select tool, dragging empty space orbits and moves no part" <|
+                \_ ->
+                    let
+                        orbited =
+                            loaded
+                                |> mouseDown 5 5 False
+                                |> mouseMove 65 25
+                                |> mouseUp 65 25
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal loaded.document m.document
+                        , \m -> Expect.notEqual (cameraView loaded) (cameraView m)
+                        ]
+                        orbited
+            , test "with the select tool, a click on a part of a wider selection selects it alone" <|
+                \_ ->
+                    loaded
+                        |> step SelectAll
+                        |> click (screenOf 0 loaded)
+                        |> selected
+                        |> Expect.equal [ 0 ]
+            , test "a click with an armed part places it, as a tap does" <|
+                \_ ->
+                    let
+                        placed =
+                            loaded
+                                |> step (ArmPart part3001)
+                                |> click ( 5, 5 )
+                    in
+                    Expect.equal 3 (List.length (Document.placements placed.document))
+            , test "Space + drag pans the camera and leaves the parts where they are" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded
+
+                        ( x, y ) =
+                            screenOf 0 ready
+
+                        panned =
+                            ready
+                                |> step (ViewportMsg (Viewport.KeyPressed (pressed " " False)))
+                                |> mouseDown x y False
+                                |> mouseMove (x + 60) (y + 20)
+                                |> mouseUp (x + 60) (y + 20)
+                                |> step (ViewportMsg (Viewport.KeyReleased " "))
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal (groundOf 0 ready) (groundOf 0 m)
+                        , \m -> Expect.notEqual ready.viewport.camera.target m.viewport.camera.target
+                        , \m -> Expect.equal [] (selected m)
+                        ]
+                        panned
             ]
         , describe "submodels"
             [ test "grouping selected parts creates a submodel and undo restores the scene" <|
@@ -1277,19 +1502,33 @@ shortcut { key, ctrl, shift, target } =
         }
 
 
-nudge : Bool -> String -> Bool -> Maybe Shortcuts.Nudge
-nudge hasSelection key shift =
-    Shortcuts.nudgeFor { hasSelection = hasSelection, helpVisible = False, walking = False, inSubmodel = False, menuOpen = False }
-        { key = key
-        , shift = shift
-        , ctrl = False
-        , meta = False
-        , alt = False
-        , repeat = False
-        , targetTag = "DIV"
-        , targetEditable = False
-        , targetRole = "application"
-        }
+editKey : Bool -> String -> Bool -> Maybe Shortcuts.EditKey
+editKey hasSelection key shift =
+    Shortcuts.editKeyFor { hasSelection = hasSelection, helpVisible = False, walking = False, inSubmodel = False, menuOpen = False }
+        (pressed key shift)
+
+
+{-| Where the camera looks from and at: unaffected by the scene's size changing.
+-}
+cameraView : Workspace.Model -> ( Float, Float, Vec3.Vec3 )
+cameraView model =
+    ( model.viewport.camera.azimuth, model.viewport.camera.elevation, model.viewport.camera.target )
+
+
+{-| A plain key press on the page body, as the viewport receives it.
+-}
+pressed : String -> Bool -> ViewportShortcuts.KeyEvent
+pressed key shift =
+    { key = key
+    , shift = shift
+    , ctrl = False
+    , meta = False
+    , alt = False
+    , repeat = False
+    , targetTag = "BODY"
+    , targetEditable = False
+    , targetRole = "application"
+    }
 
 
 shortcutIn : Shortcuts.Context -> String -> Maybe Shortcuts.Action
@@ -1959,6 +2198,7 @@ snappingSuite =
                                             , screenStart = ( 100, 100 )
                                             , screenEnd = ( 150, 100 )
                                             }
+                                    , plane = Nothing
                                     , ids = []
                                     , start = ( 100, 100 )
                                     , lastPoint = ( 100, 100 )
@@ -2013,6 +2253,7 @@ snappingSuite =
                                             , screenStart = ( 100, 100 )
                                             , screenEnd = ( 150, 100 )
                                             }
+                                    , plane = Nothing
                                     , ids = [ 1 ]
                                     , start = ( 100, 100 )
                                     , lastPoint = ( 150, 100 )
@@ -2071,6 +2312,7 @@ snappingSuite =
                                             , screenStart = ( 100, 100 )
                                             , screenEnd = ( 150, 100 )
                                             }
+                                    , plane = Nothing
                                     , ids = [ 0 ]
                                     , start = ( 100, 100 )
                                     , lastPoint = ( 150, 100 )
@@ -2120,6 +2362,7 @@ snappingSuite =
                                             , screenStart = ( 100, 100 )
                                             , screenEnd = ( 150, 100 )
                                             }
+                                    , plane = Nothing
                                     , ids = []
                                     , start = ( 100, 100 )
                                     , lastPoint = ( 120, 100 )
@@ -2174,6 +2417,7 @@ snappingSuite =
                                             , screenStart = ( 100, 100 )
                                             , screenEnd = ( 150, 100 )
                                             }
+                                    , plane = Nothing
                                     , ids = [ 0 ]
                                     , start = ( 100, 100 )
                                     , lastPoint = ( 100, 100 )
@@ -2221,6 +2465,7 @@ snappingSuite =
                                             , screenStart = ( 100, 100 )
                                             , screenEnd = ( 150, 100 )
                                             }
+                                    , plane = Nothing
                                     , ids = [ 0 ]
                                     , start = ( 100, 100 )
                                     , lastPoint = ( 100, 100 )
@@ -2290,6 +2535,7 @@ snappingSuite =
                             | drag =
                                 Just
                                     { kind = Gizmo.PlaneDrag (vec3 0 0 0)
+                                    , plane = Nothing
                                     , ids = [ 0 ]
                                     , start = ( 100, 100 )
                                     , lastPoint = ( 100, 100 )
@@ -2721,4 +2967,360 @@ threeAxisMovementSuite =
                     in
                     Expect.equal Nothing cleared.toast
             ]
+        ]
+
+
+
+-- ── View-relative drag and orbit around the selection ─────────────────────────
+
+
+{-| The two bricks, with a 1 LDU move step and stud snapping off, so a body
+drag shows the raw working-plane movement.
+-}
+rawDrag : Workspace.Model
+rawDrag =
+    loaded
+        |> step (SetGridStep 1)
+        |> (\m -> { m | snapDistance = 0 })
+
+
+withCamera : (Camera.Camera -> Camera.Camera) -> Workspace.Model -> Workspace.Model
+withCamera change model =
+    let
+        viewport =
+            model.viewport
+    in
+    { model | viewport = { viewport | camera = change viewport.camera } }
+
+
+{-| Run any camera glide (`Viewport.pivotOn`) to the end.
+-}
+settle : Workspace.Model -> Workspace.Model
+settle model =
+    model
+        |> step (ViewportMsg (Viewport.AnimationFrame (Time.millisToPosix 0)))
+        |> step (ViewportMsg (Viewport.AnimationFrame (Time.millisToPosix 1000)))
+
+
+{-| How far a placement moved, in render space (Y up).
+-}
+renderMove : Int -> Workspace.Model -> Workspace.Model -> Vec3
+renderMove id before after =
+    let
+        at m =
+            Document.getPlacement id m.document
+                |> Maybe.map (\p -> Mat4.transform p.matrix (vec3 0 0 0))
+                |> Maybe.withDefault (vec3 0 0 0)
+    in
+    Gizmo.toRender (Vec3.sub (at after) (at before))
+
+
+grabOf : Workspace.Model -> Maybe Vec3
+grabOf model =
+    case Maybe.map .kind model.drag of
+        Just (Gizmo.PlaneDrag grab) ->
+            Just grab
+
+        _ ->
+            Nothing
+
+
+{-| A brick shaped like a real one: its origin on top, its bottom 24 LDU below.
+-}
+tallPart : String
+tallPart =
+    "4 16 -10 24 -10 10 24 -10 10 24 10 -10 24 10\n4 16 -10 0 -10 10 0 -10 10 0 10 -10 0 10\n"
+
+
+tallRawDrag : Workspace.Model
+tallRawDrag =
+    rawDrag |> step (ViewportMsg (Viewport.PartLoaded "3005.dat" (Ok tallPart)))
+
+
+{-| Drag a 3005 brick in from the palette and drop it where the cursor meets
+the ground at `ground` (render space).
+-}
+paletteDragTo : Vec3 -> Workspace.Model -> Workspace.Model
+paletteDragTo ground model =
+    let
+        dragging =
+            step (StartDragPart (PartIndex.makePart "3005.dat" "Brick 1 x 1" "Brick" "")) model
+
+        ( x, y ) =
+            Gizmo.project dragging.viewport.camera 800 600 ground
+                |> Maybe.withDefault ( -1, -1 )
+    in
+    dragging
+        |> mouseMove (x - 5) y
+        |> mouseMove x y
+        |> mouseUp x y
+
+
+eyeMoved : Workspace.Model -> Workspace.Model -> Float
+eyeMoved before after =
+    Vec3.distance (Camera.position before.viewport.camera) (Camera.position after.viewport.camera)
+
+
+{-| Azimuth, elevation and distance: what a translation glide must not change.
+-}
+orientation : Workspace.Model -> ( Float, Float, Float )
+orientation model =
+    ( model.viewport.camera.azimuth, model.viewport.camera.elevation, model.viewport.camera.distance )
+
+
+viewDragSuite : Test
+viewDragSuite =
+    describe "view-relative body drag and orbit around the selection"
+        [ test "the grabbed point stays under the cursor, with no jump on the first move" <|
+            \_ ->
+                let
+                    ( x, y ) =
+                        screenOf 0 rawDrag
+
+                    grabbed =
+                        rawDrag |> mouseDown x y False
+
+                    nudged =
+                        grabbed |> mouseMove (x + 6) y
+
+                    far =
+                        grabbed |> mouseMove (x + 40) (y - 15)
+                in
+                case grabOf grabbed of
+                    Just grab ->
+                        Expect.all
+                            [ \_ -> Expect.atMost 6 (Vec3.length (renderMove 0 rawDrag nudged))
+                            , \_ ->
+                                case Gizmo.project far.viewport.camera 800 600 (Vec3.add grab (renderMove 0 rawDrag far)) of
+                                    Just ( px, py ) ->
+                                        Expect.atMost 2 (abs (px - (x + 40)) + abs (py - (y - 15)))
+
+                                    Nothing ->
+                                        Expect.fail "grab point off screen"
+                            , \_ -> Expect.greaterThan 10 (Vec3.length (renderMove 0 rawDrag far))
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "no body drag"
+        , test "dragging screen-left moves the part to the camera's left, however the camera is turned" <|
+            \_ ->
+                let
+                    leftOf azimuth =
+                        let
+                            turned =
+                                rawDrag |> withCamera (\c -> { c | azimuth = azimuth })
+
+                            ( x, y ) =
+                                screenOf 0 turned
+
+                            dragged =
+                                turned
+                                    |> mouseDown x y False
+                                    |> mouseMove (x - 60) y
+                                    |> mouseUp (x - 60) y
+
+                            moved =
+                                renderMove 0 turned dragged
+
+                            right =
+                                vec3 (cos azimuth) 0 -(sin azimuth)
+
+                            forward =
+                                vec3 -(sin azimuth) 0 -(cos azimuth)
+                        in
+                        ( Vec3.dot moved right, Vec3.dot moved forward )
+
+                    check azimuth =
+                        let
+                            ( along, across ) =
+                                leftOf azimuth
+                        in
+                        Expect.all
+                            [ \_ -> Expect.lessThan -20 along
+                            , \_ -> Expect.atMost (0.2 * abs along) (abs across)
+                            ]
+                            ()
+                in
+                Expect.all
+                    [ \_ -> check 0.6
+                    , \_ -> check 2.4
+                    , \_ -> check -1.9
+                    ]
+                    ()
+        , test "with Shift held the part keeps its height and place while the cursor moves sideways" <|
+            \_ ->
+                let
+                    ( x, y ) =
+                        screenOf 0 rawDrag
+
+                    shiftKey =
+                        testKey "Shift"
+
+                    held =
+                        rawDrag
+                            |> mouseDown x y False
+                            |> mouseMove (x + 20) y
+                            |> step (ViewportMsg (Viewport.KeyPressed { shiftKey | shift = True }))
+
+                    sideways =
+                        held |> mouseMove (x + 80) y
+                in
+                Expect.all
+                    [ \_ -> Expect.equal True sideways.shiftHeld
+                    , \_ -> Expect.within (Expect.Absolute 1.0e-6) (Maybe.withDefault 0 (elevationOf 0 held)) (Maybe.withDefault 1 (elevationOf 0 sideways))
+                    , \_ -> Expect.equal (groundOf 0 held) (groundOf 0 sideways)
+                    ]
+                    ()
+        , test "a part dragged in from the palette onto empty ground rests on the ground" <|
+            \_ ->
+                let
+                    dropped =
+                        paletteDragTo (vec3 150 0 0) tallRawDrag
+                in
+                Expect.all
+                    [ \m -> Expect.equal (Just ( 150, 0 )) (groundOf 2 m)
+                    , \m -> Expect.within (Expect.Absolute 1.0e-6) 0 (Maybe.withDefault 99 (elevationOf 2 m) + 24)
+                    ]
+                    dropped
+        , test "a part dragged in from the palette over a brick rests on its top" <|
+            \_ ->
+                let
+                    dropped =
+                        paletteDragTo (vec3 0 0 0) tallRawDrag
+                in
+                Expect.all
+                    [ \m -> Expect.equal (Just ( 0, 0 )) (groundOf 2 m)
+                    , \m -> Expect.within (Expect.Absolute 1.0e-6) -20 (Maybe.withDefault 99 (elevationOf 2 m) + 24)
+                    ]
+                    dropped
+        , test "a body drag rests the part on the brick it overlaps, and on the ground off it" <|
+            \_ ->
+                let
+                    -- The test cube's connectivity box is a stock brick's, so
+                    -- strict collisions would refuse the drop on top.
+                    lenient =
+                        { rawDrag | collisionMode = CollisionOff }
+
+                    ( x, y ) =
+                        screenOf 1 lenient
+
+                    grabbed =
+                        lenient |> mouseDown x y False
+
+                    cursorFor offset =
+                        grabOf grabbed
+                            |> Maybe.andThen (\grab -> Gizmo.project grabbed.viewport.camera 800 600 (Vec3.add grab offset))
+                            |> Maybe.withDefault ( -1, -1 )
+
+                    ( ox, oy ) =
+                        cursorFor (vec3 -300 0 0)
+
+                    ( gx, gy ) =
+                        cursorFor (vec3 -150 0 0)
+
+                    onTop =
+                        grabbed |> mouseMove ox oy
+
+                    droppedOnTop =
+                        onTop |> mouseUp ox oy
+
+                    offIt =
+                        onTop |> mouseMove gx gy
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Just ( 0, 0 )) (groundOf 1 onTop)
+                    , \_ -> Expect.equal (Just -20) (elevationOf 1 onTop)
+                    , \_ -> Expect.equal (Just -20) (elevationOf 1 droppedOnTop)
+                    , \_ -> Expect.equal (Just ( 150, 0 )) (groundOf 1 offIt)
+                    , \_ -> Expect.equal (Just 0) (elevationOf 1 offIt)
+                    ]
+                    ()
+        , test "clicking a part slides the view onto it without turning or zooming" <|
+            \_ ->
+                let
+                    picked =
+                        loaded |> click (screenOf 1 loaded) |> settle
+                in
+                Expect.all
+                    [ \m -> Expect.equal [ 1 ] (selected m)
+                    , \m -> Expect.within (Expect.Absolute 1) 300 (Vec3.getX m.viewport.camera.target)
+                    , \m -> Expect.equal (orientation loaded) (orientation m)
+                    , \m ->
+                        Vec3.distance m.viewport.camera.target loaded.viewport.camera.target
+                            |> Expect.within (Expect.Absolute 1.0e-6) (eyeMoved loaded m)
+                    ]
+                    picked
+        , test "select all, a keyboard move and undo leave the camera alone" <|
+            \_ ->
+                let
+                    after =
+                        loaded
+                            |> step SelectAll
+                            |> step (NudgeSelection (Shortcuts.Nudge { direction = Shortcuts.Right, fine = False }))
+                            |> step Undo
+                            |> settle
+                in
+                Expect.all
+                    [ \m -> Expect.equal [ 0, 1 ] (selected m)
+                    , \m -> Expect.equal loaded.viewport.camera.target m.viewport.camera.target
+                    , \m -> Expect.equal (orientation loaded) (orientation m)
+                    ]
+                    after
+        , test "Fit View recentres the pivot on the model; deselecting keeps it" <|
+            \_ ->
+                let
+                    picked =
+                        loaded |> click (screenOf 1 loaded) |> settle
+
+                    cleared =
+                        picked |> step ClearSelection |> settle
+
+                    fitted =
+                        picked |> step (ViewportMsg Viewport.FitView) |> settle
+                in
+                Expect.all
+                    [ \_ -> Expect.equal picked.viewport.camera.target cleared.viewport.camera.target
+                    , \_ -> Expect.equal loaded.viewport.camera.target fitted.viewport.camera.target
+                    ]
+                    ()
+        , test "the pivot holds still during a drag and on the drop" <|
+            \_ ->
+                let
+                    picked =
+                        rawDrag |> click (screenOf 0 rawDrag) |> settle
+
+                    ( x, y ) =
+                        screenOf 0 picked
+
+                    dragging =
+                        picked
+                            |> mouseDown x y False
+                            |> mouseMove (x + 60) y
+                            |> settle
+
+                    dropped =
+                        dragging |> mouseUp (x + 60) y |> settle
+                in
+                Expect.all
+                    [ \_ -> Expect.equal picked.viewport.camera.target dragging.viewport.camera.target
+                    , \_ -> Expect.notEqual (screenOf 0 picked) (screenOf 0 dropped)
+                    , \_ -> Expect.equal picked.viewport.camera.target dropped.viewport.camera.target
+                    , \_ -> Expect.within (Expect.Absolute 1.0e-6) 0 (eyeMoved picked dropped)
+                    ]
+                    ()
+        , test "in street-level walk the camera does not re-pivot" <|
+            \_ ->
+                let
+                    walking =
+                        loaded |> step (ViewportMsg (Viewport.KeyPressed (testKey "g")))
+
+                    picked =
+                        walking |> click (screenOf 1 walking) |> settle
+                in
+                Expect.all
+                    [ \_ -> Expect.equal Camera.Walk walking.viewport.camera.navigation
+                    , \_ -> Expect.equal walking.viewport.camera picked.viewport.camera
+                    ]
+                    ()
         ]

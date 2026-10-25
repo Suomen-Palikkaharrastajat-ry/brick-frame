@@ -32,19 +32,30 @@ kinematic equations synchronized with driving gears.
 For each meshing pair (g1 → g2):
 
     ratio2 =
-        ratio1 * -(teeth1 / teeth2)
+        ratio1 * meshRatio g1 g2
 
-The sign flips at each external mesh (gears rotate in opposite directions).
+The magnitude is `teeth1 / teeth2`. The sign comes from the no-slip rule at the
+pitch point `P`: with `v_X = n_X × (P − C_X)`, the signed ratio is
+`k = (v_1·v_2) / |v_2|²`. Two spur gears with the same axis orientation give
+`−teeth1/teeth2`. Flipping one gear's axis gives a positive ratio. Crown and
+bevel pairs take their sign from the same formula.
+
+Coaxial (rigid) neighbours always turn at ratio `+1`.
 
 Worm gear simplification:
 if either side has `teeth == 1`, treat it as a worm mesh and do not invert
 sign. The ratio magnitude still follows `teeth1 / teeth2`.
 
+If the geometry is degenerate (coincident centres, no pitch point), the sign
+falls back to the same-orientation rule `−teeth1/teeth2`.
+
 -}
 
 import Array
 import Dict exposing (Dict)
-import Gear.Types exposing (GearGraph, GearId)
+import Gear.Phase as Phase
+import Gear.Types exposing (GearGraph, GearId, GearInstance)
+import Math.Vector3 as Vec3 exposing (Vec3)
 import Set exposing (Set)
 
 
@@ -263,11 +274,11 @@ bfsStep graph queue visited angles =
                 ( newVisited, newAngles, newEntries ) =
                     List.foldl
                         (\neighbourId ( vis, ang, entries ) ->
-                            case ( gearTeeth graph currentId, gearTeeth graph neighbourId ) of
-                                ( Just t1, Just t2 ) ->
+                            case ( gearInstance graph currentId, gearInstance graph neighbourId ) of
+                                ( Just g1, Just g2 ) ->
                                     let
                                         neighbourAngle =
-                                            currentAngle * meshRatio t1 t2
+                                            currentAngle * meshRatio g1 g2
                                     in
                                     ( Set.insert neighbourId vis
                                     , Dict.insert neighbourId neighbourAngle ang
@@ -297,20 +308,71 @@ bfsStep graph queue visited angles =
                 newAngles2
 
 
-gearTeeth : GearGraph -> GearId -> Maybe Int
-gearTeeth graph gearId =
+gearInstance : GearGraph -> GearId -> Maybe GearInstance
+gearInstance graph gearId =
     Array.get gearId graph.instances
-        |> Maybe.map (.spec >> .teeth)
 
 
-meshRatio : Int -> Int -> Float
-meshRatio t1 t2 =
+{-| Signed ratio for one mesh edge, `angle(g2) / angle(g1)`.
+
+Worms (`teeth == 1` on either side) keep a positive sign. Otherwise the
+magnitude is `teeth1 / teeth2` and the sign is `meshSign g1 g2`.
+
+-}
+meshRatio : GearInstance -> GearInstance -> Float
+meshRatio g1 g2 =
     let
         baseRatio =
-            toFloat t1 / toFloat t2
+            toFloat g1.spec.teeth / toFloat g2.spec.teeth
     in
-    if t1 == 1 || t2 == 1 then
+    if g1.spec.teeth == 1 || g2.spec.teeth == 1 then
         baseRatio
 
     else
-        -baseRatio
+        baseRatio * meshSign g1 g2
+
+
+{-| The no-slip sign of a spur, crown or bevel mesh: `+1` when the two gears
+turn in the same sense at the pitch point, `-1` otherwise.
+
+With `v_X = n_X × (P − C_X)` the ratio is `k = (v_1·v_2) / |v_2|²`. Only its
+sign is used here; the magnitude stays at the tooth-count ratio. Falls back
+to `-1` (same-orientation spur rule) when no pitch point exists.
+
+-}
+meshSign : GearInstance -> GearInstance -> Float
+meshSign g1 g2 =
+    case Phase.contactPoint g1 g2 of
+        Nothing ->
+            -1
+
+        Just p ->
+            let
+                f1 =
+                    Phase.gearFrame g1
+
+                f2 =
+                    Phase.gearFrame g2
+
+                v1 =
+                    surfaceVelocity f1 p
+
+                v2 =
+                    surfaceVelocity f2 p
+
+                denominator =
+                    Vec3.dot v2 v2
+            in
+            if denominator < 1.0e-12 then
+                -1
+
+            else if Vec3.dot v1 v2 > 0 then
+                1
+
+            else
+                -1
+
+
+surfaceVelocity : Phase.Frame -> Vec3 -> Vec3
+surfaceVelocity frame p =
+    Vec3.cross frame.axis (Vec3.sub p frame.centre)

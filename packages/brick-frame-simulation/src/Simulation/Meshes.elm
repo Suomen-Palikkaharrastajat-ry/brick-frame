@@ -608,6 +608,8 @@ type alias DrivenAxle =
     { center : Vec3.Vec3
     , axis : Vec3.Vec3
     , drivingGearId : GearId
+    , file : String
+    , transform : Mat4.Mat4
     }
 
 
@@ -623,6 +625,8 @@ buildDrivenAxles cache components gears =
                             { center = toYUpPoint component.worldPosition
                             , axis = inferComponentAxis cache component
                             , drivingGearId = gearId
+                            , file = component.partFile
+                            , transform = component.worldMatrix
                             }
                         )
             )

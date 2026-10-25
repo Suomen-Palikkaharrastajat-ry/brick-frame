@@ -77,6 +77,7 @@ type Action
     | PresetLeft
     | PresetRight
     | PresetTop
+    | PresetBottom
     | PresetIsometric
 
 
@@ -229,6 +230,9 @@ actionFor context event =
                 Just PresetTop
 
             "6" ->
+                Just PresetBottom
+
+            "`" ->
                 Just PresetIsometric
 
             _ ->
@@ -336,7 +340,10 @@ helpRows =
       )
     , ( "Look"
       , [ ( "Drag", "Orbit, or turn your head" )
+        , ( "Right drag", "Orbit" )
+        , ( "Middle drag", "Pan" )
         , ( "Shift + drag", "Pan" )
+        , ( "Ctrl + drag", "Orbit" )
         , ( "Arrows", "Orbit / look" )
         , ( "+ -", "Zoom" )
         ]
@@ -345,7 +352,8 @@ helpRows =
       , [ ( "G", "Street level on / off" )
         , ( "F", "Fit whole model" )
         , ( "1 2 3 4", "Front / back / left / right" )
-        , ( "5 6", "Top / isometric" )
+        , ( "5 6", "Top / bottom" )
+        , ( "`", "3/4 view" )
         ]
       )
     , ( "Other"

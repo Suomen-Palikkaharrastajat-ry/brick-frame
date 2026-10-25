@@ -362,6 +362,9 @@ handleViewportEvent event ( model, cmds ) =
         Viewport.DragEnded _ _ ->
             ( model, cmds )
 
+        Viewport.DragCancelled ->
+            ( model, cmds )
+
         Viewport.WheelScrolled _ ->
             ( model, cmds )
 
@@ -489,6 +492,9 @@ msgForAction action =
 
         Shortcuts.PresetTop ->
             ViewportMsg (Viewport.SetViewPreset TopView)
+
+        Shortcuts.PresetBottom ->
+            ViewportMsg (Viewport.SetViewPreset BottomView)
 
         Shortcuts.PresetIsometric ->
             ViewportMsg (Viewport.SetViewPreset IsometricView)
@@ -666,7 +672,7 @@ viewDebug model =
                     ++ String.fromInt (round model.viewport.camera.distance)
                 )
             ]
-        , div [] [ text "Drag to orbit · Shift+Drag to pan · Scroll to zoom" ]
+        , div [] [ text "Drag or right-drag to orbit · Middle-drag or Shift+drag to pan · Scroll to zoom" ]
         , div [] [ text "Touch: 1-finger orbit · 2-finger pan/pinch zoom" ]
         ]
 

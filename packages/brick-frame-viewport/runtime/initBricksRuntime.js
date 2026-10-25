@@ -695,8 +695,25 @@ export function initBricksRuntime(options) {
     })
   }
 
+  // Ports are optional per host (brick-play and brick-contraptions do not expose
+  // requestFileUpload, for one), so every wiring goes through these helpers and
+  // quietly skips a port the host did not expose instead of aborting setup.
+  function subscribePort(name, handler) {
+    const port = app.ports?.[name]
+    if (typeof port?.subscribe === 'function') {
+      port.subscribe(handler)
+    }
+  }
+
+  function sendPort(name, payload) {
+    const port = app.ports?.[name]
+    if (typeof port?.send === 'function') {
+      port.send(payload)
+    }
+  }
+
   function emitViewportSize(widthRaw, heightRaw) {
-    if (!app.ports.viewportResized) {
+    if (!app.ports?.viewportResized) {
       return
     }
     const width = Math.max(1, Math.round(Number(widthRaw) || 0))
@@ -706,7 +723,7 @@ export function initBricksRuntime(options) {
     }
     lastViewportWidth = width
     lastViewportHeight = height
-    app.ports.viewportResized.send({ width, height })
+    sendPort('viewportResized', { width, height })
   }
 
   function measureAndEmitViewportSize() {
@@ -732,12 +749,12 @@ export function initBricksRuntime(options) {
   }
 
   function pushFileText(text) {
-    app.ports.fileContentReceived.send(String(text ?? ''))
+    sendPort('fileContentReceived', String(text ?? ''))
   }
 
   function reportLoadError(message) {
     const normalized = String(message ?? 'Unknown load error')
-    app.ports.fileLoadError.send(normalized)
+    sendPort('fileLoadError', normalized)
     sendRuntimeEvent('model-error', { message: normalized })
   }
 
@@ -760,12 +777,12 @@ export function initBricksRuntime(options) {
         if (typeof cacheKey === 'string') {
           rememberFlattenResult(cacheKey, resultText)
         }
-        app.ports.geometryFlattened.send(resultText)
+        sendPort('geometryFlattened', resultText)
       } else {
-        app.ports.geometryFlattenFailed.send(parsed.error ?? 'Geometry worker failed')
+        sendPort('geometryFlattenFailed', parsed.error ?? 'Geometry worker failed')
       }
     } catch {
-      app.ports.geometryFlattenFailed.send('Invalid geometry worker response')
+      sendPort('geometryFlattenFailed', 'Invalid geometry worker response')
     }
   }
 
@@ -879,11 +896,11 @@ export function initBricksRuntime(options) {
     readLdrawFile(file)
   }
 
-  app.ports.requestGeometryFlatten.subscribe((payload) => {
+  subscribePort('requestGeometryFlatten', (payload) => {
     const payloadText = String(payload ?? '')
     const cacheHit = geometryFlattenCache.get(payloadText)
     if (cacheHit) {
-      app.ports.geometryFlattened.send(cacheHit)
+      sendPort('geometryFlattened', cacheHit)
       return
     }
 
@@ -922,7 +939,7 @@ export function initBricksRuntime(options) {
       }
     }
 
-    app.ports.setUrlHash.subscribe((hash) => {
+    subscribePort('setUrlHash', (hash) => {
       const normalized = String(hash ?? '')
       pendingHash = normalized.startsWith('#') ? normalized : `#${normalized}`
       if (hashFrame !== null) return
@@ -933,8 +950,8 @@ export function initBricksRuntime(options) {
     })
   }
 
-  if (app.ports.runtimeEvent) {
-    app.ports.runtimeEvent.subscribe((payload) => {
+  if (app.ports?.runtimeEvent) {
+    subscribePort('runtimeEvent', (payload) => {
       try {
         const parsed = typeof payload === 'string' ? JSON.parse(payload) : payload
         if (parsed && typeof parsed === 'object') {
@@ -963,7 +980,7 @@ export function initBricksRuntime(options) {
       fileInput.remove()
     })
 
-    app.ports.requestFileUpload.subscribe(() => {
+    subscribePort('requestFileUpload', () => {
       fileInput.value = ''
       fileInput.click()
     })
@@ -1024,6 +1041,41 @@ export function initBricksRuntime(options) {
     cleanups.push(() => {
       ownerWindow.clearInterval(resizePollId)
     })
+  }
+
+  // A window blur (alt-tab, a devtools focus switch) swallows the keyup of any key
+  // still held down, and Elm's key handlers only clear state on keyup. Replay
+  // keyups for the keys that can be held so the viewport and studio forget them.
+  const heldKeyNames = [
+    ' ',
+    'Shift',
+    'Alt',
+    'Control',
+    'Meta',
+    'w',
+    'a',
+    's',
+    'd',
+    'q',
+    'e',
+    'ArrowUp',
+    'ArrowDown',
+    'ArrowLeft',
+    'ArrowRight',
+  ]
+
+  function releaseHeldKeys() {
+    const KeyboardEventCtor = ownerWindow?.KeyboardEvent ?? globalThis.KeyboardEvent
+    if (!ownerDocument?.dispatchEvent || typeof KeyboardEventCtor !== 'function') {
+      return
+    }
+    for (const key of heldKeyNames) {
+      ownerDocument.dispatchEvent(new KeyboardEventCtor('keyup', { key, bubbles: true }))
+    }
+  }
+
+  if (ownerWindow) {
+    addEventListener(ownerWindow, 'blur', releaseHeldKeys)
   }
 
   measureAndEmitViewportSize()

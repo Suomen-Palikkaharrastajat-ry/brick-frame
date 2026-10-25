@@ -80,11 +80,14 @@ apply.
 
 Clicking picks a placement (`Viewport.pickSource`); shift-click extends the
 selection. The gizmo captures the drag (`Viewport.captureDrag`), so the camera
-holds still. With the move tool, a part can also be dragged by its body
-(`Viewport.pickPoint`): it slides over the horizontal plane through the grabbed
-point, the whole selection if the part is in it, snapping to the move step and
-to studs like a handle drag, one undo step per drag. Empty space and Shift-drag
-still move the camera. Translation snaps to a grid of 20/8/4/1 LDU; rotation is in 90° or
+holds still. With the select or move tool (as in BrickLink Studio), a part can
+also be dragged by its body (`Viewport.pickPoint`), the whole selection if the
+part is in it, snapping to the move step and to studs like a handle drag, one
+undo step per drag (see "Dragging a part by its body" below). A select-tool
+press that never moves the part is a click and selects that part alone. The gizmo arrows
+and rings stay the move and rotate tools' own. An armed palette part is placed
+by the click rather than grabbing the part under it. Empty space still orbits
+the camera, and Shift-drag pans it. Translation snaps to a grid of 20/8/4/1 LDU; rotation is in 90° or
 15° steps; the inspector accepts exact position and Euler angles. Selected parts
 get outlines from `Studio.Overlay`, and at rest nothing else is outlined: gear
 hints (meshed / cannot turn) appear only in the status summary, and red
@@ -95,6 +98,146 @@ Picking narrows by bounding sphere and box, then tests the part's triangles
 space picks nothing. Pointer events arrive in window coordinates; the studio
 tells the viewport where its canvas sits (`Viewport.setCanvasOrigin`, from
 `Studio.Layout`), and the viewport converts to canvas pixels before picking.
+
+### Dragging a part by its body
+
+The body drag is view-relative (`Studio.DragPlane`, shared with `Studio.Core`):
+dragging left moves the part to the camera's left, whichever way the camera is
+turned. On press a **working plane** is fixed through the grabbed point (render
+space), chosen once from the camera:
+
+- **Horizontal** when the camera looks down or up steeply (`abs elevation >= 20°`):
+  screen left/right is camera-left/right on the ground, screen up/down is away
+  from / toward the camera. The dragged parts rest on whatever their footprint
+  (the union of their bounding boxes) overlaps at the new place, or the ground,
+  keeping the height they had above their support at press time.
+- **Camera-facing** (vertical) near the horizon, where a ground plane would run
+  off to infinity: screen up/down is up/down, in move steps, never below the
+  ground.
+
+Every move casts the screen ray (`Render.Pick.screenRay`) onto that plane and
+moves the lead part by the distance from the grab point, so the grabbed point
+stays under the cursor with no jump on the first move. A ray parallel to the
+plane, or one meeting it behind the eye, leaves the part where it is. Then come
+the move-step grid (X and Z), the wheel lift (plate, Shift brick, Alt 1 LDU),
+stud snapping (`Connectivity.solveSnapWithHysteresis`, off with Alt), collision
+marking, and the rest of the selection follows rigidly. In the workspace, holding
+Shift (or the Y axis lock) holds X and Z and lifts or lowers the parts with the
+cursor's vertical movement, without any support search; the X and Z locks hold
+the height and the other ground axis. Inside a submodel the plane and supports
+are in world coordinates and the result goes back through the submodel's
+transform. A part dragged in from the palette has no grab point and slides over
+the ground, resting on what is under it.
+
+A press on a part's body grabs it even where the ray touches no triangle: `Viewport.pickBodyPoint`
+falls back to the placement whose centre is nearest the ray within 35% of its bounding radius
+(`axleHoleFraction`). This covers a gear's empty axle hole, so pressing on it drags the
+gear instead of panning. Click selection (`pickSource`) keeps the strict triangle test.
+
+### Follow the clicked part
+
+An explicit click or tap that selects a part (also a part pressed and released
+without moving it, with the select or move tool) slides the view onto the
+selection — the middle of the selected placements' bounding spheres —
+with `Viewport.pivotOn`: a short translation glide that keeps azimuth, elevation
+and distance (no rotation, no zoom; see [rendering.md](rendering.md) § Camera).
+The next orbit and zoom turn around the clicked part, and W/A/S/D keep moving
+along the same screen directions. Nothing else moves the pivot: not adding a
+part, keyboard or action-bar moves and turns, a drag drop, undo/redo, Ctrl+A or
+the inspector. It never happens during a drag, in walk navigation, or on the
+Preview and Instructions pages. Deselecting keeps the last pivot; Fit View
+(`F`, the camera pad's fit button) recentres on the whole model.
+
+### Host placement (Brick Play, Brick Contraptions)
+
+`Studio.Core.addPart` rests a new part on the ground (origin Y = −bottom);
+`Core.addPartAt part colour matrix` adds it at exactly the given placement, for a
+host with its own heights (Contraptions' axle line). `Core.freeSpotFor part`
+finds where to add a ground-resting part without overlapping anything
+(`Studio.DragPlane.freeSpot`: grid positions ring by ring outward from the
+selection, or from the camera target when nothing is selected, until the part's
+box clashes with no placement's box); `Core.freeSpotForPlacement part matrix`
+does the same for a matrix, keeping its height and orientation. Brick Play adds
+every dock piece at `freeSpotFor`, so the first lands in the middle of the view
+and the next ones beside the selected piece. `Core.setDragSettles False` makes
+horizontal-plane body drags keep the press-time height instead of settling on
+the support (camera-facing drags, the wheel and raise/lower are unchanged).
+
+Brick Contraptions (`Contraption.Placement`) adds every catalog Technic part —
+gears, axles, beams, pins, bushes — with its origin on one **axle line** at
+Y = −60 LDU (60 above the ground, so a 40T's teeth clear it): each of these parts
+has its origin on its own axis or hole row, so gears of any size share one axis
+height and mesh by sliding along X/Z only. A new gear goes into the selected
+part's plane, on the first free spot along X; other Technic parts use
+`freeSpotForPlacement`, and a project's non-Technic parts rest on the ground.
+Contraptions turns drag settling off. `Core.partBox` gives a host the studio's
+local box for a part.
+
+While the camera is still auto-fitting (`Viewport.CameraAutoFit`: not moved
+since the start or the last Fit View), each part added with `addPart`/`addPartAt`
+re-frames the whole model once its geometry is built, so a model built from the
+dock stays in view; after any camera move (or a click that glides onto a part)
+adds leave the camera alone.
+
+## Brick Play and Brick Contraptions
+
+Both hosts embed `Studio.Core` with the gizmo off, so they edit like the studio
+while showing their own chrome. Their `Main.elm` owns the Msgs and forwards the
+action bar and toolbar to the component.
+
+- **No gizmo.** `Core.setGizmoStyle NoGizmo` draws and hit-tests no arrows or
+  rings. A body drag still moves a part on the view-relative plane
+  (`Studio.DragPlane`), and turning, raising and lowering go through the keyboard
+  or the action bar. The yellow selection box is still drawn.
+- **Drag mode.** Brick Play uses `DragPartsOrPan OneFingerOrbits`; Brick
+  Contraptions uses `DragPartsOrPan OneFingerPans` and a camera globe (see
+  [rendering.md](rendering.md) § Interaction controls).
+- **Action bar.** While something is selected, a floating bar above the dock shows
+  Turn left, Turn right, Tip, Raise, Lower and Delete. Each calls the same command
+  as its key (`Core.turnSelected`, `Core.raiseSelected`, `Core.lowerSelected`,
+  `Core.deleteSelection`).
+- **Part cards.** Dock items are `UI.PartCard`s: a rendered picture of the part in
+  its colour, its name and a secondary line (part number or count left). Images come
+  from the shared thumbnail pipeline (`runtime/thumbnail-pipeline.js`, also used by
+  the studio palette) over the `requestThumbnails` / `thumbnailLoaded` ports, and are
+  cached in IndexedDB. A neutral placeholder keeps the card size until an image
+  arrives; a part with none left is disabled, not hidden.
+- **Clear.** The toolbar's Clear button empties the model
+  (`Core.resetDocument Document.empty`).
+- **Mesh status (Brick Contraptions).** With one gear selected, a status pill says how
+  it sits against its nearest other gear (`Machine.gearFeedback`, worded by
+  `Machine.feedbackText`), e.g. `24T ↔ 24T: 40 LDU apart — needs 60` or
+  `Meshes with 24T ✓`. It turns yellow once the two mesh.
+- **Playing (Brick Contraptions).** Space plays and pauses the machine in the same
+  view as editing. Gears and their driven parts animate, and their static copies are
+  hidden (`Contraption.Animation`). Any edit stops the machine and rewinds it to 0.
+  Brick Play has no simulation and leaves Space unbound.
+- **Placement.** Brick Play adds dock parts with `Core.freeSpotFor`; Brick
+  Contraptions places them on its axle line. See "Host placement" above.
+
+## Gear alignment
+
+With `Core.setGearAlignment True`, gears that a committed edit meshes are turned
+so their teeth interlock (`Studio.GearAlign`; the tooth geometry is in
+`Gear.Phase`, see `docs/physics.md` § Tooth phase).
+
+- **When it runs.** After each committed edit that moves or adds parts: a drop
+  (including magnetic snap), a nudge, a turn from the keyboard or action bar, and
+  an added part. Only meshes that did not exist before the edit and involve a
+  moved gear are closed. A drag that moves no gear or axle, and any edit while
+  alignment is off, does no alignment work at all. Worms are never turned, and a
+  turn under half a degree is dropped.
+- **Groups.** A gear turns with its rigid group: the gears and axles on its axle
+  line that are connected to it along the line (their extents along the axis
+  overlap, within 2 LDU, chained outward from the moved gear). Parts on the same
+  line with a gap between them stay put. The group turns about the shared line,
+  because an axle re-seats in 90° steps only, which never changes tooth phase.
+  If a group has several meshes, the turn minimises the worst misalignment over
+  its moving gears; fixed partners cannot move, so their offsets are only
+  reported.
+- **Undo.** The turns are recorded in the same `Group` as the edit, so one undo
+  restores both the position and the rotation, and redo applies both again. Drags
+  record the turns in the drop's history entry as well.
 
 ## Palette and part index
 
@@ -145,26 +288,56 @@ On the canvas: the tool rail (tools, undo/redo, edit and submodel actions) at
 the top left, the snapping buttons along the bottom (top on a phone) and the
 camera pad at the bottom right. Everything floating over the canvas is opaque.
 
-## Keyboard
+## Keyboard and mouse
 
 Keys are pure functions in `Studio.Shortcuts` on top of `Viewport.Shortcuts`;
-`?` lists them all. Besides the editing keys (V M R, X Y Z, Delete, Ctrl D/A/G,
-Ctrl Z/Y, `[` `]` `,` `.`):
+`?` lists them all. The editing keys:
 
-- **Arrows** nudge the selection by the move step relative to the screen (the
-  camera's right and forward snapped to a ground axis), Shift by 1 LDU, and
-  **PageUp/PageDown** raise and lower it. Without a selection the arrows orbit.
-  `Workspace` intercepts these key presses before the viewport sees them, so the
-  camera does not orbit at the same time.
-- `/` part search, Ctrl O open, Ctrl S save, B parts list, I instructions,
-  P simulate, Esc closes the menu, clears the selection, leaves a submodel, or
-  leaves Simulate/Instructions.
+- **Tools**: `T` (or `M`) move, `V` select, `R` rotate. X Y Z turn the selection
+  about that axis (Shift the other way); `[` `]` set the move step, `,` `.` the turn step.
+- **W A S D**, **Q E** and **Page Up / Page Down** move the selection relative to
+  the screen (W and S away from and toward the viewer, A and D left and right, Q
+  and Page Down lower, E and Page Up raise), by the move step; Shift makes it 1 LDU.
+- **Arrows** turn the selection: ← → about the vertical axis, ↑ ↓ tip it about the
+  ground axis most aligned with the screen's horizontal. A turn is the turn step,
+  Shift makes it 45°.
+- Each key press is one undo step. The workspace consumes these keys, so the camera
+  does not move at the same time. With nothing selected they move or orbit the
+  camera as in the viewport. During a drag the movement keys and Delete are
+  ignored (nothing is removed from a half-dragged document) and the arrows change
+  the drag's step.
+- While the `?` dialog is open no key edits the document (`Studio.Shortcuts`
+  returns nothing for the context's `helpVisible`); `?` or Esc close it.
+- `Delete`, Ctrl D/A/G, Ctrl Z/Y and the other chords are checked against the text-entry
+  guard too, so typing in a form field never edits the document.
+- `/` focuses part search only; `?` lists the keys.
+- Ctrl O open, Ctrl S save, B parts list, I instructions, P simulate.
+- **Esc** cancels a drag in progress: the document goes back to how it was when the
+  drag began, with no undo step. Otherwise it closes the menu, clears the selection,
+  leaves a submodel, or leaves Simulate/Instructions.
+
+The mouse:
+
+- Left click selects; Shift or Ctrl/Cmd click adds or removes. With an armed
+  palette part, a click places it on the surface under the point.
+- Left drag on a part moves or turns it (through the gizmo, or the body drag of
+  the select and move tools, which follows the cursor relative to the view);
+  left drag on empty space orbits.
+- Right drag orbits, around the selection once something has been selected (F
+  recentres on the model). Middle drag, Shift + drag and Space + drag pan. Wheel zooms.
+  Space is pan-while-held in the workspace, not play/pause.
 
 The guard (`Viewport.Shortcuts.isTextEntryTarget` and `isWidgetKey`) leaves
 typing in form fields alone, and leaves Space/Enter to a focused button and the
 arrows to composite widgets (by ARIA role: `treeitem`, `option`, `radio`, …).
 Buttons are deliberately *not* text-entry targets: clicking a toolbar button
-focuses it, and that used to silence every shortcut.
+focuses it, and that used to silence every shortcut. Nor do mouse clicks leave
+buttons focused: the header, tool rail, snap bar, breadcrumbs, view pad, tab bar,
+export menu and inspector prevent the default of `mousedown`
+(`Workspace.keepFocusOnCanvas`), so Space + drag after clicking Undo pans instead
+of undoing again. Presses on inputs, selects and text areas are let through so
+they still take focus; Tab focus is unchanged. The palette, colour swatches and
+structure tree are left out, since their roving focus follows the click.
 
 Page changes (Simulate, Instructions, back) are decided in `Main`, which only
 sees messages that come from outside a page, so key-driven page changes are

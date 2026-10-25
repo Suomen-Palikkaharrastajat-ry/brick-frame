@@ -266,6 +266,9 @@ handleEvent event ( model, cmds ) =
         Viewport.DragEnded _ _ ->
             ( model, cmds )
 
+        Viewport.DragCancelled ->
+            ( model, cmds )
+
         Viewport.WheelScrolled _ ->
             ( model, cmds )
 
@@ -336,6 +339,9 @@ msgForAction action =
 
         Shortcuts.PresetTop ->
             ViewportMsg (Viewport.SetViewPreset TopView)
+
+        Shortcuts.PresetBottom ->
+            ViewportMsg (Viewport.SetViewPreset BottomView)
 
         Shortcuts.PresetIsometric ->
             ViewportMsg (Viewport.SetViewPreset IsometricView)

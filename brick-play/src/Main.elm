@@ -2,11 +2,14 @@ module Main exposing
     ( Flags
     , Model
     , Msg(..)
+    , helpRows
     , init
+    , kitItemName
     , main
     , remainingCount
     , remainingForItem
     , subscriptions
+    , thumbnailRequests
     , update
     , view
     )
@@ -14,24 +17,40 @@ module Main exposing
 {-| Main application for Brick Play.
 
 Provides a minimal, elegant free-building studio with kit inventory
-tracking, stud snapping, and gizmo controls.
+tracking and stud snapping. There is no axis gizmo: a drag on a brick moves it
+relative to the view, a drag on empty space pans and a right-drag orbits (one
+finger still orbits on touch, as Play has no camera globe), and while something is selected a floating action bar above
+the dock turns, tips, raises, lowers or deletes it (the same as the keyboard).
+
+The dock shows each kit item as a rendered picture of the part in its colour
+(`UI.PartCard`, fed by the shared thumbnail pipeline through `Ports`); clicking
+a card adds one of that part.
 
 -}
 
 import Browser
 import Browser.Dom
 import Browser.Events
+import Dict exposing (Dict)
 import Html exposing (Html, button, div, header, span, text)
 import Html.Attributes as Attr
-import Html.Events exposing (onClick)
+import Html.Events exposing (onClick, preventDefaultOn)
+import Json.Decode as Decode
 import LDraw.Colors as Colors
 import LDraw.Document as Document
-import Math.Vector3 exposing (vec3)
 import Ports
+import Render.Camera as Camera
 import Studio.Colours as Colours
 import Studio.Core as Core
+import Studio.Shortcuts exposing (TurnDirection(..))
 import Studio.UrlPayload as UrlPayload exposing (PartKitItem)
 import Task
+import UI.Icon as Icon
+import UI.PartCard as PartCard
+import UI.ShortcutHelp as ShortcutHelp
+import Viewport
+import Viewport.Framing exposing (ViewPreset(..))
+import Viewport.Shortcuts as ViewportShortcuts
 
 
 {-| Application flags received from JavaScript runtime.
@@ -56,8 +75,19 @@ defaultInventory =
 type alias Model =
     { studio : Core.Model
     , inventory : List PartKitItem
+    , helpOpen : Bool
     , windowWidth : Int
     , windowHeight : Int
+    , thumbnails : Dict String Thumbnail
+    }
+
+
+{-| A rendered kit part: its image as a data URL and the part's .dat title
+(`""` when unknown). Kept under `PartCard.thumbnailKey file color`.
+-}
+type alias Thumbnail =
+    { url : String
+    , title : String
     }
 
 
@@ -65,14 +95,19 @@ type alias Model =
 -}
 type Msg
     = StudioMsg Core.Msg
-    | AddBrick
     | AddPart PartKitItem
     | Undo
     | Redo
     | Delete
-    | Reset
+    | TurnSelection TurnDirection
+    | RaiseSelection
+    | LowerSelection
+    | Clear
     | FitView
+    | ToggleHelp
+    | NoOp
     | WindowResized Int Int
+    | ThumbnailLoaded { file : String, color : Int, url : String, title : String }
 
 
 {-| Initialize the Brick Play application.
@@ -113,13 +148,24 @@ init flags =
 
         ( initialStudio, studioCmd ) =
             Core.init config
+                |> Tuple.mapFirst
+                    (Core.setGizmoStyle Core.NoGizmo
+                        -- Mouse: left-drag empty space pans, right-drag orbits.
+                        -- Touch keeps one-finger orbit: Play has no camera globe.
+                        >> Core.setDragMode (Core.DragPartsOrPan Core.OneFingerOrbits)
+                    )
 
         initialModel =
             { studio = initialStudio
             , inventory = inventory
+            , helpOpen = False
             , windowWidth = 1280
             , windowHeight = 800
+            , thumbnails = Dict.empty
             }
+
+        requests =
+            thumbnailRequests inventory initialModel.thumbnails
 
         fetchViewportSize =
             Browser.Dom.getViewport
@@ -129,8 +175,66 @@ init flags =
     , Cmd.batch
         [ Cmd.map StudioMsg studioCmd
         , fetchViewportSize
+        , if List.isEmpty requests then
+            Cmd.none
+
+          else
+            Ports.requestThumbnails requests
         ]
     )
+
+
+{-| The thumbnails to ask the pipeline for: one per distinct part and colour in
+the kit that has none yet. `rgb` comes from the colour table the 3D view uses,
+so the pictures match the bricks on the canvas.
+-}
+thumbnailRequests : List PartKitItem -> Dict String Thumbnail -> List { file : String, color : Int, rgb : List Float }
+thumbnailRequests inventory thumbnails =
+    let
+        step item ( seen, acc ) =
+            let
+                key =
+                    PartCard.thumbnailKey item.part item.color
+            in
+            if List.member key seen || Dict.member key thumbnails then
+                ( seen, acc )
+
+            else
+                ( key :: seen
+                , { file = item.part
+                  , color = item.color
+                  , rgb =
+                        Colors.resolveColor item.color 16
+                            |> (\c -> [ c.r, c.g, c.b ])
+                  }
+                    :: acc
+                )
+    in
+    List.foldl step ( [], [] ) inventory
+        |> Tuple.second
+        |> List.reverse
+
+
+{-| The readable name of a kit item: the part's .dat title once the pipeline has
+sent it ("Brick 2 x 4"), else the part number ("3001").
+-}
+kitItemName : Model -> PartKitItem -> String
+kitItemName model item =
+    case Dict.get (PartCard.thumbnailKey item.part item.color) model.thumbnails of
+        Just thumb ->
+            if String.isEmpty (String.trim thumb.title) then
+                partNumber item
+
+            else
+                thumb.title
+
+        Nothing ->
+            partNumber item
+
+
+partNumber : PartKitItem -> String
+partNumber item =
+    String.replace ".dat" "" item.part
 
 
 {-| Remaining count for a specific kit item.
@@ -166,17 +270,11 @@ update msg model =
                 portCmds =
                     handleCoreEvents events
             in
-            ( { model | studio = nextStudio }
-            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
-            )
-
-        AddBrick ->
-            case model.inventory of
-                first :: _ ->
-                    addPartItem first model
-
-                [] ->
-                    ( model, Cmd.none )
+            List.foldl applyShortcut
+                ( { model | studio = nextStudio }
+                , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
+                )
+                (List.filterMap extractKey events)
 
         AddPart item ->
             addPartItem item model
@@ -217,7 +315,16 @@ update msg model =
             , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
             )
 
-        Reset ->
+        TurnSelection direction ->
+            runCore (Core.turnSelected direction) model
+
+        RaiseSelection ->
+            runCore Core.raiseSelected model
+
+        LowerSelection ->
+            runCore Core.lowerSelected model
+
+        Clear ->
             let
                 ( nextStudio, studioCmd, events ) =
                     Core.resetDocument Document.empty model.studio
@@ -236,8 +343,189 @@ update msg model =
             in
             ( { model | studio = nextStudio }, Cmd.map StudioMsg studioCmd )
 
+        ToggleHelp ->
+            let
+                open =
+                    not model.helpOpen
+            in
+            ( { model
+                | helpOpen = open
+                , studio = Core.setHelpVisible open model.studio
+              }
+            , Cmd.none
+            )
+
+        NoOp ->
+            ( model, Cmd.none )
+
         WindowResized w h ->
-            ( { model | windowWidth = w, windowHeight = h }, Cmd.none )
+            -- The viewport projects picks and gizmo handles through its own
+            -- size, so it must track the canvas, not keep its 800×600 default.
+            update (viewportMsg (Viewport.WindowResize w h)) { model | windowWidth = w, windowHeight = h }
+
+        ThumbnailLoaded { file, color, url, title } ->
+            ( { model
+                | thumbnails =
+                    Dict.insert (PartCard.thumbnailKey file color) { url = url, title = title } model.thumbnails
+              }
+            , Cmd.none
+            )
+
+
+{-| Run a studio edit and forward its effects.
+-}
+runCore : (Core.Model -> ( Core.Model, Cmd Core.Msg, List Core.Event )) -> Model -> ( Model, Cmd Msg )
+runCore edit model =
+    let
+        ( nextStudio, studioCmd, events ) =
+            edit model.studio
+    in
+    ( { model | studio = nextStudio }
+    , Cmd.batch [ Cmd.map StudioMsg studioCmd, handleCoreEvents events ]
+    )
+
+
+{-| Run the shortcut a key press stands for, after the studio has had its turn.
+-}
+applyShortcut : ViewportShortcuts.KeyEvent -> ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
+applyShortcut keyEvent ( model, cmd ) =
+    case ViewportShortcuts.actionFor (shortcutContext model) keyEvent of
+        Just action ->
+            let
+                ( next, actionCmd ) =
+                    update (msgForAction action) model
+            in
+            ( next, Cmd.batch [ cmd, actionCmd ] )
+
+        Nothing ->
+            ( model, cmd )
+
+
+extractKey : Core.Event -> Maybe ViewportShortcuts.KeyEvent
+extractKey event =
+    case event of
+        Core.KeyAccepted keyEvent ->
+            Just keyEvent
+
+        _ ->
+            Nothing
+
+
+{-| What `Escape` and `?` need to know to pick between their meanings.
+-}
+shortcutContext : Model -> { helpVisible : Bool, walking : Bool }
+shortcutContext model =
+    { helpVisible = model.helpOpen
+    , walking = model.studio.viewport.camera.navigation == Camera.Walk
+    }
+
+
+{-| Map a viewport shortcut to the message it stands for. Brick Play has no
+simulation, so Space is deliberately left unbound.
+-}
+msgForAction : ViewportShortcuts.Action -> Msg
+msgForAction action =
+    case action of
+        ViewportShortcuts.TogglePlayback ->
+            NoOp
+
+        ViewportShortcuts.FitView ->
+            FitView
+
+        ViewportShortcuts.ToggleWalk ->
+            viewportMsg Viewport.ToggleWalkMode
+
+        ViewportShortcuts.LeaveWalk ->
+            viewportMsg Viewport.ToggleWalkMode
+
+        ViewportShortcuts.ToggleHelp ->
+            ToggleHelp
+
+        ViewportShortcuts.CloseHelp ->
+            ToggleHelp
+
+        ViewportShortcuts.ZoomIn ->
+            viewportMsg (Viewport.Wheel -keyboardZoomStep)
+
+        ViewportShortcuts.ZoomOut ->
+            viewportMsg (Viewport.Wheel keyboardZoomStep)
+
+        ViewportShortcuts.PresetFront ->
+            viewportMsg (Viewport.SetViewPreset FrontView)
+
+        ViewportShortcuts.PresetBack ->
+            viewportMsg (Viewport.SetViewPreset BackView)
+
+        ViewportShortcuts.PresetLeft ->
+            viewportMsg (Viewport.SetViewPreset LeftView)
+
+        ViewportShortcuts.PresetRight ->
+            viewportMsg (Viewport.SetViewPreset RightView)
+
+        ViewportShortcuts.PresetTop ->
+            viewportMsg (Viewport.SetViewPreset TopView)
+
+        ViewportShortcuts.PresetBottom ->
+            viewportMsg (Viewport.SetViewPreset BottomView)
+
+        ViewportShortcuts.PresetIsometric ->
+            viewportMsg (Viewport.SetViewPreset IsometricView)
+
+
+viewportMsg : Viewport.Msg -> Msg
+viewportMsg =
+    StudioMsg << Core.ViewportMsg
+
+
+{-| How far `+` and `-` zoom, in wheel units.
+-}
+keyboardZoomStep : Float
+keyboardZoomStep =
+    200.0
+
+
+{-| The shortcut list for Brick Play: editing keys on the selected brick, then
+the camera.
+-}
+helpRows : List ( String, List ( String, String ) )
+helpRows =
+    [ ( "Build"
+      , [ ( "Drag a brick", "Move it as seen from the camera (snaps to studs)" )
+        , ( "Wheel while dragging", "Raise / lower the brick" )
+        , ( "Action bar (above the dock)", "Turn left / right, tip, raise, lower or remove the selected brick" )
+        , ( "W A S D  Q E", "Move the selected brick (Shift: fine steps)" )
+        , ( "← → ↑ ↓", "Turn the selected brick (Shift: 45°)" )
+        , ( "Delete", "Remove the selected brick" )
+        , ( "Ctrl + Z", "Undo  (Ctrl + Shift + Z: redo)" )
+        , ( "Ctrl + A", "Select all" )
+        , ( "Ctrl + click  Shift + click", "Add to or remove from the selection" )
+        , ( "Esc", "Cancel a drag, or deselect" )
+        ]
+      )
+    , ( "Camera"
+      , [ ( "Drag empty space", "Pan" )
+        , ( "Right-drag", "Orbit" )
+        , ( "Middle drag  Shift + drag", "Pan" )
+        , ( "One finger on empty space", "Orbit (two fingers: pan and pinch-zoom)" )
+        , ( "Wheel  + -", "Zoom" )
+        , ( "F  Home", "Fit the whole model" )
+        , ( "1 2 3 4 5 6  `", "Views: front, back, left, right, top, bottom, 3/4" )
+        , ( "G", "Street-level walk, on / off" )
+        ]
+      )
+    , ( "Help"
+      , [ ( "?  /", "This list" ) ]
+      )
+    ]
+
+
+{-| Keep focus off toolbar and dock buttons after a mouse click, so the
+keyboard shortcuts keep working. A focused button would otherwise take the keys
+for itself.
+-}
+keepFocusOnCanvas : Html.Attribute Msg
+keepFocusOnCanvas =
+    preventDefaultOn "mousedown" (Decode.succeed ( NoOp, True ))
 
 
 addPartItem : PartKitItem -> Model -> ( Model, Cmd Msg )
@@ -251,17 +539,10 @@ addPartItem item model =
 
     else
         let
-            placedCount =
-                List.length (Core.getPlacements model.studio)
-
-            offset =
-                toFloat (placedCount - 2) * 30.0
-
-            pos =
-                vec3 offset 0 0
-
+            -- Next to the selection (or in the middle of the view for the first
+            -- piece), on the ground, clear of every piece already placed.
             ( nextStudio, studioCmd, events ) =
-                Core.addPart item.part item.color pos model.studio
+                Core.addPart item.part item.color (Core.freeSpotFor item.part model.studio) model.studio
 
             portCmds =
                 handleCoreEvents events
@@ -294,6 +575,7 @@ subscriptions model =
         , Ports.geometryFlattened (StudioMsg << Core.geometryFlattened)
         , Ports.geometryFlattenFailed (StudioMsg << Core.geometryFlattenFailed)
         , Browser.Events.onResize WindowResized
+        , Ports.thumbnailLoaded ThumbnailLoaded
         ]
 
 
@@ -343,6 +625,7 @@ view model =
             , Attr.style "align-items" "center"
             , Attr.style "z-index" "10"
             , Attr.style "pointer-events" "none"
+            , keepFocusOnCanvas
             ]
             [ -- App Title badge
               div
@@ -385,34 +668,120 @@ view model =
                 , toolbarButton Redo hasRedo "Redo"
                 , toolbarButton Delete hasSel "Delete"
                 , toolbarButton FitView True "Fit View"
-                , toolbarButton Reset (placed > 0) "Reset"
+                , toolbarButtonWith [ Attr.title "Clear — remove all parts", Attr.attribute "aria-label" "Clear — remove all parts" ] Clear (placed > 0) "Clear"
+                , toolbarButton ToggleHelp True "?"
                 ]
             ]
 
         -- 3D WebGL Canvas
         , Html.map StudioMsg (Core.view { width = model.windowWidth, height = model.windowHeight } model.studio)
 
-        -- Bottom Dock: Inventory Cards
+        -- Shortcut reference, open from the ? button
+        , if model.helpOpen then
+            ShortcutHelp.view { rows = helpRows, onClose = ToggleHelp }
+
+          else
+            text ""
+
+        -- Bottom: the selection action bar floats above the inventory dock
         , div
             [ Attr.style "position" "absolute"
             , Attr.style "bottom" "1.5rem"
-            , Attr.style "left" "50%"
-            , Attr.style "transform" "translateX(-50%)"
+            , Attr.style "left" "1.5rem"
+            , Attr.style "right" "1.5rem"
             , Attr.style "display" "flex"
+            , Attr.style "flex-direction" "column"
             , Attr.style "align-items" "center"
-            , Attr.style "gap" "0.75rem"
-            , Attr.style "max-width" "calc(100vw - 3rem)"
-            , Attr.style "overflow-x" "auto"
-            , Attr.style "padding" "0.75rem 1rem"
-            , Attr.style "background" "rgba(5, 19, 29, 0.9)"
-            , Attr.style "backdrop-filter" "blur(12px)"
-            , Attr.style "border-radius" "1rem"
-            , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
-            , Attr.style "box-shadow" "0 20px 25px -5px rgba(0, 0, 0, 0.5)"
+            , Attr.style "gap" "0.5rem"
             , Attr.style "z-index" "10"
+            , Attr.style "pointer-events" "none"
             ]
-            (List.map (viewKitCard model) model.inventory)
+            [ if hasSel then
+                selectionBar
+
+              else
+                text ""
+            , viewDock model
+            ]
         ]
+
+
+{-| Buttons for the selected bricks, the touch- and mouse-friendly stand-in for
+an axis gizmo. Each does what its keyboard shortcut does.
+-}
+selectionBar : Html Msg
+selectionBar =
+    div
+        [ Attr.attribute "role" "toolbar"
+        , Attr.attribute "aria-label" "Selected brick"
+        , Attr.style "display" "flex"
+        , Attr.style "gap" "0.25rem"
+        , Attr.style "padding" "0.375rem"
+        , Attr.style "background" "rgba(5, 19, 29, 0.85)"
+        , Attr.style "backdrop-filter" "blur(8px)"
+        , Attr.style "border-radius" "9999px"
+        , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
+        , Attr.style "box-shadow" "0 20px 25px -5px rgba(0, 0, 0, 0.5)"
+        , Attr.style "pointer-events" "auto"
+        , keepFocusOnCanvas
+        ]
+        [ actionButton (TurnSelection TurnLeft) "rotate-ccw" "Turn left" "←"
+        , actionButton (TurnSelection TurnRight) "rotate-cw" "Turn right" "→"
+        , actionButton (TurnSelection TipForward) "corner-right-down" "Tip" "↑"
+        , actionButton RaiseSelection "arrow-up" "Raise" "E"
+        , actionButton LowerSelection "arrow-down" "Lower" "Q"
+        , actionButton Delete "trash-2" "Delete" "Delete"
+        ]
+
+
+actionButton : Msg -> String -> String -> String -> Html Msg
+actionButton msg icon label shortcut =
+    button
+        [ onClick msg
+        , Attr.attribute "aria-label" label
+        , Attr.title (label ++ " (" ++ shortcut ++ ")")
+        , Attr.style "display" "flex"
+        , Attr.style "flex-direction" "column"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "center"
+        , Attr.style "gap" "0.125rem"
+        , Attr.style "min-width" "3rem"
+        , Attr.style "min-height" "2.75rem"
+        , Attr.style "padding" "0.25rem 0.375rem"
+        , Attr.style "border" "none"
+        , Attr.style "border-radius" "9999px"
+        , Attr.style "background" "rgba(255, 255, 255, 0.1)"
+        , Attr.style "color" "var(--color-text-on-dark)"
+        , Attr.style "font-size" "0.6875rem"
+        , Attr.style "font-weight" "600"
+        , Attr.style "cursor" "pointer"
+        , Attr.style "transition" "all 150ms ease"
+        ]
+        [ Icon.featherSized 18 icon
+        , span [ Attr.attribute "aria-hidden" "true" ] [ text label ]
+        ]
+
+
+viewDock : Model -> Html Msg
+viewDock model =
+    div
+        [ Attr.attribute "role" "group"
+        , Attr.attribute "aria-label" "Kit"
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "stretch"
+        , Attr.style "gap" "0.5rem"
+        , Attr.style "max-width" "100%"
+        , Attr.style "overflow-x" "auto"
+        , Attr.style "padding" "0.5rem 0.75rem"
+        , Attr.style "background" "rgba(5, 19, 29, 0.9)"
+        , Attr.style "backdrop-filter" "blur(12px)"
+        , Attr.style "border-radius" "1rem"
+        , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
+        , Attr.style "box-shadow" "0 20px 25px -5px rgba(0, 0, 0, 0.5)"
+        , Attr.style "pointer-events" "auto"
+        , keepFocusOnCanvas
+        ]
+        (List.map (viewKitCard model) model.inventory)
 
 
 viewKitCard : Model -> PartKitItem -> Html Msg
@@ -421,127 +790,76 @@ viewKitCard model item =
         remaining =
             remainingForItem model item
 
-        canAdd =
-            remaining > 0
+        name =
+            kitItemName model item
 
-        displayName =
-            String.replace ".dat" "" item.part
+        availability =
+            String.fromInt remaining ++ " / " ++ String.fromInt item.count ++ " left"
+
+        colourName =
+            Colours.nameOf item.color
     in
-    div
-        [ Attr.style "display" "flex"
-        , Attr.style "align-items" "center"
-        , Attr.style "gap" "0.75rem"
-        , Attr.style "padding" "0.5rem 0.75rem"
-        , Attr.style "background" "rgba(255, 255, 255, 0.05)"
-        , Attr.style "border" "1px solid rgba(255, 255, 255, 0.1)"
-        , Attr.style "border-radius" "0.5rem"
-        , Attr.style "flex-shrink" "0"
-        ]
-        [ -- Color swatch
-          span
-            [ Attr.style "display" "inline-block"
-            , Attr.style "width" "1.25rem"
-            , Attr.style "height" "0.75rem"
-            , Attr.style "background" (Colours.css (Colors.resolveColor 16 item.color))
-            , Attr.style "border-radius" "2px"
-            , Attr.style "border" "1px solid rgba(255, 255, 255, 0.2)"
-            ]
-            []
+    PartCard.view
+        { imageUrl =
+            Dict.get (PartCard.thumbnailKey item.part item.color) model.thumbnails
+                |> Maybe.map .url
+        , name = name
+        , secondary = availability
+        , tooltip = name ++ " (" ++ partNumber item ++ ", " ++ colourName ++ ") — " ++ String.fromInt remaining ++ " of " ++ String.fromInt item.count ++ " available"
+        , ariaLabel = "Add " ++ name ++ " (" ++ colourName ++ "), " ++ String.fromInt remaining ++ " of " ++ String.fromInt item.count ++ " left"
+        , onClick =
+            if remaining > 0 then
+                Just (AddPart item)
 
-        -- Part name and count info
-        , div
-            [ Attr.style "display" "flex"
-            , Attr.style "flex-direction" "column"
-            , Attr.style "gap" "0.125rem"
-            ]
-            [ span
-                [ Attr.style "font-size" "0.875rem"
-                , Attr.style "font-weight" "600"
-                , Attr.style "color" "var(--color-text-on-dark)"
-                ]
-                [ text displayName ]
-            , span
-                [ Attr.style "font-size" "0.75rem"
-                , Attr.style "color"
-                    (if canAdd then
-                        "var(--color-text-subtle)"
-
-                     else
-                        "var(--color-brand-red)"
-                    )
-                ]
-                [ text (String.fromInt remaining ++ " / " ++ String.fromInt item.count ++ " available") ]
-            ]
-
-        -- "+ Add" Button
-        , button
-            [ onClick (AddPart item)
-            , Attr.disabled (not canAdd)
-            , Attr.style "padding" "0.375rem 0.625rem"
-            , Attr.style "font-size" "0.75rem"
-            , Attr.style "font-weight" "600"
-            , Attr.style "border" "none"
-            , Attr.style "border-radius" "0.375rem"
-            , Attr.style "background"
-                (if canAdd then
-                    "var(--color-brand-yellow)"
-
-                 else
-                    "rgba(255, 255, 255, 0.1)"
-                )
-            , Attr.style "color"
-                (if canAdd then
-                    "var(--color-brand)"
-
-                 else
-                    "var(--color-text-subtle)"
-                )
-            , Attr.style "cursor"
-                (if canAdd then
-                    "pointer"
-
-                 else
-                    "not-allowed"
-                )
-            , Attr.style "transition" "all 150ms ease"
-            ]
-            [ text "+ Add" ]
-        ]
+            else
+                Nothing
+        , attributes = [ keepFocusOnCanvas ]
+        }
 
 
 toolbarButton : Msg -> Bool -> String -> Html Msg
-toolbarButton msg enabled label =
+toolbarButton =
+    toolbarButtonWith []
+
+
+{-| A toolbar button with extra attributes, such as a longer `title` and
+`aria-label` than its visible label.
+-}
+toolbarButtonWith : List (Html.Attribute Msg) -> Msg -> Bool -> String -> Html Msg
+toolbarButtonWith extra msg enabled label =
     button
-        [ onClick msg
-        , Attr.disabled (not enabled)
-        , Attr.style "padding" "0.375rem 0.75rem"
-        , Attr.style "font-size" "0.875rem"
-        , Attr.style "font-weight" "500"
-        , Attr.style "border" "none"
-        , Attr.style "border-radius" "0.375rem"
-        , Attr.style "background"
-            (if enabled then
-                "rgba(255, 255, 255, 0.1)"
+        (extra
+            ++ [ onClick msg
+               , Attr.disabled (not enabled)
+               , Attr.style "padding" "0.375rem 0.75rem"
+               , Attr.style "font-size" "0.875rem"
+               , Attr.style "font-weight" "500"
+               , Attr.style "border" "none"
+               , Attr.style "border-radius" "0.375rem"
+               , Attr.style "background"
+                    (if enabled then
+                        "rgba(255, 255, 255, 0.1)"
 
-             else
-                "transparent"
-            )
-        , Attr.style "color"
-            (if enabled then
-                "var(--color-text-on-dark)"
+                     else
+                        "transparent"
+                    )
+               , Attr.style "color"
+                    (if enabled then
+                        "var(--color-text-on-dark)"
 
-             else
-                "rgba(255, 255, 255, 0.3)"
-            )
-        , Attr.style "cursor"
-            (if enabled then
-                "pointer"
+                     else
+                        "rgba(255, 255, 255, 0.3)"
+                    )
+               , Attr.style "cursor"
+                    (if enabled then
+                        "pointer"
 
-             else
-                "not-allowed"
-            )
-        , Attr.style "transition" "all 150ms ease"
-        ]
+                     else
+                        "not-allowed"
+                    )
+               , Attr.style "transition" "all 150ms ease"
+               ]
+        )
         [ text label ]
 
 

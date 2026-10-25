@@ -525,6 +525,9 @@ msgForAction action =
         Shortcuts.PresetTop ->
             ViewportMsg (Viewport.SetViewPreset TopView)
 
+        Shortcuts.PresetBottom ->
+            ViewportMsg (Viewport.SetViewPreset BottomView)
+
         Shortcuts.PresetIsometric ->
             ViewportMsg (Viewport.SetViewPreset IsometricView)
 

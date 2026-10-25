@@ -1,12 +1,7 @@
 import './main.css'
 import { initBricksRuntime } from '../packages/brick-frame-viewport/runtime/initBricksRuntime.js'
 import { Elm } from './src/Main.elm'
-import {
-  openThumbnailDb,
-  getCachedThumbnail,
-  storeCachedThumbnail,
-  renderIsometricThumbnail,
-} from './thumbnail-pipeline.js'
+import { initThumbnails } from '../packages/brick-frame-viewport/runtime/thumbnail-pipeline.js'
 
 // The studio is served below the viewer (`<site>/studio/`) and shares its LDraw
 // library, fonts and example models, which live at the site root.
@@ -175,50 +170,8 @@ ports.saveRecents?.subscribe((recents) => {
   writeStorage(RECENTS_KEY, recents)
 })
 
-// Thumbnail rendering pipeline & IndexedDB caching
-openThumbnailDb().then((db) => {
-  if (!ports.requestThumbnails || !ports.thumbnailLoaded) return
-
-  const queue = []
-  let processing = false
-
-  async function processQueue() {
-    if (processing || queue.length === 0) return
-    processing = true
-
-    while (queue.length > 0) {
-      const item = queue.shift()
-      const { file, color, rgb } = item
-      try {
-        let url = await getCachedThumbnail(db, file, color)
-        if (!url) {
-          url = await renderIsometricThumbnail(file, color, ldrawBase, rgb)
-          if (url) {
-            await storeCachedThumbnail(db, file, color, url)
-          }
-        }
-        if (url) {
-          ports.thumbnailLoaded.send({ file, color, url })
-        }
-      } catch (err) {
-        console.warn('Thumbnail generation failed for', file, err)
-      }
-      // Yield briefly between renders to preserve 60fps main thread responsiveness
-      await new Promise((r) => setTimeout(r, 8))
-    }
-
-    processing = false
-  }
-
-  ports.requestThumbnails.subscribe((items) => {
-    for (const item of items) {
-      if (!queue.some((q) => q.file === item.file && q.color === item.color)) {
-        queue.push(item)
-      }
-    }
-    processQueue()
-  })
-})
+// Thumbnail rendering pipeline & IndexedDB caching (palette cards)
+initThumbnails(ports, ldrawBase)
 
 // Browser shortcuts that clash with the studio (save, duplicate, select all, undo/redo).
 window.addEventListener('keydown', (event) => {

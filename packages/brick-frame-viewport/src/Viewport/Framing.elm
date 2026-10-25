@@ -34,6 +34,7 @@ type ViewPreset
     | LeftView
     | RightView
     | TopView
+    | BottomView
     | IsometricView
 
 
@@ -60,6 +61,9 @@ viewPresetAngles preset =
 
         TopView ->
             ( 0, pi / 2 - 0.01 )
+
+        BottomView ->
+            ( 0, -pi / 2 + 0.01 )
 
         IsometricView ->
             ( 0.75, 0.6 )
