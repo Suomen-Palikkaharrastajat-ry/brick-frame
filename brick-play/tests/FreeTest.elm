@@ -46,6 +46,8 @@ flagsFor hash =
     , ldrawFallbackBase = ""
     , initialHash = hash
     , supportsPointerEvents = True
+    , hintSeen = False
+    , coarsePointer = False
     }
 
 
@@ -346,11 +348,11 @@ glueTests =
                         press "l" glued
                 in
                 Expect.equal ( [ 0 ], [] ) ( gluedIds glued, gluedIds unglued )
-        , test "the action bar says Glued for a glued selection, and its move buttons are off" <|
+        , test "the ring says Glued for a glued selection, and its move buttons are off" <|
             \_ ->
                 let
                     model =
-                        addFree "3001.dat" 14 (open "") |> press "l"
+                        addFree "3001.dat" 14 (open "") |> press "l" |> (\m -> Tuple.first (update (OpenRing 0) m))
 
                     view_ =
                         Query.fromHtml (view model)
@@ -361,7 +363,7 @@ glueTests =
                     , \_ -> view_ |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Delete") ] |> Query.has [ Selector.disabled True ]
                     ]
                     ()
-        , test "a glued part does not turn with the action bar or the keys" <|
+        , test "a glued part does not turn with the ring or the keys" <|
             \_ ->
                 let
                     glued =
@@ -654,10 +656,10 @@ helpTests =
     describe "The shortcut list"
         [ test "free building lists L for Glue" <|
             \_ ->
-                List.member "L  (action bar: Glue)" (rowKeys (open ""))
+                List.member "L  (ring: Glue)" (rowKeys (open ""))
                     |> Expect.equal True
         , test "a puzzle does not list L" <|
             \_ ->
-                List.member "L  (action bar: Glue)" (rowKeys (open "#parts=3001.dat:14:2"))
+                List.member "L  (ring: Glue)" (rowKeys (open "#parts=3001.dat:14:2"))
                     |> Expect.equal False
         ]

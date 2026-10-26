@@ -45,7 +45,6 @@ suite =
         [ menuTests
         , snapshotTests
         , sharingAndToastTests
-        , fineTests
         , describe "Curated Catalog"
             [ test "curatedParts contains all required gears" <|
                 \_ ->
@@ -829,6 +828,8 @@ testFlags =
     , ldrawFallbackBase = ""
     , initialHash = ""
     , supportsPointerEvents = True
+    , hintSeen = False
+    , coarsePointer = False
     }
 
 
@@ -1460,58 +1461,6 @@ bannerTests =
             \_ ->
                 Query.fromHtml (accomplishmentBanner 2)
                     |> Query.has [ Selector.text "All 2 gears are rotating together!" ]
-        ]
-
-
-{-| The Fine toggle in the action bar: it shows with or without a selection,
-reads its state with `aria-pressed`, and survives selection changes.
--}
-fineTests : Test
-fineTests =
-    let
-        start =
-            Tuple.first (init testFlags)
-
-        fineButtons model =
-            Query.fromHtml (view model)
-                |> Query.findAll [ Selector.attribute (Attr.attribute "aria-label" "Fine moves") ]
-
-        fineButton model =
-            Query.fromHtml (view model)
-                |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Fine moves") ]
-    in
-    describe "Fine toggle"
-        [ test "is on the bar with no selection, off by default" <|
-            \_ ->
-                Expect.all
-                    [ \_ -> fineButtons start |> Query.count (Expect.equal 1)
-                    , \_ -> fineButton start |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "false") ]
-                    ]
-                    ()
-        , test "a press switches it on, and only the toggle shows without a selection" <|
-            \_ ->
-                let
-                    on =
-                        Tuple.first (update ToggleFine start)
-                in
-                Expect.all
-                    [ \_ -> fineButton on |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "true") ]
-                    , \_ -> Query.fromHtml (view on) |> Query.findAll [ Selector.attribute (Attr.attribute "aria-label" "Turn left") ] |> Query.count (Expect.equal 0)
-                    , \_ -> Expect.equal True (Core.fineMove on.studio)
-                    ]
-                    ()
-        , test "it persists when the selection is cleared, and a second press switches it off" <|
-            \_ ->
-                let
-                    cleared =
-                        Tuple.first (update ToggleFine start)
-                            |> (\m -> Tuple.first (update (StudioMsg Core.ClearSelection) m))
-                in
-                Expect.all
-                    [ \_ -> Expect.equal True (Core.fineMove cleared.studio)
-                    , \_ -> Expect.equal False (Core.fineMove (Tuple.first (update ToggleFine cleared)).studio)
-                    ]
-                    ()
         ]
 
 

@@ -256,6 +256,8 @@ flagsFor hash =
     , ldrawFallbackBase = ""
     , initialHash = hash
     , supportsPointerEvents = True
+    , hintSeen = False
+    , coarsePointer = False
     }
 
 

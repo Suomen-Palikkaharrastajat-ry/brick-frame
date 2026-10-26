@@ -4,6 +4,7 @@ port module Ports exposing
     , copyToClipboard
     , geometryFlattenFailed
     , geometryFlattened
+    , rememberHintSeen
     , requestGeometryFlatten
     , requestThumbnails
     , saveSnapshot
@@ -87,3 +88,9 @@ port snapshotReady : ({ dataUrl : String, filename : String } -> msg) -> Sub msg
 {-| Request file download of the approved snapshot.
 -}
 port saveSnapshot : { dataUrl : String, filename : String } -> Cmd msg
+
+
+{-| Remember in this browser that the first-selection hint has been shown, so it
+is not shown again. The JS side writes a flag to localStorage inside a try/catch.
+-}
+port rememberHintSeen : () -> Cmd msg

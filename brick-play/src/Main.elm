@@ -23,11 +23,15 @@ module Main exposing
 
 A free-building studio with kit inventory tracking and stud snapping. There is
 no axis gizmo: a drag on a part moves it relative to the view, a drag on empty
-space pans and a right-drag orbits, and while something is selected a floating
-action bar above the dock turns, tips, raises, lowers or deletes it (the same as
-the keyboard). The camera has its own control bottom-right, the shared camera
-globe (`UI.CameraGlobe`): drag it to orbit, tap it to fly there, and use its
-zoom slider and reset button. On a narrow portrait window (a phone) the bottom
+space pans and a right-drag orbits. A double-click (or double-tap) on a part
+opens its context ring (`Ring`), a cluster of round buttons beside the part that
+turns, tips, raises, lowers and deletes it, glues it (free building), and moves it
+with a W A S D Q E pad. The ring's move step (`Step`: Stud, ½ stud, or Bit) also
+sets the keyboard nudges and body drags. Tab and Shift+Tab select the next or
+previous part, and W A S D Q E move the selected part (the camera moves when
+nothing is selected). The camera has its own control bottom-right, the shared
+camera globe (`UI.CameraGlobe`): drag it to orbit, tap it to fly there, and use
+its zoom slider and reset button. On a narrow portrait window (a phone) the bottom
 area shows either the dock or the camera globe, switched by a toggle button, and
 the dock is shown first.
 
@@ -60,11 +64,15 @@ Escape closes the menu first. Share link copies a puzzle: for a free build, its
 glued parts stay on the board and everything else becomes the kit.
 
 Tidy up (`Studio.Health`) checks the build after each change: a studded part that
-sits off the stud grid, or parts that overlap, show a pill above the action bar
+sits off the stud grid, or parts that overlap, show a pill above the dock
 ("2 loose bricks · Tidy up"). A healthy build shows nothing. The pill opens a
 preview: the parts that move are outlined, a translucent ghost shows each new
 place, and Apply makes all the moves one undo step. While the preview is open
 editing is paused; Escape or Cancel leaves the build as it was.
+
+The first time a part is selected a small hint above the dock says how to open
+the ring. It goes after five seconds, or when the ring opens, and is remembered
+per browser (`hintSeen`, a flag the JS side keeps in localStorage).
 
 -}
 
@@ -86,16 +94,21 @@ import Http
 import LDraw.Colors as Colors
 import LDraw.Document as Document
 import Link
+import Math.Matrix4 as Mat4
+import Math.Vector3 as Vec3 exposing (Vec3)
 import Ports
 import Process
 import Render.Camera as Camera
 import Render.Style as Style
+import Ring
 import Set
 import Shortcuts as PlayShortcuts
 import Simulation
+import Step
 import Studio.Colours as Colours
 import Studio.Core as Core
 import Studio.GearFeedback as GearFeedback
+import Studio.Gizmo as Gizmo
 import Studio.Health as Health
 import Studio.PartIndex as PartIndex
 import Studio.PartSearch as PartSearch
@@ -106,6 +119,7 @@ import Technic.Animation as Animation exposing (Animated)
 import Technic.Catalog as Catalog
 import Technic.Machine as Machine exposing (MachineState)
 import Technic.Placement as Placement
+import Time
 import UI.Button as Button
 import UI.CameraGlobe as CameraGlobe
 import UI.Focus as Focus
@@ -126,6 +140,8 @@ type alias Flags =
     , ldrawFallbackBase : String
     , initialHash : String
     , supportsPointerEvents : Bool
+    , hintSeen : Bool
+    , coarsePointer : Bool
     }
 
 
@@ -171,6 +187,13 @@ type alias Model =
     , snapshotModal : Maybe SnapshotModal.Model
     , tidy : List Health.Fix
     , tidyOpen : Bool
+    , stepSize : Step.StepSize
+    , ringPart : Maybe Int
+    , lastTap : Maybe { x : Float, y : Float, millis : Int }
+    , hintSeen : Bool
+    , coarsePointer : Bool
+    , hint : Maybe Int
+    , hintCounter : Int
     }
 
 
@@ -236,7 +259,13 @@ type Msg
     | TurnSelection TurnDirection
     | RaiseSelection
     | LowerSelection
-    | ToggleFine
+    | MoveSelection StudioShortcuts.NudgeDirection
+    | SetStepSize Step.StepSize
+    | OpenRing Int
+    | CloseRing
+    | SelectNeighbour Bool
+    | TapTimed Float Float Int
+    | HideHint Int
     | Clear
     | FitView
     | TogglePlay
@@ -321,6 +350,7 @@ init flags =
                         >> Core.setDragMode (Core.DragPartsOrPan Core.OneFingerPans)
                         -- Glue locks parts in a puzzle; free building may glue and unglue.
                         >> Core.setGlueEditable free
+                        >> Step.apply Step.Stud
                     )
 
         initialModel =
@@ -356,6 +386,13 @@ init flags =
             , snapshotModal = Nothing
             , tidy = []
             , tidyOpen = False
+            , stepSize = Step.Stud
+            , ringPart = Nothing
+            , lastTap = Nothing
+            , hintSeen = flags.hintSeen
+            , coarsePointer = flags.coarsePointer
+            , hint = Nothing
+            , hintCounter = 0
             }
 
         fetchViewportSize =
@@ -516,24 +553,6 @@ partNumber file =
     String.replace ".dat" "" file
 
 
-{-| The name of the selection for the action bar: the part's name when one part
-is selected, else how many parts are.
--}
-selectionName : Model -> String
-selectionName model =
-    case Set.toList model.studio.selection of
-        [ id ] ->
-            case List.filter (\p -> p.id == id) (Core.getPlacements model.studio) of
-                placed :: _ ->
-                    placedName model placed.part placed.color
-
-                [] ->
-                    ""
-
-        ids ->
-            String.fromInt (List.length ids) ++ " parts"
-
-
 {-| A placed part's name: its Technic catalogue name when it has one, else the
 title the pipeline sent, else its part number.
 -}
@@ -627,8 +646,25 @@ update msg model =
     else if closesSnapshot msg model then
         ( { model | snapshotModal = Nothing }, cancelSnapshotCmd model.snapshotModal )
 
+    else if closesRing msg model then
+        ( { model | ringPart = Nothing }, Cmd.none )
+
     else
         updateApp msg model
+
+
+{-| Escape closes the context ring before it deselects anything, so with the ring
+open Escape only closes it. Not while the help list is open: that dialog takes
+Escape first.
+-}
+closesRing : Msg -> Model -> Bool
+closesRing msg model =
+    case ( model.ringPart, msg ) of
+        ( Just _, StudioMsg (Core.ViewportMsg (Viewport.KeyPressed keyEvent)) ) ->
+            not model.helpOpen && ViewportShortcuts.closesDialog keyEvent
+
+        _ ->
+            False
 
 
 {-| While the Tidy up preview is open editing is paused. Escape cancels, Apply
@@ -834,8 +870,64 @@ updateApp msg model =
 
                 Nothing ->
                     Cmd.none
+
+        ( hinted, hintCmd ) =
+            withHint settled
     in
-    ( settled, Cmd.batch [ cmd, dockCmd, hashCmd ] )
+    ( hinted, Cmd.batch [ cmd, dockCmd, hashCmd, hintCmd ] )
+
+
+{-| The first-selection hint: the first time a part is selected, and the hint
+has not been seen in this browser, it shows above the dock for five seconds and
+is remembered as seen. Any selection counts, however it was made.
+-}
+withHint : Model -> ( Model, Cmd Msg )
+withHint model =
+    if model.hintSeen || Set.isEmpty model.studio.selection then
+        ( model, Cmd.none )
+
+    else
+        let
+            id =
+                model.hintCounter + 1
+        in
+        ( { model | hintSeen = True, hint = Just id, hintCounter = id }
+        , Cmd.batch
+            [ Ports.rememberHintSeen ()
+            , Process.sleep 5000 |> Task.perform (\_ -> HideHint id)
+            ]
+        )
+
+
+{-| Whether a part is being dragged across the build (not just pressed): the
+drag has moved since it started.
+-}
+partDragged : Model -> Bool
+partDragged model =
+    case model.studio.drag of
+        Just drag ->
+            drag.start /= drag.lastPoint
+
+        Nothing ->
+            False
+
+
+{-| The ring closes when its part stops being the whole selection (a click
+elsewhere, a different part, Tab, a deletion), when a part is dragged, and when
+the Tidy up preview or the menu opens.
+-}
+ringClosed : Model -> Model
+ringClosed model =
+    case model.ringPart of
+        Just id ->
+            if model.tidyOpen || model.menuOpen || partDragged model || Set.toList model.studio.selection /= [ id ] then
+                { model | ringPart = Nothing }
+
+            else
+                model
+
+        Nothing ->
+            model
 
 
 {-| Brings the derived state in line with what a message just did. A changed
@@ -875,7 +967,7 @@ settle before after =
             else
                 rested
     in
-    withTechnicSettings checked
+    withTechnicSettings (ringClosed checked)
 
 
 {-| The Tidy up plan for the studio's document: what `Studio.Health` would move.
@@ -984,11 +1076,11 @@ step msg model =
                 nextModel =
                     { model | studio = nextStudio }
             in
-            List.foldl applyShortcut
+            List.foldl applyEvent
                 ( nextModel
                 , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
                 )
-                (List.filterMap extractKey events)
+                events
 
         TogglePlay ->
             -- Outside Technic mode there is no machine, so Space is unbound.
@@ -1072,8 +1164,32 @@ step msg model =
                 -- A puzzle keeps its glued parts.
                 runCore Core.clearUnglued model
 
-        ToggleFine ->
-            ( { model | studio = Core.setFineMove (not (Core.fineMove model.studio)) model.studio }
+        MoveSelection direction ->
+            step (StudioMsg (Core.NudgeSelection (StudioShortcuts.Nudge { direction = direction, fine = False }))) model
+
+        SetStepSize size ->
+            ( { model | stepSize = size, studio = Step.apply size model.studio }
+            , Cmd.none
+            )
+
+        OpenRing id ->
+            openRing id model
+
+        CloseRing ->
+            ( { model | ringPart = Nothing }, Cmd.none )
+
+        SelectNeighbour backwards ->
+            runCore (Core.selectNeighbour { backwards = backwards }) model
+
+        TapTimed x y millis ->
+            tapTimed x y millis model
+
+        HideHint id ->
+            ( if model.hint == Just id then
+                { model | hint = Nothing }
+
+              else
+                model
             , Cmd.none
             )
 
@@ -1323,6 +1439,120 @@ snapshotTriangles model =
         []
 
 
+{-| Open the context ring on the part under a canvas point (a double-click). Empty
+canvas opens nothing.
+-}
+openRingAt : Float -> Float -> Model -> ( Model, Cmd Msg )
+openRingAt x y model =
+    case Viewport.pickSource x y model.studio.viewport of
+        Just id ->
+            openRing id model
+
+        Nothing ->
+            ( model, Cmd.none )
+
+
+{-| Open the ring on a part: the part becomes the explicit selection, and the
+hint (if it is still due) is put away and remembered as seen.
+-}
+openRing : Int -> Model -> ( Model, Cmd Msg )
+openRing id model =
+    if List.any (\p -> p.id == id) (Core.getPlacements model.studio) then
+        let
+            ( studio, studioCmd, events ) =
+                Core.update (Core.SelectOnly id) model.studio
+        in
+        ( { model
+            | studio = studio
+            , ringPart = Just id
+            , lastTap = Nothing
+            , hint = Nothing
+            , hintSeen = True
+          }
+        , Cmd.batch
+            [ Cmd.map StudioMsg studioCmd
+            , handleCoreEvents events
+            , if model.hintSeen then
+                Cmd.none
+
+              else
+                Ports.rememberHintSeen ()
+            ]
+        )
+
+    else
+        ( model, Cmd.none )
+
+
+{-| Two taps close in time and place are a double-tap: the second opens the ring
+on the part it lands on. Taps arrive with their time in milliseconds (`TapTimed`).
+-}
+tapTimed : Float -> Float -> Int -> Model -> ( Model, Cmd Msg )
+tapTimed x y millis model =
+    let
+        isDouble previous =
+            millis
+                - previous.millis
+                <= doubleTapMillis
+                && ((x - previous.x) ^ 2 + (y - previous.y) ^ 2 <= doubleTapPixels ^ 2)
+
+        here =
+            Just { x = x, y = y, millis = millis }
+    in
+    case model.lastTap of
+        Just previous ->
+            if isDouble previous then
+                openRingAt x y { model | lastTap = Nothing }
+
+            else
+                ( { model | lastTap = here }, Cmd.none )
+
+        Nothing ->
+            ( { model | lastTap = here }, Cmd.none )
+
+
+{-| The longest gap, in milliseconds, between the taps of a double-tap.
+-}
+doubleTapMillis : Int
+doubleTapMillis =
+    350
+
+
+{-| How far, in pixels, the second tap of a double-tap may land from the first.
+-}
+doubleTapPixels : Float
+doubleTapPixels =
+    30
+
+
+{-| Where the ring anchors: the screen point of the part's centre, or `Nothing`
+while the part is off screen or behind the eye.
+-}
+partScreenPoint : Model -> Int -> Maybe ( Float, Float )
+partScreenPoint model id =
+    case List.filter (\p -> p.id == id) (Core.getPlacements model.studio) of
+        placed :: _ ->
+            Ring.screenPoint
+                model.studio.viewport.camera
+                model.studio.viewport.width
+                model.studio.viewport.height
+                (partCentre model placed)
+
+        [] ->
+            Nothing
+
+
+{-| A placed part's centre in render space: its bounding sphere's centre once the
+scene has it, else its origin.
+-}
+partCentre : Model -> Document.Placement -> Vec3
+partCentre model placed =
+    model.studio.viewport.instancedScene
+        |> Maybe.andThen (\scene -> List.filter (\p -> p.source == placed.id) scene.placements |> List.head)
+        |> Maybe.map .center
+        |> Maybe.withDefault (Gizmo.toRender (Mat4.transform placed.matrix (Vec3.vec3 0 0 0)))
+
+
 syncKeyPause : Model -> Model
 syncKeyPause model =
     { model | studio = Core.setHelpVisible (model.helpOpen || model.menuOpen || model.tidyOpen) model.studio }
@@ -1344,14 +1574,24 @@ runCore edit model =
     )
 
 
-extractKey : Core.Event -> Maybe ViewportShortcuts.KeyEvent
-extractKey event =
+{-| Act on one studio event: a key the studio did not take becomes a shortcut,
+and a double-click opens the context ring on the part under it.
+-}
+applyEvent : Core.Event -> ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
+applyEvent event ( model, cmd ) =
     case event of
         Core.KeyAccepted keyEvent ->
-            Just keyEvent
+            applyShortcut keyEvent ( model, cmd )
+
+        Core.DoubleClickedAt x y ->
+            let
+                ( next, openCmd ) =
+                    openRingAt x y model
+            in
+            ( next, Cmd.batch [ cmd, openCmd ] )
 
         _ ->
-            Nothing
+            ( model, cmd )
 
 
 {-| Run the shortcut a key press stands for, after the studio has had its turn.
@@ -1371,6 +1611,20 @@ applyShortcut keyEvent ( model, cmd ) =
                 let
                     ( next, actionCmd ) =
                         update ToggleGlue model
+                in
+                ( next, Cmd.batch [ cmd, actionCmd ] )
+
+            Just PlayShortcuts.SelectNext ->
+                let
+                    ( next, actionCmd ) =
+                        update (SelectNeighbour False) model
+                in
+                ( next, Cmd.batch [ cmd, actionCmd ] )
+
+            Just PlayShortcuts.SelectPrevious ->
+                let
+                    ( next, actionCmd ) =
+                        update (SelectNeighbour True) model
                 in
                 ( next, Cmd.batch [ cmd, actionCmd ] )
 
@@ -1484,6 +1738,9 @@ handleCoreEvents events =
                 Core.FlattenRequested payload ->
                     Ports.requestGeometryFlatten payload
 
+                Core.TappedAt x y ->
+                    Task.perform (\now -> TapTimed x y (Time.posixToMillis now)) Time.now
+
                 _ ->
                     Cmd.none
     in
@@ -1574,6 +1831,9 @@ view model =
         -- 3D WebGL Canvas
         , Html.map StudioMsg (viewCanvas model)
 
+        -- The context ring beside the selected part, over the canvas
+        , ringView model
+
         -- Camera control: on a wide window the camera globe sits bottom-right,
         -- beside the dock. On a narrow window it shares the bottom row instead.
         , if isNarrow model then
@@ -1604,8 +1864,8 @@ view model =
           else
             text ""
 
-        -- Bottom: the gear pill (Technic mode) and the selection action bar float
-        -- above the dock
+        -- Bottom: the gear pill (Technic mode), the tidy pill and the first-select
+        -- hint float above the dock
         , bottomArea model
         , case model.toast of
             Just t ->
@@ -1887,9 +2147,9 @@ isNarrow model =
     model.windowWidth < narrowWidth
 
 
-{-| The bottom area: the gear pill (Technic mode only), the action bar for the
-selection, then the dock. On a narrow window the dock row also carries the camera
-toggle, and shows the camera globe instead of the dock while the toggle is on.
+{-| The bottom area: the gear pill (Technic mode only), the Tidy up pill, the
+first-select hint, then the dock. On a narrow window the dock row also carries the
+camera toggle, and shows the camera globe instead of the dock while the toggle is on.
 -}
 bottomArea : Model -> Html Msg
 bottomArea model =
@@ -1911,7 +2171,7 @@ bottomArea model =
           else
             text ""
         , tidyRow model
-        , selectionBar model
+        , hintRow model
         , touchLabel model
         , if isNarrow model then
             narrowRow model
@@ -2284,138 +2544,67 @@ viewCanvas model =
         shown
 
 
-{-| Buttons for the selected parts, the touch- and mouse-friendly stand-in for an
-axis gizmo. Each does what its keyboard shortcut does. The name of the selection
-is shown on touch screens, where tooltips never show. The bar wraps onto two rows
-rather than overflowing a phone. The Fine toggle is always last, so it can be set
-before anything is selected; without a selection the bar shows only that toggle.
+{-| The context ring for the selected part (`Ring`). It is shown only while a part
+is selected by a double-click or double-tap and its centre is on screen.
 -}
-selectionBar : Model -> Html Msg
-selectionBar model =
-    let
-        selected =
-            Core.hasSelection model.studio
+ringView : Model -> Html Msg
+ringView model =
+    case model.ringPart of
+        Just id ->
+            Ring.view
+                { anchor = partScreenPoint model id
+                , canvas = ( toFloat model.studio.viewport.width, toFloat model.studio.viewport.height )
+                , free = model.free
+                , glued = Core.selectionGlued model.studio
+                , movable = Core.selectionMovable model.studio
+                , step = model.stepSize
+                , onTurn = TurnSelection
+                , onRaise = RaiseSelection
+                , onLower = LowerSelection
+                , onDelete = Delete
+                , onGlue = ToggleGlue
+                , onMove = MoveSelection
+                , onStep = SetStepSize
+                , noOp = NoOp
+                }
 
-        -- A selection of glued parts only is locked: its move buttons are off.
-        movable =
-            Core.selectionMovable model.studio
+        Nothing ->
+            text ""
 
-        glued =
-            Core.selectionGlued model.studio
 
-        -- The label says "Glued" when every selected part is, as the Glue button does.
-        label =
-            selectionName model
-                ++ (if glued && not movable then
-                        " (glued)"
-
-                    else
-                        ""
-                   )
-
-        actions =
-            if selected then
-                [ span
-                    [ Attr.class "touch-only"
-                    , Attr.style "max-width" "9rem"
-                    , Attr.style "overflow" "hidden"
-                    , Attr.style "text-overflow" "ellipsis"
-                    , Attr.style "white-space" "nowrap"
-                    , Attr.style "padding" "0 0.5rem"
-                    , Attr.style "color" "var(--color-brand-yellow)"
-                    , Attr.style "font-size" "0.8125rem"
-                    , Attr.style "font-weight" "700"
-                    ]
-                    [ Keyed.node "span" [] [ ( label, span [] [ text label ] ) ] ]
-                , actionButton movable (TurnSelection TurnLeft) "rotate-ccw" "Turn left" "←"
-                , actionButton movable (TurnSelection TurnRight) "rotate-cw" "Turn right" "→"
-                , actionButton movable (TurnSelection TipForward) "corner-right-down" "Tip" "↑"
-                , actionButton movable RaiseSelection "arrow-up" "Raise" "E"
-                , actionButton movable LowerSelection "arrow-down" "Lower" "Q"
-                , actionButton movable Delete "trash-2" "Delete" "Delete"
+{-| The first-selection hint, a small line above the dock that does not take
+pointer events. Its words depend on whether the device is a touch screen.
+-}
+hintRow : Model -> Html Msg
+hintRow model =
+    case model.hint of
+        Just _ ->
+            div
+                [ Attr.attribute "role" "status"
+                , Attr.attribute "aria-live" "polite"
+                , Attr.attribute "data-play-hint" ""
+                , Attr.style "padding" "0.125rem 0.75rem"
+                , Attr.style "border-radius" "9999px"
+                , Attr.style "background" "rgba(5, 19, 29, 0.7)"
+                , Attr.style "color" "var(--color-text-on-dark)"
+                , Attr.style "font-size" "0.75rem"
+                , Attr.style "font-weight" "500"
+                , Attr.style "white-space" "nowrap"
+                , Attr.style "pointer-events" "none"
                 ]
-                    ++ (if model.free then
-                            [ glueButton glued ]
+                [ text (hintText model.coarsePointer) ]
 
-                        else
-                            []
-                       )
-
-            else
-                []
-    in
-    div
-        [ Attr.attribute "role" "toolbar"
-        , Attr.attribute "aria-label" "Selected parts"
-        , Attr.style "display" "flex"
-        , Attr.style "flex-wrap" "wrap"
-        , Attr.style "justify-content" "center"
-        , Attr.style "align-items" "center"
-        , Attr.style "gap" "0.25rem"
-        , Attr.style "max-width" "100%"
-        , Attr.style "box-sizing" "border-box"
-        , Attr.style "padding" "0.375rem"
-        , Attr.style "background" "rgba(5, 19, 29, 0.85)"
-        , Attr.style "backdrop-filter" "blur(8px)"
-        , Attr.style "border-radius" "1.5rem"
-        , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
-        , Attr.style "box-shadow" "0 20px 25px -5px rgba(0, 0, 0, 0.5)"
-        , Attr.style "pointer-events" "auto"
-        , keepFocusOnCanvas
-        ]
-        (actions ++ [ fineButton (Core.fineMove model.studio) ])
+        Nothing ->
+            text ""
 
 
-{-| The Fine toggle: 1 LDU moves for body drags and nudges, the touch stand-in
-for holding Shift. `aria-pressed` shows whether it is on; it persists across
-selection changes.
--}
-fineButton : Bool -> Html Msg
-fineButton on =
-    button
-        [ onClick ToggleFine
-        , Attr.attribute "aria-pressed" (boolText on)
-        , Attr.attribute "aria-label" "Fine moves"
-        , Attr.title "Fine moves: 1 LDU steps (Shift)"
-        , Attr.style "display" "flex"
-        , Attr.style "flex-direction" "column"
-        , Attr.style "align-items" "center"
-        , Attr.style "justify-content" "center"
-        , Attr.style "gap" "0.125rem"
-        , Attr.style "min-width" "3rem"
-        , Attr.style "min-height" "2.75rem"
-        , Attr.style "padding" "0.25rem 0.375rem"
-        , Attr.style "border" "none"
-        , Attr.style "border-radius" "9999px"
-        , Attr.style "background" (fineBackground on)
-        , Attr.style "color" (fineColour on)
-        , Attr.style "font-size" "0.6875rem"
-        , Attr.style "font-weight" "600"
-        , Attr.style "cursor" "pointer"
-        , Attr.style "transition" "all 150ms ease"
-        , Attr.class "touch-target"
-        ]
-        [ Icon.featherSized 18 "crosshair"
-        , span [ Attr.attribute "aria-hidden" "true" ] [ text "Fine" ]
-        ]
-
-
-fineBackground : Bool -> String
-fineBackground on =
-    if on then
-        "var(--color-brand-yellow)"
+hintText : Bool -> String
+hintText coarse =
+    if coarse then
+        "Double-tap a brick for moves"
 
     else
-        "rgba(255, 255, 255, 0.1)"
-
-
-fineColour : Bool -> String
-fineColour on =
-    if on then
-        "var(--color-brand)"
-
-    else
-        "var(--color-text-on-dark)"
+        "Double-click a brick for moves"
 
 
 boolText : Bool -> String
@@ -2425,111 +2614,6 @@ boolText on =
 
     else
         "false"
-
-
-{-| A selection button. When `enabled` is off it is dimmed and does nothing.
--}
-actionButton : Bool -> Msg -> String -> String -> String -> Html Msg
-actionButton enabled msg icon label shortcut =
-    button
-        ((if enabled then
-            [ onClick msg ]
-
-          else
-            [ Attr.disabled True ]
-         )
-            ++ [ Attr.attribute "aria-label" label
-               , Attr.title (label ++ " (" ++ shortcut ++ ")")
-               , Attr.style "display" "flex"
-               , Attr.style "flex-direction" "column"
-               , Attr.style "align-items" "center"
-               , Attr.style "justify-content" "center"
-               , Attr.style "gap" "0.125rem"
-               , Attr.style "min-width" "3rem"
-               , Attr.style "min-height" "2.75rem"
-               , Attr.style "padding" "0.25rem 0.375rem"
-               , Attr.style "border" "none"
-               , Attr.style "border-radius" "9999px"
-               , Attr.style "background" "rgba(255, 255, 255, 0.1)"
-               , Attr.style "color" "var(--color-text-on-dark)"
-               , Attr.style "font-size" "0.6875rem"
-               , Attr.style "font-weight" "600"
-               , Attr.style "opacity" (boolOpacity enabled)
-               , Attr.style "cursor" (boolCursor enabled)
-               , Attr.style "transition" "all 150ms ease"
-               , Attr.class "touch-target"
-               ]
-        )
-        [ Icon.featherSized 18 icon
-        , span [ Attr.attribute "aria-hidden" "true" ] [ text label ]
-        ]
-
-
-boolOpacity : Bool -> String
-boolOpacity enabled =
-    if enabled then
-        "1"
-
-    else
-        "0.4"
-
-
-boolCursor : Bool -> String
-boolCursor enabled =
-    if enabled then
-        "pointer"
-
-    else
-        "not-allowed"
-
-
-{-| The Glue toggle of the action bar (free building): `aria-pressed` is on while
-the selection holds glued parts, and a press glues the unglued ones or unglues the
-glued ones. Yellow while on, like the Fine toggle.
--}
-glueButton : Bool -> Html Msg
-glueButton glued =
-    button
-        [ onClick ToggleGlue
-        , Attr.attribute "aria-pressed" (boolText glued)
-        , Attr.attribute "aria-label" (glueLabel glued)
-        , Attr.title "Glue the selection to the board, locked (L)"
-        , Attr.style "display" "flex"
-        , Attr.style "flex-direction" "column"
-        , Attr.style "align-items" "center"
-        , Attr.style "justify-content" "center"
-        , Attr.style "gap" "0.125rem"
-        , Attr.style "min-width" "3rem"
-        , Attr.style "min-height" "2.75rem"
-        , Attr.style "padding" "0.25rem 0.375rem"
-        , Attr.style "border" "none"
-        , Attr.style "border-radius" "9999px"
-        , Attr.style "background" (fineBackground glued)
-        , Attr.style "color" (fineColour glued)
-        , Attr.style "font-size" "0.6875rem"
-        , Attr.style "font-weight" "600"
-        , Attr.style "cursor" "pointer"
-        , Attr.style "transition" "all 150ms ease"
-        , Attr.class "touch-target"
-        ]
-        [ Icon.featherSized 18
-            (if glued then
-                "lock"
-
-             else
-                "unlock"
-            )
-        , span [ Attr.attribute "aria-hidden" "true" ] [ text (glueLabel glued) ]
-        ]
-
-
-glueLabel : Bool -> String
-glueLabel glued =
-    if glued then
-        "Glued"
-
-    else
-        "Glue"
 
 
 {-| The dock: the free catalog in free building, else the counted kit.
@@ -2905,23 +2989,24 @@ helpRows : Model -> List ( String, List ( String, String ) )
 helpRows model =
     [ ( "Build"
       , [ ( "Menu, top right", "Share link, undo, redo, delete, clear, and this list" )
-        , ( "Drag a part", "Move it as seen from the camera (snaps to studs)" )
-        , ( "Fine (action bar) or Shift", "1 LDU moves for drags and W A S D Q E nudges" )
-        , ( "Wheel while dragging", "Raise / lower (Shift: coarser, Alt: finer)" )
-        , ( "Right click mid-drag", "Cancel the drag" )
-        , ( "Action bar (above the dock)", "Turn left / right, tip, raise, lower or remove the selected part; Fine toggles 1 LDU moves" )
-        , ( "W A S D  Q E", "Move the selected part (Shift: fine steps)" )
+        , ( "Drag a part", "Move it as seen from the camera (snaps to the move step)" )
+        , ( "Double-click a part, or double-tap", "Open its ring: turn, tip, raise, lower, delete, glue, and the move pad" )
+        , ( "Ring: Stud, ½ stud, Bit", "The move step: Stud 20 LDU sideways and 24 up or down; ½ stud 10 and 8; Bit 1 LDU" )
+        , ( "Shift (held)", "A temporary Bit: 1 LDU for keys and drags" )
+        , ( "W A S D  Q E, with a part selected", "Move it: W away from the camera, S toward it, A and D left and right, Q down, E up" )
+        , ( "W A S D  Q E, nothing selected", "Move the camera, as in the Camera section" )
+        , ( "Tab  /  Shift + Tab", "Select the next or previous brick: bottom to top, then back to front, then left to right" )
         , ( "← → ↑ ↓", "Turn the selected part (Shift: 45°)" )
         , ( "Delete", "Remove the selected part" )
         , ( "Ctrl + Z", "Undo" )
         , ( "Ctrl + Shift + Z  Ctrl + Y", "Redo" )
         , ( "Ctrl + A", "Select all" )
         , ( "Ctrl + click  Shift + click", "Add to or remove from the selection" )
-        , ( "Tidy up (pill above the action bar)", "Shown when parts sit off the studs or overlap. Tidy up previews the moves as ghosts; Apply makes them one undo step, Cancel or Esc changes nothing" )
-        , ( "Esc", "Cancel a drag, or deselect" )
+        , ( "Tidy up (pill above the dock)", "Shown when parts sit off the studs or overlap. Tidy up previews the moves as ghosts; Apply makes them one undo step, Cancel or Esc changes nothing" )
+        , ( "Esc", "Close the ring, then cancel a drag, or deselect" )
         ]
             ++ (if model.free then
-                    [ ( "L  (action bar: Glue)", "Glue the selected parts to the board, locked, or unglue them" ) ]
+                    [ ( "L  (ring: Glue)", "Glue the selected parts to the board, locked, or unglue them" ) ]
 
                 else
                     []

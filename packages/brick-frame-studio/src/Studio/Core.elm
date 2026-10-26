@@ -31,6 +31,7 @@ module Studio.Core exposing
     , isGlued
     , lowerSelected
     , partBox
+    , partOrder
     , previewScene
     , raiseSelected
     , redo
@@ -38,6 +39,7 @@ module Studio.Core exposing
     , resetDocument
     , rotateSelection
     , selectAll
+    , selectNeighbour
     , selectionCount
     , selectionGlued
     , selectionMovable
@@ -51,6 +53,7 @@ module Studio.Core exposing
     , setGlued
     , setGridStep
     , setHelpVisible
+    , setNudgeSteps
     , setPreview
     , setRenderQuality
     , setRotateStep
@@ -261,6 +264,7 @@ type alias Model =
     , altHeld : Bool
     , shiftHeld : Bool
     , fineMove : Bool
+    , nudgeSteps : Maybe { horizontal : Float, vertical : Float }
     , inFlightRotationStep : Int
     , snapRotationStep : Int
     , activeColour : Int
@@ -312,6 +316,11 @@ type Event
     | DocumentChanged Document
     | SelectionChanged (Set Int)
     | KeyAccepted ViewportShortcuts.KeyEvent
+      -- A one-finger tap on the canvas, in canvas pixels. The host times taps
+      -- itself to tell a double-tap from two taps.
+    | TappedAt Float Float
+      -- A double-click on the canvas, in canvas pixels.
+    | DoubleClickedAt Float Float
 
 
 {-| How close (in pixels) a press must land to a gizmo handle to grab it. A
@@ -368,6 +377,7 @@ init config =
             , altHeld = False
             , shiftHeld = False
             , fineMove = False
+            , nudgeSteps = Nothing
             , inFlightRotationStep = 0
             , snapRotationStep = 0
             , activeColour = 14
@@ -447,6 +457,102 @@ clearSelection model =
     { model | selection = Set.empty }
 
 
+{-| The placements in the order Tab walks them: bottom to top (by origin height),
+then towards the back (Z, ascending), then left to right (X, ascending), then by
+id. The order depends only on the placements' origins, so it is the same every
+time for the same build. Glued parts are included.
+-}
+partOrder : Model -> List Int
+partOrder model =
+    Document.placements model.document
+        |> List.map (\p -> ( p.id, Transform.position p.matrix ))
+        |> List.sortWith placementOrder
+        |> List.map Tuple.first
+
+
+{-| The `partOrder` comparison of two placements' ids and origins (LDraw: Y down,
+so a larger Y is lower).
+-}
+placementOrder : ( Int, Vec3 ) -> ( Int, Vec3 ) -> Order
+placementOrder ( idA, a ) ( idB, b ) =
+    [ compare (Vec3.getY b) (Vec3.getY a)
+    , compare (Vec3.getZ a) (Vec3.getZ b)
+    , compare (Vec3.getX a) (Vec3.getX b)
+    , compare idA idB
+    ]
+        |> List.foldl
+            (\next acc ->
+                if acc == EQ then
+                    next
+
+                else
+                    acc
+            )
+            EQ
+
+
+{-| Tab (`backwards` false) or Shift+Tab selects the next or previous part in
+`partOrder`, wrapping round. The anchor is the first selected part in that order;
+with nothing selected Tab takes the first part and Shift+Tab the last.
+
+This is an explicit selection, so the view glides onto the part as a click does
+(`pivotOnSelection`). It does not open the context ring; a host does that. Does
+nothing during a drag or in an empty build.
+
+-}
+selectNeighbour : { backwards : Bool } -> Model -> ( Model, Cmd Msg, List Event )
+selectNeighbour { backwards } model =
+    let
+        order =
+            partOrder model
+
+        count =
+            List.length order
+
+        anchor =
+            order
+                |> List.indexedMap Tuple.pair
+                |> List.filter (\( _, id ) -> Set.member id model.selection)
+                |> List.head
+                |> Maybe.map Tuple.first
+
+        nextIndex =
+            case anchor of
+                Just index ->
+                    modBy count
+                        (if backwards then
+                            index - 1
+
+                         else
+                            index + 1
+                        )
+
+                Nothing ->
+                    if backwards then
+                        count - 1
+
+                    else
+                        0
+    in
+    case List.drop nextIndex order |> List.head of
+        Just id ->
+            if isDragging model then
+                ( model, Cmd.none, [] )
+
+            else
+                let
+                    selection =
+                        Set.singleton id
+                in
+                ( pivotOnSelection { model | selection = selection }
+                , Cmd.none
+                , [ SelectionChanged selection ]
+                )
+
+        Nothing ->
+            ( model, Cmd.none, [] )
+
+
 {-| Change the active tool.
 -}
 setTool : Tool -> Model -> Model
@@ -509,6 +615,24 @@ setFineMove on model =
 fineMove : Model -> Bool
 fineMove model =
     model.fineMove
+
+
+{-| The move steps of keyboard nudges and host moves: `horizontal` LDU sideways
+(along the ground, towards the camera's left or right or away or towards it) and
+`vertical` LDU up or down. Also sets the body-drag grid to `horizontal`, so a
+drag and a nudge agree; a half-stud step therefore gives a 10 LDU drag grid.
+
+Fine moves (`setFineMove`, or Shift held on a key) still take 1 LDU whatever the
+steps are. Without `setNudgeSteps` the nudges follow the grid: `gridStep` sideways,
+and 8 LDU up or down (or the grid when that is finer).
+
+-}
+setNudgeSteps : { horizontal : Float, vertical : Float } -> Model -> Model
+setNudgeSteps steps model =
+    { model
+        | nudgeSteps = Just steps
+        , gridStep = max 1 (round steps.horizontal)
+    }
 
 
 {-| Tell the studio a host dialog (the shortcut list) is open: editing keys pause,
@@ -1896,19 +2020,24 @@ nudgeDelta model (StudioShortcuts.Nudge nudge) =
         azimuth =
             model.viewport.camera.azimuth
 
+        steps =
+            Maybe.withDefault
+                { horizontal = toFloat model.gridStep, vertical = min 8 (toFloat model.gridStep) }
+                model.nudgeSteps
+
         horizontal =
             if nudge.fine || model.fineMove then
                 1
 
             else
-                toFloat model.gridStep
+                steps.horizontal
 
         vertical =
             if nudge.fine || model.fineMove then
                 1
 
             else
-                min 8 (toFloat model.gridStep)
+                steps.vertical
 
         ( rightX, rightZ ) =
             ( cos azimuth, -(sin azimuth) )
@@ -1992,8 +2121,8 @@ handleViewportEvent event ( model, cmds, outEvents ) =
             , outEvents ++ [ SelectionChanged newSel ]
             )
 
-        Viewport.DoubleClicked _ _ ->
-            ( model, cmds, outEvents )
+        Viewport.DoubleClicked x y ->
+            ( model, cmds, outEvents ++ [ DoubleClickedAt x y ] )
 
         Viewport.DragCancelled ->
             -- A right press during a drag puts the parts back, like Escape.
@@ -2019,7 +2148,7 @@ handleViewportEvent event ( model, cmds, outEvents ) =
             in
             ( pivotOnPicked (Viewport.pickSource x y model.viewport) { model | selection = newSel }
             , cmds
-            , outEvents ++ [ SelectionChanged newSel ]
+            , outEvents ++ [ SelectionChanged newSel, TappedAt x y ]
             )
 
         Viewport.PressStarted x y ->

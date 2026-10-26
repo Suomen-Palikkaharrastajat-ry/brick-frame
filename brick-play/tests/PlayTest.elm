@@ -28,7 +28,6 @@ suite =
         , snapshotTests
         , sharingAndToastTests
         , touchTests
-        , fineTests
         , test "initial inventory has 10 bricks available" <|
             \_ ->
                 let
@@ -514,6 +513,8 @@ testFlags =
     , ldrawFallbackBase = ""
     , initialHash = "#model="
     , supportsPointerEvents = True
+    , hintSeen = False
+    , coarsePointer = False
     }
 
 
@@ -876,73 +877,6 @@ touchTests =
                 Expect.all
                     [ \_ -> Query.fromHtml (view start) |> Query.findAll [ Selector.class "touch-only" ] |> Query.count (Expect.equal 0)
                     , \_ -> Query.fromHtml (view (addFirst start |> Tuple.first)) |> Query.findAll [ Selector.class "touch-only" ] |> Query.count (Expect.greaterThan 0)
-                    ]
-                    ()
-        ]
-
-
-{-| The Fine toggle in the action bar: it shows with or without a selection,
-reads its state with `aria-pressed`, and survives selection changes.
--}
-fineTests : Test
-fineTests =
-    let
-        ( start, _ ) =
-            init testFlags
-
-        fineButtons model =
-            Query.fromHtml (view model)
-                |> Query.findAll [ Selector.attribute (Attr.attribute "aria-label" "Fine moves") ]
-
-        fineButton model =
-            Query.fromHtml (view model)
-                |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Fine moves") ]
-    in
-    describe "Fine toggle"
-        [ test "sits in the action bar once a brick is selected, off" <|
-            \_ ->
-                let
-                    selected =
-                        addFirst start |> Tuple.first
-                in
-                Expect.all
-                    [ \_ -> fineButtons selected |> Query.count (Expect.equal 1)
-                    , \_ -> fineButton selected |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "false") ]
-                    ]
-                    ()
-        , test "stays on the bar with no selection once switched on, and only it shows" <|
-            \_ ->
-                let
-                    on =
-                        update ToggleFine start |> Tuple.first
-                in
-                Expect.all
-                    [ \_ -> fineButton on |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "true") ]
-                    , \_ -> Query.fromHtml (view on) |> Query.findAll [ Selector.attribute (Attr.attribute "aria-label" "Turn left") ] |> Query.count (Expect.equal 0)
-                    , \_ -> Expect.equal True (Core.fineMove on.studio)
-                    ]
-                    ()
-        , test "a second press switches it off" <|
-            \_ ->
-                let
-                    off =
-                        update ToggleFine start |> Tuple.first |> (\m -> update ToggleFine m) |> Tuple.first
-                in
-                Expect.equal False (Core.fineMove off.studio)
-        , test "it persists when the selection is cleared" <|
-            \_ ->
-                let
-                    cleared =
-                        addFirst start
-                            |> Tuple.first
-                            |> (\m -> update ToggleFine m)
-                            |> Tuple.first
-                            |> (\m -> update (StudioMsg Core.ClearSelection) m)
-                            |> Tuple.first
-                in
-                Expect.all
-                    [ \_ -> Expect.equal False (Core.hasSelection cleared.studio)
-                    , \_ -> Expect.equal True (Core.fineMove cleared.studio)
                     ]
                     ()
         ]

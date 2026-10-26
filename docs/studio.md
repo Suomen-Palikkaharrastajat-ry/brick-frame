@@ -240,15 +240,14 @@ mode (below) adds the gear chrome to the same view.
   parts added next and a search over the whole part library. The search reads
   `parts-index.json` once, on first use, through `Studio.PartIndex` and the shared
   matcher `Studio.PartSearch` (the palette uses the same ranking). Glue is free
-  building only: the Glue toggle in the action bar and `L` (`Shortcuts`) glue or
-  unglue the selection, and a glued selection shows "(glued)" with its move buttons
-  off. A puzzle's dock is its counted kit, its glued parts are locked, and Clear
+  building only: the Glue toggle in the context ring and `L` (`Shortcuts`) glue or
+  unglue the selection, and a glued selection shows its ring's move buttons off. A puzzle's dock is its counted kit, its glued parts are locked, and Clear
   keeps them (`Core.clearUnglued`). The hash formats are in
   [examples.md](examples.md).
 - **No gizmo.** `Core.setGizmoStyle NoGizmo` draws and hit-tests no arrows or
   rings. A body drag still moves a part on the view-relative plane
   (`Studio.DragPlane`), and turning, raising and lowering go through the keyboard
-  or the action bar. The yellow selection box is still drawn.
+  or the context ring. The yellow selection box is still drawn.
 - **Drag mode.** Brick Play uses `DragPartsOrPan OneFingerPans`
   and a camera globe (see
   [rendering.md](rendering.md) § Interaction controls).
@@ -258,10 +257,50 @@ mode (below) adds the gear chrome to the same view.
   part in the selection when released without moving. `Core.setDragMode` turns
   `Viewport.setShiftPressGrabs` on for this mode only; the studio workspace keeps
   Shift + drag as a pan.
-- **Action bar.** While something is selected, a floating bar above the dock shows
-  Turn left, Turn right, Tip, Raise, Lower and Delete. Each calls the same command
-  as its key (`Core.turnSelected`, `Core.raiseSelected`, `Core.lowerSelected`,
-  `Core.deleteSelection`).
+- **Context ring.** A double-click (or double-tap) on a part selects it and opens a
+  ring of round 44 px buttons beside it (`Ring.elm`): Turn left, Turn right, Tip,
+  Raise (E), Lower (Q), Delete, Glue (free building, the lock icon), a W A S D Q E
+  pad and the move-step control. Every button is a `<button>` with an `aria-label`
+  and a tooltip with its shortcut. The ring sits to the right of the part, flipped
+  to the left near the canvas edge and kept inside the canvas, and follows the part
+  as the camera or the part moves (`Ring.screenPoint` projects the part's bounding
+  sphere centre with the camera). Each button calls the same command as its key
+  (`Core.turnSelected`, `Core.raiseSelected`, `Core.lowerSelected`,
+  `Core.deleteSelection`, `Core.setGlued`, `Core.update (NudgeSelection …)`).
+  The ring closes on Escape (Escape closes it before it deselects), on a click or tap
+  on empty canvas, on a click on another part, on dragging the part, and when Tidy up
+  or the menu opens. Taps reach Brick Play as `Core.TappedAt` and a double-tap is two
+  taps within 350 ms and 30 px (`Main.tapTimed`); a double-click arrives as
+  `Core.DoubleClickedAt`. Empty canvas opens nothing, and the old action bar and its
+  Fine button are gone.
+- **Move steps.** The ring's segmented control sets the move step (`Step.elm`):
+  Stud (20 LDU sideways, 24 LDU up or down; the default), ½ stud (10 and 8: a
+  deliberate half-stud offset) and Bit (1 LDU on every axis). `Step.apply` writes it
+  to the studio with `Core.setNudgeSteps` (which also sets the body-drag grid to the
+  sideways step) and `Core.setFineMove` (on for Bit). Keys, the pad and body drags
+  all follow it, and the choice persists across selections. Shift is a temporary
+  Bit for a key or a drag.
+- **Keys with a part selected.** W and S move it away from and toward the camera,
+  A and D to its left and right, Q lowers and E raises it. The direction is the
+  camera's azimuth snapped to the nearest world X or Z axis (the studio's
+  `Core.nudgeDelta` rule; the same snap as `Studio.DragPlane`'s ground axes). With
+  nothing selected, or in Walk mode, the same keys move the camera as before. The
+  studio's keys (`Studio.Shortcuts.editKeyFor`) decide this, not a change to the
+  viewport's defaults, so the studio itself behaves the same.
+- **Tab order.** Tab and Shift+Tab select the next or previous part in
+  `Core.partOrder`: bottom to top (by origin height), then back to front (Z), then
+  left to right (X), then by id, wrapping round. The anchor is the first selected
+  part in that order (with nothing selected Tab takes the first part, Shift+Tab the
+  last). `Core.selectNeighbour` makes an explicit selection and glides the camera
+  onto it, as a click does. It does not open the ring, and glued parts are included
+  (selected, not movable). Play's `Shortcuts.actionFor` acts only when the canvas has
+  focus: a focused button, link or field keeps Tab for the browser, and
+  `brick-play/main.js` prevents the browser's Tab move only in the same case.
+- **First-select hint.** The first time any part is selected, a line above the dock
+  says "Double-click a brick for moves" (or "Double-tap" on a touch screen, from the
+  `coarsePointer` flag). It goes after five seconds or when the ring opens, and is
+  remembered per browser: `main.js` reads `hintSeen` from localStorage at start and
+  writes it through the `rememberHintSeen` port, both inside a try/catch.
 - **Menu.** A visible `?` button (Keyboard shortcuts, the same as the `?` key) sits
   beside one hamburger button at the top right (`UI.HamburgerMenu`), which opens
   Undo, Redo, Delete and Clear, each with its shortcut shown. Items send the same
@@ -305,7 +344,7 @@ so their teeth interlock (`Studio.GearAlign`; the tooth geometry is in
 `Gear.Phase`, see `docs/physics.md` § Tooth phase).
 
 - **When it runs.** After each committed edit that moves or adds parts: a drop
-  (including magnetic snap), a nudge, a turn from the keyboard or action bar, and
+  (including magnetic snap), a nudge, a turn from the keyboard or the context ring, and
   an added part. Only meshes that did not exist before the edit and involve a
   moved gear are closed. A drag that moves no gear or axle, and any edit while
   alignment is off, does no alignment work at all. Worms are never turned, and a
@@ -390,7 +429,7 @@ In `Studio.Core`:
 
 After each document change (not mid-drag, and again when a part's geometry
 arrives) Brick Play plans the fixes. When there are any, a pill shows above the
-action bar, beside the gear pill: "2 loose bricks · Tidy up", or "1 loose brick ·
+dock, beside the gear pill: "2 loose bricks · Tidy up", or "1 loose brick ·
 Tidy up". A healthy build shows nothing. Tapping the pill opens the preview, a
 dialog (`role="dialog"`, `aria-modal`) that lists the moves with their names (the
 Free catalog's description, else the part's .dat title, lower-cased, else its
