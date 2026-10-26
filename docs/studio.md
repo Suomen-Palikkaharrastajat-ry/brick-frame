@@ -155,7 +155,9 @@ Every move casts the screen ray (`Render.Pick.screenRay`) onto that plane and
 moves the lead part by the distance from the grab point, so the grabbed point
 stays under the cursor with no jump on the first move. A ray parallel to the
 plane, or one meeting it behind the eye, leaves the part where it is. Then come
-the move-step grid (X and Z), the wheel lift (plate, Shift brick, Alt 1 LDU),
+the move-step grid (X and Z), shifted by the lead part's stud offset so a studded
+part's origin lands on the stud lattice (studs at 10 mod 20 LDU: `DragPlane.snapTo`
+with `Connectivity.studOffset`; Technic parts keep the plain grid), the wheel lift (plate, Shift brick, Alt 1 LDU),
 stud snapping (`Connectivity.solveSnapWithHysteresis`, off with Alt), collision
 marking, and the rest of the selection follows rigidly. In the workspace, holding
 Shift moves on a 1 LDU grid instead of the move step (`dragGridStep`); the Y axis
@@ -191,10 +193,14 @@ Preview and Instructions pages. Deselecting keeps the last pivot; Fit View
 `Core.addPartAt part colour matrix` adds it at exactly the given placement, for a
 host with its own heights (Brick Play's Technic axle line). `Core.freeSpotFor part`
 finds where to add a ground-resting part without overlapping anything
-(`Studio.DragPlane.freeSpot`: grid positions ring by ring outward from the
+(`Studio.DragPlane.freeSpot`: stud-lattice positions ring by ring outward from the
 selection, or from the camera target when nothing is selected, until the part's
 box clashes with no placement's box); `Core.freeSpotForPlacement part matrix`
-does the same for a matrix, keeping its height and orientation. Brick Play adds
+does the same for a matrix, keeping its height and orientation. `Core.addPart`
+snaps X and Z to the stud lattice too; `Core.addPartAt` keeps the matrix exactly.
+A turn (`rotateSelectionBy`) re-snaps the first studded part of the selection onto
+the lattice for its new orientation, moving the whole selection rigidly, unless fine
+mode is on; a nudge is relative, so it keeps the lattice it had. Brick Play adds
 every dock piece at `freeSpotFor`, so the first lands in the middle of the view
 and the next ones beside the selected piece. `Core.setDragSettles False` makes
 horizontal-plane body drags keep the press-time height instead of settling on

@@ -29,9 +29,32 @@ cameraRight cam =
     vec3 (cos cam.azimuth) 0 -(sin cam.azimuth)
 
 
+{-| A 1×1 brick: odd on both axes, so its stud offset is 10 on X and Z.
+-}
 brick : DragPlane.Box
 brick =
     { min = vec3 -10 -4 -10, max = vec3 10 24 10 }
+
+
+{-| The stud offset of `brick`.
+-}
+one : { x : Float, z : Float }
+one =
+    { x = 10, z = 10 }
+
+
+{-| No stud offset: the plain grid (a 2×4, or a Technic part).
+-}
+zero : { x : Float, z : Float }
+zero =
+    { x = 0, z = 0 }
+
+
+{-| A 2×4 brick: even on both axes.
+-}
+wide : DragPlane.Box
+wide =
+    { min = vec3 -40 -4 -20, max = vec3 40 24 20 }
 
 
 at : Float -> Float -> Float -> DragPlane.Box -> DragPlane.Box
@@ -133,33 +156,45 @@ suite =
             , test "a box stacked on top does not" <|
                 \_ -> DragPlane.boxesOverlap brick (at 0 -28 0 brick) |> Expect.equal False
             ]
+        , describe "snapTo"
+            [ test "an odd stud count (offset 10) snaps to ±10 on the 20 LDU pitch" <|
+                \_ ->
+                    [ DragPlane.snapTo 10 20 1, DragPlane.snapTo 10 20 -9, DragPlane.snapTo 10 20 25 ]
+                        |> Expect.equal [ 10, -10, 30 ]
+            , test "an even stud count (offset 0) keeps the plain 20 LDU grid" <|
+                \_ ->
+                    [ DragPlane.snapTo 0 20 33, DragPlane.snapTo 0 20 -9 ]
+                        |> Expect.equal [ 40, 0 ]
+            , test "a 1 LDU grid reaches every integer on the lattice, odd ones included" <|
+                \_ ->
+                    [ DragPlane.snapTo 10 1 37, DragPlane.snapTo 10 1 -7, DragPlane.snapTo 0 1 -4.4 ]
+                        |> Expect.equal [ 37, -7, -4 ]
+            ]
         , describe "freeSpot"
-            [ test "an empty scene uses the start, rounded to the grid" <|
+            [ test "an empty scene snaps the start to the stud lattice" <|
                 \_ ->
-                    DragPlane.freeSpot { box = brick, start = ( 33, -9 ), step = 20, others = [] }
-                        |> Expect.equal ( 40, 0 )
-            , test "an occupied start moves one step to the nearest free neighbour" <|
+                    DragPlane.freeSpot { box = brick, offset = one, start = ( 33, -9 ), step = 20, others = [] }
+                        |> Expect.equal ( 30, -10 )
+            , test "an occupied start moves one step to the nearest free neighbour on the lattice" <|
                 \_ ->
-                    DragPlane.freeSpot { box = brick, start = ( 0, 0 ), step = 20, others = [ brick ] }
-                        |> Expect.equal ( 20, 0 )
+                    DragPlane.freeSpot { box = brick, offset = one, start = ( 0, 0 ), step = 20, others = [ brick ] }
+                        |> Expect.equal ( 30, 10 )
             , test "searches outward ring by ring past occupied neighbours" <|
                 \_ ->
                     let
                         others =
                             List.concatMap (\gx -> List.map (\gz -> at gx 0 gz brick) [ -20, 0, 20 ]) [ -20, 0, 20 ]
-
-                        ( x, z ) =
-                            DragPlane.freeSpot { box = brick, start = ( 0, 0 ), step = 20, others = others }
                     in
-                    Expect.all
-                        [ \_ -> Expect.equal 40 (max (abs x) (abs z))
-                        , \_ -> Expect.equal False (List.any (DragPlane.boxesOverlap (at x 0 z brick)) others)
-                        ]
-                        ()
+                    DragPlane.freeSpot { box = brick, offset = one, start = ( 0, 0 ), step = 20, others = others }
+                        |> Expect.equal ( 50, 10 )
             , test "a part at another height does not block the spot" <|
                 \_ ->
-                    DragPlane.freeSpot { box = brick, start = ( 0, 0 ), step = 20, others = [ at 0 -100 0 brick ] }
-                        |> Expect.equal ( 0, 0 )
+                    DragPlane.freeSpot { box = brick, offset = one, start = ( 0, 0 ), step = 20, others = [ at 0 -100 0 brick ] }
+                        |> Expect.equal ( 10, 10 )
+            , test "an even footprint (2x4, offset 0) keeps the plain grid" <|
+                \_ ->
+                    DragPlane.freeSpot { box = wide, offset = zero, start = ( 33, -9 ), step = 20, others = [] }
+                        |> Expect.equal ( 40, 0 )
             ]
         , describe "freeSpotPlacement"
             [ test "keeps the placement's height, moving only X and Z" <|
@@ -169,6 +204,7 @@ suite =
                             DragPlane.freeSpotPlacement
                                 { box = brick
                                 , matrix = Mat4.makeTranslate3 0 -60 0
+                                , offset = one
                                 , start = ( 0, 0 )
                                 , gridStep = 20
                                 , others = []
@@ -177,14 +213,15 @@ suite =
                         origin =
                             Mat4.transform placed (vec3 0 0 0)
                     in
-                    Expect.equal ( 0, -60, 0 ) ( Vec3.getX origin, Vec3.getY origin, Vec3.getZ origin )
-            , test "finds the same free grid spot as freeSpot" <|
+                    Expect.equal ( 10, -60, 10 ) ( Vec3.getX origin, Vec3.getY origin, Vec3.getZ origin )
+            , test "finds the same free lattice spot as freeSpot" <|
                 \_ ->
                     let
                         placed =
                             DragPlane.freeSpotPlacement
                                 { box = brick
                                 , matrix = Mat4.makeTranslate3 0 -24 0
+                                , offset = one
                                 , start = ( 0, 0 )
                                 , gridStep = 20
                                 , others = [ brick ]
@@ -193,7 +230,7 @@ suite =
                         origin =
                             Mat4.transform placed (vec3 0 0 0)
                     in
-                    Expect.equal ( 20, 0 ) ( Vec3.getX origin, Vec3.getZ origin )
+                    Expect.equal ( 30, 10 ) ( Vec3.getX origin, Vec3.getZ origin )
             ]
         , describe "supportTop"
             [ test "nothing below rests on the ground" <|
@@ -210,15 +247,72 @@ suite =
                 \_ ->
                     DragPlane.targetPosition
                         { plane = { point = vec3 0 0 0, normal = vec3 0 1 0, mode = Horizontal }
-                        , cursor = vec3 40 0 -20
+                        , cursor = vec3 42 0 -17
                         , original = vec3 0 -24 0
                         , gridStep = 20
+                        , offset = one
                         , elevationOffset = 0
                         , footprint = at 0 -24 0 brick
                         , others = [ at 40 -24 20 brick ]
                         , keepHeight = False
                         }
-                        |> Expect.equal (vec3 40 -52 20)
+                        |> Expect.equal (vec3 50 -52 10)
+            , test "a 1×1 lands on the stud lattice, not the plain grid" <|
+                \_ ->
+                    DragPlane.targetPosition
+                        { plane = { point = vec3 0 0 0, normal = vec3 0 1 0, mode = Horizontal }
+                        , cursor = vec3 3 0 3
+                        , original = vec3 0 -24 0
+                        , gridStep = 20
+                        , offset = one
+                        , elevationOffset = 0
+                        , footprint = at 0 -24 0 brick
+                        , others = []
+                        , keepHeight = False
+                        }
+                        |> Expect.equal (vec3 10 -24 -10)
+            , test "a 2×4 (offset 0) keeps the plain 20 LDU grid" <|
+                \_ ->
+                    DragPlane.targetPosition
+                        { plane = { point = vec3 0 0 0, normal = vec3 0 1 0, mode = Horizontal }
+                        , cursor = vec3 33 0 -7
+                        , original = vec3 0 -24 0
+                        , gridStep = 20
+                        , offset = zero
+                        , elevationOffset = 0
+                        , footprint = at 0 -24 0 wide
+                        , others = []
+                        , keepHeight = False
+                        }
+                        |> Expect.equal (vec3 40 -24 0)
+            , test "an X offset of 10 (a 1×2 turned 90°) puts X on ±10 while Z stays on the 0 grid" <|
+                \_ ->
+                    DragPlane.targetPosition
+                        { plane = { point = vec3 0 0 0, normal = vec3 0 1 0, mode = Horizontal }
+                        , cursor = vec3 3 0 3
+                        , original = vec3 0 -24 0
+                        , gridStep = 20
+                        , offset = { x = 10, z = 0 }
+                        , elevationOffset = 0
+                        , footprint = at 0 -24 0 brick
+                        , others = []
+                        , keepHeight = False
+                        }
+                        |> Expect.equal (vec3 10 -24 0)
+            , test "a 1 LDU grid reaches odd integers on the lattice" <|
+                \_ ->
+                    DragPlane.targetPosition
+                        { plane = { point = vec3 0 0 0, normal = vec3 0 1 0, mode = Horizontal }
+                        , cursor = vec3 33 0 -7
+                        , original = vec3 0 -24 0
+                        , gridStep = 1
+                        , offset = one
+                        , elevationOffset = 0
+                        , footprint = at 0 -24 0 brick
+                        , others = []
+                        , keepHeight = False
+                        }
+                        |> Expect.equal (vec3 33 -24 7)
             , test "horizontal: the wheel lift applies on top of the support" <|
                 \_ ->
                     DragPlane.targetPosition
@@ -226,6 +320,7 @@ suite =
                         , cursor = vec3 0 0 0
                         , original = vec3 0 -24 0
                         , gridStep = 1
+                        , offset = zero
                         , elevationOffset = -8
                         , footprint = at 0 -24 0 brick
                         , others = []
@@ -241,6 +336,7 @@ suite =
                                 , cursor = vec3 0 cursorY 0
                                 , original = vec3 0 -24 0
                                 , gridStep = 4
+                                , offset = zero
                                 , elevationOffset = 0
                                 , footprint = at 0 -24 0 brick
                                 , others = []
@@ -259,6 +355,7 @@ suite =
                         , cursor = vec3 60 0 0
                         , original = vec3 0 -52 0
                         , gridStep = 20
+                        , offset = zero
                         , elevationOffset = 0
                         , footprint = at 0 -52 0 brick
                         , others = [ at 0 -24 0 brick ]
@@ -272,6 +369,7 @@ suite =
                         , cursor = vec3 0 0 0
                         , original = vec3 -60 0 0
                         , gridStep = 20
+                        , offset = zero
                         , elevationOffset = 0
                         , footprint = at -60 0 0 brick
                         , others = []
@@ -285,6 +383,7 @@ suite =
                         , cursor = vec3 0 0 0
                         , original = vec3 0 -90 0
                         , gridStep = 20
+                        , offset = zero
                         , elevationOffset = 0
                         , footprint = at 0 -90 0 brick
                         , others = [ at 0 -24 0 brick ]
@@ -298,6 +397,7 @@ suite =
                         , cursor = vec3 60 0 0
                         , original = vec3 0 -90 0
                         , gridStep = 20
+                        , offset = zero
                         , elevationOffset = 0
                         , footprint = at 0 -90 0 brick
                         , others = [ at 0 -24 0 brick ]
@@ -311,6 +411,7 @@ suite =
                         , cursor = vec3 0 0 0
                         , original = vec3 0 -24 0
                         , gridStep = 20
+                        , offset = zero
                         , elevationOffset = 16
                         , footprint = at 0 -24 0 brick
                         , others = []
@@ -324,6 +425,7 @@ suite =
                         , cursor = vec3 20 0 0
                         , original = vec3 0 -100 0
                         , gridStep = 1
+                        , offset = zero
                         , elevationOffset = 0
                         , footprint = at 0 -100 0 brick
                         , others = []

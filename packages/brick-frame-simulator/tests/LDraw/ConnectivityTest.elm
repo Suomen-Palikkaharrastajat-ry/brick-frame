@@ -16,6 +16,7 @@ import LDraw.Connectivity as Connectivity
         , effectiveEnvelope
         , extractConnections
         , isCompatible
+        , isStudded
         , knownCatalogPart
         , makeAxle
         , makeGear
@@ -23,6 +24,7 @@ import LDraw.Connectivity as Connectivity
         , snapReleaseDistance
         , solveSnap
         , solveSnapWithHysteresis
+        , studOffset
         , testOBB
         , toOBB
         , transformPoint
@@ -38,6 +40,7 @@ suite =
     describe "LDraw.Connectivity"
         [ compatibilityTests
         , extractionTests
+        , studLatticeTests
         , snapSolverTests
         , collisionSATTests
         ]
@@ -384,6 +387,70 @@ extractionTests =
                         List.filter (\p -> knownCatalogPart p == Nothing) partsToCheck
                 in
                 Expect.equal [] missing
+        ]
+
+
+studLatticeTests : Test
+studLatticeTests =
+    let
+        noLines _ =
+            Nothing
+
+        offsetOf name matrix =
+            studOffset (Connectivity.extractPartConnectivity name noLines) matrix
+
+        turnedY =
+            Mat4.makeRotate (pi / 2) (vec3 0 1 0)
+    in
+    describe "stud offset and the 60592 window"
+        [ test "a 1x1 (odd on both axes) is offset 10 on both" <|
+            \_ -> offsetOf "3005.dat" Mat4.identity |> Expect.equal { x = 10, z = 10 }
+        , test "a 2x4 (even on both axes) is not offset" <|
+            \_ -> offsetOf "3001.dat" Mat4.identity |> Expect.equal { x = 0, z = 0 }
+        , test "a 1x3 (odd on both axes) is offset 10 on both" <|
+            \_ -> offsetOf "3622.dat" Mat4.identity |> Expect.equal { x = 10, z = 10 }
+        , test "a 1x2 has its odd axis along Z, and swaps it when turned 90°" <|
+            \_ ->
+                Expect.all
+                    [ \_ -> offsetOf "3004.dat" Mat4.identity |> Expect.equal { x = 0, z = 10 }
+                    , \_ -> offsetOf "3004.dat" turnedY |> Expect.equal { x = 10, z = 0 }
+                    ]
+                    ()
+        , test "only the rotation counts: a translated part keeps its offset" <|
+            \_ ->
+                offsetOf "3004.dat" (Mat4.mul (Mat4.makeTranslate3 30 -24 7) turnedY)
+                    |> Expect.equal { x = 10, z = 0 }
+        , test "the window 60592 (2 x 1 studs) is offset 0 on X and 10 on Z" <|
+            \_ -> offsetOf "60592.dat" Mat4.identity |> Expect.equal { x = 0, z = 10 }
+        , test "Technic parts (no stud points) are never offset" <|
+            \_ ->
+                [ "32524.dat", "3705.dat", "3648.dat", "3647.dat", "6590.dat" ]
+                    |> List.map (\name -> offsetOf name turnedY)
+                    |> Expect.equal (List.repeat 5 { x = 0, z = 0 })
+        , test "isStudded is true for bricks and false for Technic parts" <|
+            \_ ->
+                Expect.all
+                    [ \_ -> Expect.equal True (isStudded (Connectivity.extractPartConnectivity "3001.dat" noLines))
+                    , \_ -> Expect.equal False (isStudded (Connectivity.extractPartConnectivity "32524.dat" noLines))
+                    , \_ -> Expect.equal False (isStudded (Connectivity.extractPartConnectivity "3648.dat" noLines))
+                    ]
+                    ()
+        , test "60592 has an underside AntiStud at each of its two 2x1 footprint studs" <|
+            \_ ->
+                case knownCatalogPart "60592.dat" of
+                    Just conn ->
+                        let
+                            antiStuds =
+                                List.filter (\c -> c.connType == AntiStud) conn.connections
+                        in
+                        Expect.all
+                            [ \_ -> Expect.equal 2 (List.length antiStuds)
+                            , \_ -> Expect.equal [ 48, 48 ] (List.map (\c -> Vec3.getY c.localPosition) antiStuds)
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "Catalog part 60592.dat was not found"
         ]
 
 

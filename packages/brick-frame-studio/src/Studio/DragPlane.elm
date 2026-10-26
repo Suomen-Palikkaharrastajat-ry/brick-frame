@@ -9,6 +9,7 @@ module Studio.DragPlane exposing
     , freeSpot
     , freeSpotPlacement
     , intersect
+    , snapTo
     , steepElevation
     , supportTop
     , targetPosition
@@ -36,9 +37,15 @@ and stud snapping). `targetPosition` then applies the grid and the height rule:
 in `Horizontal` mode the dragged parts rest on whatever their footprint overlaps
 (`supportTop`), in `Facing` mode the height follows the plane.
 
+X and Z snap to the grid **shifted by the part's stud offset** (`snapTo`): a
+studded part's origin lands on the stud lattice (studs at 10 mod 20 LDU), so a
+1×1 sits at ±10 and a 2×4 at 0 mod 20. The offset comes from
+`LDraw.Connectivity.studOffset` for the placement's rotation, and is `{ x = 0,
+z = 0 }` for Technic parts. Y is not shifted.
+
 `freeSpot` reuses the same boxes to find room for a new part: the nearest grid
-position, searched ring by ring outward from a start point, where the part's box
-overlaps nothing already placed.
+position on that same shifted grid, searched ring by ring outward from a start
+point, where the part's box overlaps nothing already placed.
 
 Render space is LDraw scaled by `(1, -1, -1)`; `Box` values and positions given
 to `targetPosition` are in LDraw coordinates, where up is **negative** Y and the
@@ -194,11 +201,25 @@ boxesOverlap a b =
         && (min (Vec3.getY a.max) (Vec3.getY b.max) - max (Vec3.getY a.min) (Vec3.getY b.min) > 0.5)
 
 
+{-| The value nearest to `value` on the grid `offset + k * step` (LDU), `k` an
+integer. A value exactly halfway between two grid points goes to the higher one.
+
+With `offset` 0 this is the plain grid; a studded part passes its stud offset
+(`LDraw.Connectivity.studOffset`) so its origin lands on the stud lattice.
+
+-}
+snapTo : Float -> Float -> Float -> Float
+snapTo offset step value =
+    offset + toFloat (round ((value - offset) / step)) * step
+
+
 {-| The nearest free grid position (X, Z in LDraw) for a new part.
 
   - `box` — the new part's world box (LDraw) with its origin at X = Z = 0 and
     already at its final height and orientation.
-  - `start` — where to look first (X, Z); rounded to the grid.
+  - `offset` — the part's stud offset (X and Z, see `snapTo`): the grid is shifted
+    by it.
+  - `start` — where to look first (X, Z); snapped to that grid.
   - `step` — the grid step, in LDU.
   - `others` — world boxes of the parts already placed.
 
@@ -208,15 +229,15 @@ ring; the first whose shifted `box` overlaps none of `others` (`boxesOverlap`)
 wins. Gives up after 64 rings and returns the position one ring further along +X.
 
 -}
-freeSpot : { box : Box, start : ( Float, Float ), step : Float, others : List Box } -> ( Float, Float )
-freeSpot { box, start, step, others } =
+freeSpot : { box : Box, offset : { x : Float, z : Float }, start : ( Float, Float ), step : Float, others : List Box } -> ( Float, Float )
+freeSpot { box, offset, start, step, others } =
     let
         gridStep =
             max 1 step
 
         ( sx, sz ) =
-            ( toFloat (round (Tuple.first start / gridStep)) * gridStep
-            , toFloat (round (Tuple.second start / gridStep)) * gridStep
+            ( snapTo offset.x gridStep (Tuple.first start)
+            , snapTo offset.z gridStep (Tuple.second start)
             )
 
         maxRings =
@@ -270,6 +291,7 @@ position. Pure and model-free, so any host can place a part without a
     `worldBox` takes it.
   - `matrix` — the placement the part would have; its translation's X and Z
     are the only things replaced.
+  - `offset` — the stud offset of the part in that orientation (see `freeSpot`).
   - `start` — where to search from (X, Z), e.g. the selection's centre or the
     camera target's ground position.
   - `gridStep` — the grid step, in LDU (at least 1).
@@ -289,12 +311,13 @@ Returns the placement matrix to add the part with (`Edit`/`addPartAt`-style).
 freeSpotPlacement :
     { box : Box
     , matrix : Mat4
+    , offset : { x : Float, z : Float }
     , start : ( Float, Float )
     , gridStep : Float
     , others : List Box
     }
     -> Mat4
-freeSpotPlacement { box, matrix, start, gridStep, others } =
+freeSpotPlacement { box, matrix, offset, start, gridStep, others } =
     let
         origin =
             Mat4.transform matrix (vec3 0 0 0)
@@ -305,6 +328,7 @@ freeSpotPlacement { box, matrix, start, gridStep, others } =
         ( x, z ) =
             freeSpot
                 { box = worldBox atOrigin box
+                , offset = offset
                 , start = start
                 , step = gridStep
                 , others = others
@@ -330,7 +354,10 @@ supportTop footprint others =
   - `plane`, `cursor` — the working plane and where the cursor ray meets it
     (render space); `cursor` minus `plane.point` is the drag delta.
   - `original` — the lead part's position when the drag started (LDraw).
-  - `gridStep` — snap X/Z (and Y in `Facing` mode) to multiples of this, in LDU.
+  - `gridStep` — snap X/Z (and Y in `Facing` mode) to this grid, in LDU; X and Z
+    are shifted by `offset` (see `snapTo`).
+  - `offset` — the lead part's stud offset (`LDraw.Connectivity.studOffset`), so a
+    studded part lands on the stud lattice; `{ x = 0, z = 0 }` for Technic parts.
   - `elevationOffset` — the wheel lift (LDraw; negative is up), added last.
   - `footprint` — the world box (LDraw) of everything dragged, at `original`.
   - `others` — world boxes (LDraw) of the placements not being dragged.
@@ -343,6 +370,7 @@ type alias Target =
     , cursor : Vec3
     , original : Vec3
     , gridStep : Float
+    , offset : { x : Float, z : Float }
     , elevationOffset : Float
     , footprint : Box
     , others : List Box
@@ -388,10 +416,10 @@ targetPosition t =
             Vec3.getZ t.original
 
         x =
-            snap (ox + Vec3.getX delta)
+            snapTo t.offset.x step (ox + Vec3.getX delta)
 
         z =
-            snap (oz + Vec3.getZ delta)
+            snapTo t.offset.z step (oz + Vec3.getZ delta)
 
         moved =
             { min = Vec3.add t.footprint.min (vec3 (x - ox) 0 (z - oz))

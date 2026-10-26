@@ -912,8 +912,18 @@ rotateSelectionBy axis angle model =
                 Edit.selectionCenter selectedIds model.document
                     |> Maybe.withDefault (vec3 0 0 0)
 
-            command =
+            turn =
                 Rotate selectedIds { pivot = pivot, axis = axis, radians = angle }
+
+            -- A turn can leave a studded part off the stud lattice (a 1×2 turned 90°
+            -- has its studs on the other axis). The re-snap joins the turn's history entry.
+            command =
+                case restudDelta model (Tuple.first (Edit.apply turn model.document)) selectedIds of
+                    Just delta ->
+                        Group [ turn, Translate selectedIds delta ]
+
+                    Nothing ->
+                        turn
 
             ( newDoc, newHistory ) =
                 recordEdit command model
@@ -937,10 +947,68 @@ rotateSelectionBy axis angle model =
         )
 
 
+{-| The X/Z move that puts a turned selection back on the stud lattice (see
+`DragPlane.snapTo`). It is worked out for the first studded part of `ids` (in
+id order) and applies to the whole selection, so a group moves rigidly. Nothing
+when fine mode is on, no part is studded, or the selection is already aligned.
+-}
+restudDelta : Model -> Document -> List Int -> Maybe Vec3
+restudDelta model doc ids =
+    if fineMove model then
+        Nothing
+
+    else
+        ids
+            |> List.filterMap (\id -> Document.getPlacement id doc)
+            |> List.filterMap
+                (\p ->
+                    let
+                        conn =
+                            Connectivity.extractPartConnectivity p.part (resolvedLines model)
+                    in
+                    if Connectivity.isStudded conn then
+                        Just ( conn, p )
+
+                    else
+                        Nothing
+                )
+            |> List.head
+            |> Maybe.andThen
+                (\( conn, p ) ->
+                    let
+                        origin =
+                            Transform.position p.matrix
+
+                        offset =
+                            Connectivity.studOffset conn p.matrix
+
+                        dx =
+                            DragPlane.snapTo offset.x studPitch (Vec3.getX origin) - Vec3.getX origin
+
+                        dz =
+                            DragPlane.snapTo offset.z studPitch (Vec3.getZ origin) - Vec3.getZ origin
+                    in
+                    if abs dx < 1.0e-4 && abs dz < 1.0e-4 then
+                        Nothing
+
+                    else
+                        Just (vec3 dx 0 dz)
+                )
+
+
+{-| The stud pitch (LDU): studded parts sit on a lattice of this pitch, offset by
+their stud offset (see `LDraw.Connectivity.studOffset`).
+-}
+studPitch : Float
+studPitch =
+    20
+
+
 {-| Add a new part placement resting at the specified position, and select it.
 
 `position` (LDraw) is where the part's **bottom** goes: X and Z are the origin,
-Y is the height its underside rests at (0 is the ground). LDraw parts hang down
+snapped to the stud lattice (see `studPitch`), and Y is the height its underside
+rests at (0 is the ground). LDraw parts hang down
 +Y from their origin, so the origin is lifted by the part's bottom extent — a
 brick added at `vec3 x 0 z` gets its origin at Y = −24 and sits on the ground,
 exactly where a body drag (`Studio.DragPlane.targetPosition`) would rest it, so
@@ -958,8 +1026,18 @@ addPart partFile color position model =
     let
         bottom =
             Vec3.getY (partLocalBox (resolvedLines model) partFile model).max
+
+        offset =
+            Connectivity.studOffset (Connectivity.extractPartConnectivity partFile (resolvedLines model)) Mat4.identity
+
+        -- X and Z go to the stud lattice (the nearest one for `position`), Y is kept.
+        spot =
+            vec3
+                (DragPlane.snapTo offset.x studPitch (Vec3.getX position))
+                (Vec3.getY position)
+                (DragPlane.snapTo offset.z studPitch (Vec3.getZ position))
     in
-    addPartAt partFile color (Mat4.makeTranslate (Vec3.setY (Vec3.getY position - bottom) position)) model
+    addPartAt partFile color (Mat4.makeTranslate (Vec3.setY (Vec3.getY spot - bottom) spot)) model
 
 
 {-| Add a new part with exactly this placement matrix (LDraw: the part's origin
@@ -1111,6 +1189,7 @@ freeSpotForPlacement part matrix model =
     DragPlane.freeSpotPlacement
         { box = partLocalBox resolveLines part model
         , matrix = matrix
+        , offset = Connectivity.studOffset (Connectivity.extractPartConnectivity part resolveLines) matrix
         , start = start
         , gridStep = toFloat (max 1 model.gridStep)
         , others =
@@ -2277,6 +2356,7 @@ movePlaneDrag initialDrag grab ( x, y ) model =
                         , cursor = cursorPoint
                         , original = origPos
                         , gridStep = dragGridStep model
+                        , offset = Connectivity.studOffset leadConn leadP.matrix
                         , elevationOffset = drag.elevationOffset
                         , footprint = footprint
                         , others = otherBoxes

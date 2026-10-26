@@ -2502,10 +2502,14 @@ freeSpotMatrix file model =
         startLift =
             supportAt start
 
+        startMatrix =
+            Mat4.makeTranslate3 0 (startLift - bottom) 0
+
         placed =
             DragPlane.freeSpotPlacement
                 { box = box
-                , matrix = Mat4.makeTranslate3 0 (startLift - bottom) 0
+                , matrix = startMatrix
+                , offset = Connectivity.studOffset (Connectivity.extractPartConnectivity file resolveLines) startMatrix
                 , start = start
                 , gridStep = toFloat (max 1 model.gridStep)
                 , others = others
@@ -3817,6 +3821,7 @@ movePlaneDrag initialDrag grab ( x, y ) model =
                         , cursor = point
                         , original = origWorld
                         , gridStep = dragGridStep model
+                        , offset = Connectivity.studOffset leadConn (Mat4.mul accum leadP.matrix)
                         , elevationOffset = offset
                         , footprint = footprint
                         , others = otherBoxes

@@ -15,6 +15,7 @@ module LDraw.Connectivity exposing
     , extractPartConnectivity
     , invertRigid
     , isCompatible
+    , isStudded
     , knownCatalogPart
     , makeAxle
     , makeGear
@@ -24,6 +25,7 @@ module LDraw.Connectivity exposing
     , snapReleaseDistance
     , solveSnap
     , solveSnapWithHysteresis
+    , studOffset
     , testOBB
     , toOBB
     , transformDirection
@@ -42,6 +44,7 @@ import Dict exposing (Dict)
 import LDraw.Types exposing (LDrawLine(..), SubFileData)
 import Math.Matrix4 as Mat4 exposing (Mat4)
 import Math.Vector3 as Vec3 exposing (Vec3, vec3)
+import Set
 
 
 {-| Standard connection types used across the Lego and LDraw ecosystem.
@@ -1110,6 +1113,69 @@ inferBounds points =
             }
 
 
+{-| Whether a part has any stud (top stud) connection points. Studded parts
+sit on the stud lattice; Technic parts (gears, beams, axles, pins, bushes) have
+none.
+-}
+isStudded : PartConnectivity -> Bool
+isStudded conn =
+    List.any isStudPoint conn.connections
+
+
+isStudPoint : ConnectionPoint -> Bool
+isStudPoint point =
+    case point.connType of
+        Stud ->
+            True
+
+        _ ->
+            False
+
+
+{-| The X and Z offset a studded part's origin needs to sit on the stud lattice,
+where studs are at 10 mod 20 (LDU) on both axes:
+
+  - `10` on an axis along which the part, turned by `matrix`, has an odd number
+    of studs (a 1×1 or a 1×3 must sit with its origin at ±10, a 2×4 at 0 mod 20);
+  - `0` otherwise, and always for a part without stud points (Technic parts keep
+    their own 20 LDU pitch, see `isStudded`).
+
+Only the rotation of `matrix` counts: its translation is ignored. A part's stud
+columns are the distinct rotated stud X (or Z) positions, so a 2 × 1 turned 90°
+has its offset swapped.
+
+    studOffset (extractPartConnectivity "3005.dat" (\_ -> Nothing)) Mat4.identity
+        == { x = 10, z = 10 }
+
+-}
+studOffset : PartConnectivity -> Mat4 -> { x : Float, z : Float }
+studOffset conn matrix =
+    let
+        origin =
+            Mat4.transform matrix (vec3 0 0 0)
+
+        studs =
+            conn.connections
+                |> List.filter isStudPoint
+                |> List.map (\point -> Vec3.sub (Mat4.transform matrix point.localPosition) origin)
+
+        offsetAlong get =
+            let
+                columns =
+                    studs
+                        |> List.map (\v -> round (get v))
+                        |> Set.fromList
+                        |> Set.size
+            in
+            if modBy 2 columns == 1 then
+                10
+
+            else
+                0
+    in
+    { x = offsetAlong Vec3.getX, z = offsetAlong Vec3.getZ }
+
+
 {-| Pre-defined connection layouts for common standard Lego parts.
 -}
 knownCatalogPart : String -> Maybe PartConnectivity
@@ -1119,6 +1185,11 @@ knownCatalogPart name =
             String.toLower (String.replace ".dat" "" (String.replace "parts/" "" name))
     in
     case clean of
+        "60592" ->
+            -- Window 1 x 2 x 2 without sill: 2 x 1 studs on top, 2 bricks (48 LDU) tall,
+            -- with the underside anti-studs that seat it on the studs below
+            Just (makeBrick 2 1 48 "60592.dat")
+
         "3001" ->
             -- Brick 2 x 4
             Just (makeBrick 4 2 24 "3001.dat")

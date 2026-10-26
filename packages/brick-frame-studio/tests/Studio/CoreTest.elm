@@ -401,6 +401,7 @@ suite =
         , emptyDragPanSuite
         , shiftFineSuite
         , restingSuite
+        , latticeSuite
         ]
 
 
@@ -1207,15 +1208,17 @@ the stud solver stays out of the measurements.
 -}
 grabbedAt : List Vec3 -> Core.Model
 grabbedAt positions =
-    let
-        model =
-            loadedAt positions
+    grabLead (List.head positions |> Maybe.withDefault (vec3 0 0 0)) (loadedAt positions)
 
+
+{-| `model` with its first placement grabbed at its origin `lead` (LDraw), as
+`grabbedAt` does.
+-}
+grabLead : Vec3 -> Core.Model -> Core.Model
+grabLead lead model =
+    let
         firstId =
             Document.placements model.document |> List.head |> Maybe.map .id |> Maybe.withDefault 0
-
-        lead =
-            List.head positions |> Maybe.withDefault (vec3 0 0 0)
 
         grab =
             -- The brick's top face: its origin (geometry spans Y 0..24 below it).
@@ -1663,4 +1666,163 @@ restingSuite =
                     |> (\( m, _, _ ) -> firstPosition m)
                     |> Maybe.map (\p -> toFloat (round (Vec3.getY p)))
                     |> Expect.equal (Just -24)
+        ]
+
+
+{-| Parts at `positions` (LDraw origins), a 1×1 `3005.dat` or any file the test
+names, with the first one the lead of a body drag. Only 3001 has geometry here;
+the others use their connectivity catalog box.
+-}
+loadedParts : List ( String, Vec3 ) -> Core.Model
+loadedParts parts =
+    let
+        doc =
+            List.foldl
+                (\( file, pos ) d -> Document.addPlacement "" { part = file, color = 4, matrix = Mat4.makeTranslate pos } d |> Tuple.first)
+                Document.empty
+                parts
+
+        ( model0, _ ) =
+            Core.init
+                { ldrawBase = "/ldraw"
+                , ldrawFallbackBase = ""
+                , defaultModelUrl = ""
+                , initialHash = ""
+                , supportsPointerEvents = True
+                , document = Document.empty
+                , gridStep = Just 20
+                , rotateStep = Just 90
+                , snapDistance = Just 24.0
+                , collisionMode = Nothing
+                }
+
+        geometry =
+            Parser.parseFile "4 16 -10 0 -10 10 0 -10 10 0 10 -10 0 10\n4 16 -10 24 -10 10 24 -10 10 24 10 -10 24 10"
+
+        vp =
+            model0.viewport
+
+        ( loadedViewport, _, _ ) =
+            Viewport.loadDocument doc { vp | partCache = Dict.insert "3001.dat" (Loaded geometry) vp.partCache }
+    in
+    { model0 | viewport = loadedViewport, document = doc }
+
+
+{-| Whether `value` is on the stud lattice of a stud offset `offset` (a multiple of
+20 from it, in LDU).
+-}
+onLattice : Float -> Float -> Bool
+onLattice offset value =
+    modBy 20 (round (value - offset)) == 0
+
+
+selectAllPlacements : Core.Model -> Core.Model
+selectAllPlacements model =
+    { model | selection = Set.fromList (List.map .id (Core.getPlacements model)) }
+
+
+latticeSuite : Test
+latticeSuite =
+    let
+        -- A 1×1 (the lead, grabbed at its origin X 60) beside a 2×4 at the origin.
+        pair =
+            grabLead (vec3 60 -24 0) (loadedParts [ ( "3005.dat", vec3 60 -24 0 ), ( "3001.dat", vec3 0 -24 0 ) ])
+
+        -- The render-space screen position of a point (render Y is up, Z is −LDraw Z).
+        screenAt model point =
+            Gizmo.project model.viewport.camera model.viewport.width model.viewport.height point
+                |> Maybe.withDefault ( -1, -1 )
+
+        leadXZ model =
+            firstPosition model
+                |> Maybe.map (\p -> ( round (Vec3.getX p), round (Vec3.getZ p) ))
+
+        -- The origin of the first placement with the given part file.
+        originOf file model =
+            Core.getPlacements model
+                |> List.filter (\p -> p.part == file)
+                |> List.head
+                |> Maybe.map (\p -> Mat4.transform p.matrix (vec3 0 0 0))
+
+        turnLeft model =
+            Core.turnSelected StudioShortcuts.TurnLeft model |> (\( m, _, _ ) -> m)
+    in
+    describe "stud lattice (studs at 10 mod 20 for studded parts)"
+        [ test "a 1×1 dragged over a 2×4 lands with X and Z on the lattice (10, 10)" <|
+            \_ ->
+                pair
+                    |> moveTo (screenAt pair (vec3 3 24 -3))
+                    |> (\( m, _, _ ) -> leadXZ m)
+                    |> Expect.equal (Just ( 10, 10 ))
+        , test "dragged to the other side of the 2×4, the 1×1 lands at Z = -10" <|
+            \_ ->
+                pair
+                    |> moveTo (screenAt pair (vec3 3 24 3))
+                    |> (\( m, _, _ ) -> leadXZ m)
+                    |> Expect.equal (Just ( 10, -10 ))
+        , test "a 1×2 turned 90° is re-snapped: its odd axis moves to X, its origin stays on the lattice" <|
+            \_ ->
+                loadedParts [ ( "3004.dat", vec3 0 -24 10 ) ]
+                    |> selectAllPlacements
+                    |> turnLeft
+                    |> firstPosition
+                    |> Maybe.map (\p -> ( round (Vec3.getX p), round (Vec3.getY p), round (Vec3.getZ p) ))
+                    |> Expect.equal (Just ( 10, -24, 20 ))
+        , test "a turn in fine mode is not re-snapped" <|
+            \_ ->
+                loadedParts [ ( "3004.dat", vec3 0 -24 10 ) ]
+                    |> selectAllPlacements
+                    |> Core.setFineMove True
+                    |> turnLeft
+                    |> firstPosition
+                    |> Maybe.map (\p -> ( round (Vec3.getX p), round (Vec3.getZ p) ))
+                    |> Expect.equal (Just ( 0, 10 ))
+        , test "the re-snap leaves a glued part where it is" <|
+            \_ ->
+                let
+                    -- The 1×1 is glued; the 1×2 beside it is free and is the only part turned.
+                    base =
+                        loadedParts [ ( "3004.dat", vec3 0 -24 10 ), ( "3005.dat", vec3 60 -24 10 ) ]
+                            |> Core.setGlueEditable True
+
+                    gluedId =
+                        Core.getPlacements base
+                            |> List.filter (\p -> p.part == "3005.dat")
+                            |> List.map .id
+                            |> List.head
+                            |> Maybe.withDefault -1
+
+                    glued =
+                        { base | selection = Set.singleton gluedId }
+                            |> Core.setGlued True
+                            |> (\( m, _, _ ) -> m)
+                            |> selectAllPlacements
+                            |> turnLeft
+                in
+                Expect.all
+                    [ \m -> Expect.equal (Just (vec3 60 -24 10)) (originOf "3005.dat" m)
+                    , \m -> Expect.equal (Just (vec3 10 -24 20)) (originOf "3004.dat" m)
+                    ]
+                    glued
+        , test "a nudge keeps the parity of the part (its origin stays on the lattice)" <|
+            \_ ->
+                loadedParts [ ( "3005.dat", vec3 10 -24 10 ) ]
+                    |> selectAllPlacements
+                    |> Core.update (Core.NudgeSelection (StudioShortcuts.Nudge { direction = StudioShortcuts.Right, fine = False }))
+                    |> (\( m, _, _ ) -> originOf "3005.dat" m)
+                    |> Maybe.map (\p -> ( onLattice 10 (Vec3.getX p), onLattice 10 (Vec3.getZ p) ))
+                    |> Expect.equal (Just ( True, True ))
+        , test "a new 1×1 from freeSpotFor is on the lattice" <|
+            \_ ->
+                let
+                    spot =
+                        Core.freeSpotFor "3005.dat" (loadedParts [ ( "3001.dat", vec3 0 -24 0 ) ])
+                in
+                Expect.equal ( True, True ) ( onLattice 10 (Vec3.getX spot), onLattice 10 (Vec3.getZ spot) )
+        , test "addPart puts a 1×1 on the lattice (X and Z snapped, Y kept)" <|
+            \_ ->
+                Core.addPart "3005.dat" 14 (vec3 3 0 -3) (loadedParts [])
+                    |> (\( m, _, _ ) -> firstPosition m)
+                    |> Maybe.map (\p -> ( Vec3.getX p, Vec3.getY p, Vec3.getZ p ))
+                    |> Expect.equal (Just ( 10, -24, -10 ))
         ]
