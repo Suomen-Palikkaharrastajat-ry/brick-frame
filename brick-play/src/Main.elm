@@ -66,6 +66,7 @@ import UI.HamburgerMenu as HamburgerMenu
 import UI.Icon as Icon
 import UI.PartCard as PartCard
 import UI.ShortcutHelp as ShortcutHelp
+import UI.SnapshotModal as SnapshotModal
 import Url
 import Viewport
 import Viewport.Framing exposing (ViewPreset(..))
@@ -105,6 +106,7 @@ type alias Model =
     , lastTapped : Maybe String
     , toast : Maybe { message : String, id : Int }
     , toastCounter : Int
+    , snapshotModal : Maybe SnapshotModal.Model
     }
 
 
@@ -133,6 +135,10 @@ type Msg
     | FitView
     | ToggleRaytrace
     | CaptureSnapshot
+    | SnapshotReady { dataUrl : String, filename : String }
+    | SnapshotSave { dataUrl : String, filename : String }
+    | SnapshotToggleAgreed Bool
+    | SnapshotContinue
     | GlobePressed ( Float, Float )
     | GlobeMoved ( Float, Float )
     | GlobeReleased
@@ -210,6 +216,7 @@ init flags =
             , lastTapped = Nothing
             , toast = Nothing
             , toastCounter = 0
+            , snapshotModal = Nothing
             }
 
         requests =
@@ -478,13 +485,33 @@ update msg model =
             )
 
         CaptureSnapshot ->
-            ( model
+            ( { model | snapshotModal = Just (SnapshotModal.init { filename = "brick-play-render.png" }) }
             , Ports.captureRender
                 { width = 1920
                 , height = 1080
                 , transparent = False
                 , filename = "brick-play-render.png"
                 }
+            )
+
+        SnapshotReady payload ->
+            ( { model | snapshotModal = Maybe.map (SnapshotModal.setReady payload) model.snapshotModal }
+            , Cmd.none
+            )
+
+        SnapshotSave payload ->
+            ( { model | snapshotModal = Maybe.map SnapshotModal.markSaved model.snapshotModal }
+            , Ports.saveSnapshot payload
+            )
+
+        SnapshotToggleAgreed agreed ->
+            ( { model | snapshotModal = Maybe.map (SnapshotModal.setAgreed agreed) model.snapshotModal }
+            , Cmd.none
+            )
+
+        SnapshotContinue ->
+            ( { model | snapshotModal = Nothing }
+            , Cmd.none
             )
 
         Clear ->
@@ -869,6 +896,7 @@ subscriptions model =
         , Ports.geometryFlattenFailed (StudioMsg << Core.geometryFlattenFailed)
         , Browser.Events.onResize WindowResized
         , Ports.thumbnailLoaded ThumbnailLoaded
+        , Ports.snapshotReady SnapshotReady
         ]
 
 
@@ -932,6 +960,17 @@ view model =
         , case model.toast of
             Just t ->
                 viewToast t.message
+
+            Nothing ->
+                text ""
+        , case model.snapshotModal of
+            Just modal ->
+                SnapshotModal.view
+                    { onSave = SnapshotSave
+                    , onToggleAgreed = SnapshotToggleAgreed
+                    , onContinue = SnapshotContinue
+                    }
+                    modal
 
             Nothing ->
                 text ""

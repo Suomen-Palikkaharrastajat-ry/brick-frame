@@ -220,14 +220,7 @@ updateInner msg model =
             )
 
         CaptureSnapshot ->
-            ( model
-            , Ports.captureRender
-                { width = 1920
-                , height = 1080
-                , transparent = False
-                , filename = "palikkakehys-render.png"
-                }
-            )
+            ( model, Cmd.none )
 
         GlobePressed point ->
             ( { model | globeDrag = Just (CameraGlobe.startDrag model.viewport.camera point) }, Cmd.none )

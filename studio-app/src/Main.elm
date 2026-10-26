@@ -12,11 +12,13 @@ back exactly where they were.
 -}
 
 import Browser
-import Html exposing (Html)
+import Html exposing (Html, div)
 import LDraw.Resolve exposing (PartCache)
+import Ports
 import Studio.Instructions as Instructions
 import Studio.Preview as Preview
 import Studio.Workspace as Workspace
+import UI.SnapshotModal as SnapshotModal
 
 
 {-| Flags from `initBricksRuntime`; the same record the viewer takes.
@@ -30,6 +32,7 @@ type alias Model =
     , workspace : Workspace.Model
     , preview : Maybe Preview.Model
     , instructions : Maybe Instructions.Model
+    , snapshotModal : Maybe SnapshotModal.Model
     }
 
 
@@ -37,6 +40,10 @@ type Msg
     = WorkspaceMsg Workspace.Msg
     | PreviewMsg Preview.Msg
     | InstructionsMsg Instructions.Msg
+    | SnapshotReady { dataUrl : String, filename : String }
+    | SnapshotSave { dataUrl : String, filename : String }
+    | SnapshotToggleAgreed Bool
+    | SnapshotContinue
 
 
 init : Flags -> ( Model, Cmd Msg )
@@ -45,7 +52,7 @@ init flags =
         ( workspace, cmd ) =
             Workspace.init flags
     in
-    ( { flags = flags, workspace = workspace, preview = Nothing, instructions = Nothing }
+    ( { flags = flags, workspace = workspace, preview = Nothing, instructions = Nothing, snapshotModal = Nothing }
     , Cmd.map WorkspaceMsg cmd
     )
 
@@ -58,6 +65,23 @@ update msg model =
 
         ( WorkspaceMsg Workspace.InstructionsRequested, Nothing, Nothing ) ->
             openInstructions model
+
+        ( WorkspaceMsg Workspace.CaptureSnapshot, Nothing, Nothing ) ->
+            let
+                ( workspace, _ ) =
+                    Workspace.update Workspace.CaptureSnapshot model.workspace
+            in
+            ( { model
+                | workspace = workspace
+                , snapshotModal = Just (SnapshotModal.init { filename = "palikkakehys-render.png" })
+              }
+            , Ports.captureRender
+                { width = 1920
+                , height = 1080
+                , transparent = False
+                , filename = "palikkakehys-render.png"
+                }
+            )
 
         ( WorkspaceMsg workspaceMsg, Nothing, Nothing ) ->
             let
@@ -104,6 +128,23 @@ update msg model =
             in
             ( { model | preview = Just next, workspace = workspace }, Cmd.map PreviewMsg cmd )
 
+        ( PreviewMsg Preview.CaptureSnapshot, Just preview, _ ) ->
+            let
+                ( next, _ ) =
+                    Preview.update Preview.CaptureSnapshot preview
+            in
+            ( { model
+                | preview = Just next
+                , snapshotModal = Just (SnapshotModal.init { filename = "palikkakehys-render.png" })
+              }
+            , Ports.captureRender
+                { width = 1920
+                , height = 1080
+                , transparent = False
+                , filename = "palikkakehys-render.png"
+                }
+            )
+
         ( PreviewMsg previewMsg, Just preview, _ ) ->
             let
                 ( next, cmd ) =
@@ -132,6 +173,23 @@ update msg model =
             in
             ( { model | instructions = Just next, workspace = workspace }, Cmd.map InstructionsMsg cmd )
 
+        ( InstructionsMsg Instructions.CaptureSnapshot, _, Just instructions ) ->
+            let
+                ( next, _ ) =
+                    Instructions.update Instructions.CaptureSnapshot instructions
+            in
+            ( { model
+                | instructions = Just next
+                , snapshotModal = Just (SnapshotModal.init { filename = "palikkakehys-render.png" })
+              }
+            , Ports.captureRender
+                { width = 1920
+                , height = 1080
+                , transparent = False
+                , filename = "palikkakehys-render.png"
+                }
+            )
+
         ( InstructionsMsg instructionsMsg, _, Just instructions ) ->
             let
                 ( next, cmd ) =
@@ -141,6 +199,26 @@ update msg model =
 
         ( InstructionsMsg _, _, Nothing ) ->
             ( model, Cmd.none )
+
+        ( SnapshotReady payload, _, _ ) ->
+            ( { model | snapshotModal = Maybe.map (SnapshotModal.setReady payload) model.snapshotModal }
+            , Cmd.none
+            )
+
+        ( SnapshotSave payload, _, _ ) ->
+            ( { model | snapshotModal = Maybe.map SnapshotModal.markSaved model.snapshotModal }
+            , Ports.saveSnapshot payload
+            )
+
+        ( SnapshotToggleAgreed agreed, _, _ ) ->
+            ( { model | snapshotModal = Maybe.map (SnapshotModal.setAgreed agreed) model.snapshotModal }
+            , Cmd.none
+            )
+
+        ( SnapshotContinue, _, _ ) ->
+            ( { model | snapshotModal = Nothing }
+            , Cmd.none
+            )
 
 
 {-| Snapshot the document and start the simulation on it.
@@ -198,32 +276,48 @@ loadedParts workspace =
 
 view : Model -> Html Msg
 view model =
-    case ( model.preview, model.instructions ) of
-        ( Just preview, _ ) ->
-            Html.map PreviewMsg (Preview.view preview)
+    let
+        pageContent =
+            case ( model.preview, model.instructions ) of
+                ( Just preview, _ ) ->
+                    Html.map PreviewMsg (Preview.view preview)
 
-        ( Nothing, Just instructions ) ->
-            Html.map InstructionsMsg (Instructions.view instructions)
+                ( Nothing, Just instructions ) ->
+                    Html.map InstructionsMsg (Instructions.view instructions)
 
-        ( Nothing, Nothing ) ->
-            Html.map WorkspaceMsg (Workspace.view model.workspace)
+                ( Nothing, Nothing ) ->
+                    Html.map WorkspaceMsg (Workspace.view model.workspace)
+    in
+    case model.snapshotModal of
+        Just modal ->
+            div []
+                [ pageContent
+                , SnapshotModal.view
+                    { onSave = SnapshotSave
+                    , onToggleAgreed = SnapshotToggleAgreed
+                    , onContinue = SnapshotContinue
+                    }
+                    modal
+                ]
+
+        Nothing ->
+            pageContent
 
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    case ( model.preview, model.instructions ) of
-        ( Just preview, _ ) ->
-            Sub.batch
-                [ Sub.map PreviewMsg (Preview.subscriptions preview)
-                ]
+    Sub.batch
+        [ Ports.snapshotReady SnapshotReady
+        , case ( model.preview, model.instructions ) of
+            ( Just preview, _ ) ->
+                Sub.map PreviewMsg (Preview.subscriptions preview)
 
-        ( Nothing, Just instructions ) ->
-            Sub.batch
-                [ Sub.map InstructionsMsg (Instructions.subscriptions instructions)
-                ]
+            ( Nothing, Just instructions ) ->
+                Sub.map InstructionsMsg (Instructions.subscriptions instructions)
 
-        ( Nothing, Nothing ) ->
-            Sub.map WorkspaceMsg (Workspace.subscriptions model.workspace)
+            ( Nothing, Nothing ) ->
+                Sub.map WorkspaceMsg (Workspace.subscriptions model.workspace)
+        ]
 
 
 main : Program Flags Model Msg

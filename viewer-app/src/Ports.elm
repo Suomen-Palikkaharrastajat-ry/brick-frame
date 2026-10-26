@@ -7,7 +7,9 @@ port module Ports exposing
     , requestFileUpload
     , requestGeometryFlatten
     , runtimeEvent
+    , saveSnapshot
     , setUrlHash
+    , snapshotReady
     , viewportResized
     )
 
@@ -69,3 +71,13 @@ port setUrlHash : String -> Cmd msg
 {-| Request an offscreen high-resolution render capture as a PNG download.
 -}
 port captureRender : { width : Int, height : Int, transparent : Bool, filename : String } -> Cmd msg
+
+
+{-| Receive when high-resolution render capture is ready for preview.
+-}
+port snapshotReady : ({ dataUrl : String, filename : String } -> msg) -> Sub msg
+
+
+{-| Request file download of the approved snapshot.
+-}
+port saveSnapshot : { dataUrl : String, filename : String } -> Cmd msg

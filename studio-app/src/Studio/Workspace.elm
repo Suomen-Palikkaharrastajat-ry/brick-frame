@@ -1320,12 +1320,7 @@ updatePage msg model =
 
         CaptureSnapshot ->
             ( { model | exportMenuOpen = False }
-            , Ports.captureRender
-                { width = 1920
-                , height = 1080
-                , transparent = True
-                , filename = "palikkakehys-render.png"
-                }
+            , Cmd.none
             )
 
         CopyPlayUrl ->

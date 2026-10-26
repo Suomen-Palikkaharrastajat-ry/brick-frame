@@ -368,14 +368,7 @@ update msg model =
             )
 
         CaptureSnapshot ->
-            ( model
-            , Ports.captureRender
-                { width = 1920
-                , height = 1080
-                , transparent = False
-                , filename = "palikkakehys-render.png"
-                }
-            )
+            ( model, Cmd.none )
 
         FocusActiveStep ->
             case Steps.stepAtIndex model.currentStepIndex model.steps of

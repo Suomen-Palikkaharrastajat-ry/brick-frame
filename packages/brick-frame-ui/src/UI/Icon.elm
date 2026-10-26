@@ -77,6 +77,15 @@ featherSized size name =
                 "camera" ->
                     FeatherIcons.camera
 
+                "download" ->
+                    FeatherIcons.download
+
+                "check" ->
+                    FeatherIcons.check
+
+                "loader" ->
+                    FeatherIcons.loader
+
                 "aperture" ->
                     FeatherIcons.aperture
 

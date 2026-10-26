@@ -48,16 +48,26 @@ if (runtime.app?.ports?.captureRender) {
     ctx.imageSmoothingQuality = 'high'
     ctx.drawImage(canvas, 0, 0, targetWidth, targetHeight)
 
-    offscreen.toBlob((blob) => {
-      if (!blob) return
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = filename || 'palikkakehys-render.png'
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      URL.revokeObjectURL(url)
-    }, 'image/png')
+    const resolvedFilename = filename || 'palikkakehys-render.png'
+
+    // Multi-pass raytracing simulation delay (~1.6s) to allow progress UI animation
+    setTimeout(() => {
+      const dataUrl = offscreen.toDataURL('image/png')
+      runtime.app.ports?.snapshotReady?.send({
+        dataUrl,
+        filename: resolvedFilename,
+      })
+    }, 1600)
+  })
+}
+
+if (runtime.app?.ports?.saveSnapshot) {
+  runtime.app.ports.saveSnapshot.subscribe(({ dataUrl, filename }) => {
+    const link = document.createElement('a')
+    link.href = dataUrl
+    link.download = filename || 'palikkakehys-render.png'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
   })
 }

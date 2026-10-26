@@ -13,7 +13,9 @@ port module Ports exposing
     , saveFavorites
     , saveRecents
     , saveRequested
+    , saveSnapshot
     , setUrlHash
+    , snapshotReady
     , thumbnailLoaded
     , viewportResized
     )
@@ -76,6 +78,16 @@ port downloadFile : { filename : String, mime : String, text : String } -> Cmd m
 {-| Request an offscreen high-resolution render capture as a PNG download.
 -}
 port captureRender : { width : Int, height : Int, transparent : Bool, filename : String } -> Cmd msg
+
+
+{-| Receive when high-resolution render capture is ready for preview.
+-}
+port snapshotReady : ({ dataUrl : String, filename : String } -> msg) -> Sub msg
+
+
+{-| Request file download of the approved snapshot.
+-}
+port saveSnapshot : { dataUrl : String, filename : String } -> Cmd msg
 
 
 {-| Offer the current document to be remembered as a draft. The JavaScript side

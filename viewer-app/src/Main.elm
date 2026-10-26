@@ -46,6 +46,7 @@ import UI.FileUpload as FileUpload
 import UI.Focus as Focus
 import UI.Icon as Icon
 import UI.ShortcutHelp as ShortcutHelp
+import UI.SnapshotModal as SnapshotModal
 import UI.Status as Status
 import UI.Theme as Theme
 import UI.Touch as Touch
@@ -98,6 +99,7 @@ type alias Model =
     , studioUrl : String
     , currentModelUrl : Maybe String
     , globeDrag : Maybe CameraGlobe.Drag
+    , snapshotModal : Maybe SnapshotModal.Model
     }
 
 
@@ -152,6 +154,7 @@ init flags =
       , studioUrl = String.trim flags.studioUrl
       , currentModelUrl = currentModelUrl
       , globeDrag = Nothing
+      , snapshotModal = Nothing
       }
     , Cmd.batch
         [ Cmd.map ViewportMsg viewportCmd
@@ -202,6 +205,10 @@ type Msg
     | ToggleShortcutHelp
     | ToggleRaytrace
     | CaptureSnapshot
+    | SnapshotReady { dataUrl : String, filename : String }
+    | SnapshotSave { dataUrl : String, filename : String }
+    | SnapshotToggleAgreed Bool
+    | SnapshotContinue
     | GlobePressed ( Float, Float )
     | GlobeMoved ( Float, Float )
     | GlobeReleased
@@ -350,13 +357,33 @@ updateInner msg model =
             )
 
         CaptureSnapshot ->
-            ( model
+            ( { model | snapshotModal = Just (SnapshotModal.init { filename = "palikkakehys-render.png" }) }
             , Ports.captureRender
                 { width = 1920
                 , height = 1080
                 , transparent = False
                 , filename = "palikkakehys-render.png"
                 }
+            )
+
+        SnapshotReady payload ->
+            ( { model | snapshotModal = Maybe.map (SnapshotModal.setReady payload) model.snapshotModal }
+            , Cmd.none
+            )
+
+        SnapshotSave payload ->
+            ( { model | snapshotModal = Maybe.map SnapshotModal.markSaved model.snapshotModal }
+            , Ports.saveSnapshot payload
+            )
+
+        SnapshotToggleAgreed agreed ->
+            ( { model | snapshotModal = Maybe.map (SnapshotModal.setAgreed agreed) model.snapshotModal }
+            , Cmd.none
+            )
+
+        SnapshotContinue ->
+            ( { model | snapshotModal = Nothing }
+            , Cmd.none
             )
 
         GlobePressed point ->
@@ -619,6 +646,7 @@ subscriptions model =
         , Ports.fileLoadError (ViewportMsg << Viewport.FileLoadError)
         , Ports.geometryFlattened (ViewportMsg << Viewport.GeometryFlattened)
         , Ports.geometryFlattenFailed (ViewportMsg << Viewport.GeometryFlattenFailed)
+        , Ports.snapshotReady SnapshotReady
         ]
 
 
@@ -824,6 +852,19 @@ viewOverlay model =
 
                 else
                     []
+               )
+            ++ (case model.snapshotModal of
+                    Just modal ->
+                        [ SnapshotModal.view
+                            { onSave = SnapshotSave
+                            , onToggleAgreed = SnapshotToggleAgreed
+                            , onContinue = SnapshotContinue
+                            }
+                            modal
+                        ]
+
+                    Nothing ->
+                        []
                )
         )
 
