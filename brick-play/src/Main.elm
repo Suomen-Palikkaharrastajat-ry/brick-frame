@@ -30,15 +30,22 @@ zoom slider and reset button. On a narrow portrait window (a phone) the bottom
 area shows either the dock or the camera globe, switched by a toggle button, and
 the dock is shown first.
 
-The dock lists either the curated Technic catalog with its category tabs, in
-Technic mode, or else the counted kit (a `parts=` kit from the URL, or the
-default 10 yellow bricks). In Technic mode everything is unlimited: a URL kit
-adds a Project tab in front of the catalog tabs, listing the kit's parts, and
-that tab is selected first. Each card is a rendered picture of the part
-(`UI.PartCard.compactView`, fed by the shared thumbnail pipeline through `Ports`).
+There are two modes, chosen by the URL hash (see `Link` for the formats):
+
+  - **Free building** (no hash, or `free=1`): the dock is the curated catalog of
+    `Free.Catalog`, unlimited, with a colour row that sets the colour of the parts
+    added next and a search box over the whole part library (`parts-index.json`,
+    loaded on first use). Parts can be glued to the board (the Glue button, or `L`):
+    a glued part is locked, and a glued part is written as `0 !PALIKKA GLUED`.
+  - **Puzzle** (any other hash): the dock is the counted kit (`parts=`, or the
+    default 10 yellow bricks for a bare `model=`). Glued parts are locked and
+    cannot be unglued, and the Glue button is hidden. Clear keeps the glued parts.
+
+Each dock card is a rendered picture of the part (`UI.PartCard.compactView`, fed
+by the shared thumbnail pipeline through `Ports`).
 
 Technic mode is derived, not set: it is on when the document holds a gear that
-`Technic.Machine` recognises, or when the URL kit lists a gear. In Technic
+`Technic.Machine` recognises, or when a puzzle's kit lists a gear. In Technic
 mode the play button shows and Space plays and pauses the machine; the gear mesh
 status pill, automatic tooth alignment and the accomplishment banner come on, and
 drags keep their height. Outside it, Space is unbound and the play button is
@@ -46,9 +53,10 @@ hidden. Technic parts (gears, axles, beams, pins) go on the shared axle line in
 either mode (`Technic.Placement`), and other parts rest on the ground. Any
 edit stops a running machine and rewinds it to 0.
 
-The top-right menu (`UI.HamburgerMenu`) holds undo, redo, delete and clear,
-beside a visible ? button that opens the shortcut list and the play button;
-Escape closes the menu first.
+The top-right menu (`UI.HamburgerMenu`) holds share link, undo, redo, delete and
+clear, beside a visible ? button that opens the shortcut list and the play button;
+Escape closes the menu first. Share link copies a puzzle: for a free build, its
+glued parts stay on the board and everything else becomes the kit.
 
 -}
 
@@ -60,28 +68,33 @@ import Data
 import Dict exposing (Dict)
 import EmbeddedParts
 import FeatherIcons
+import Free.Catalog as FreeCatalog
 import Gear.Placements as Placements
-import Html exposing (Html, button, div, h1, header, span, text)
+import Html exposing (Html, button, div, h1, header, input, span, text)
 import Html.Attributes as Attr
-import Html.Events exposing (onClick)
+import Html.Events exposing (onClick, onFocus, onInput)
 import Html.Keyed as Keyed
+import Http
 import LDraw.Colors as Colors
 import LDraw.Document as Document
-import LDraw.Writer as Writer
+import Link
 import Ports
 import Process
 import Render.Camera as Camera
 import Render.Style as Style
 import Set
+import Shortcuts as PlayShortcuts
 import Simulation
 import Studio.Colours as Colours
 import Studio.Core as Core
 import Studio.GearFeedback as GearFeedback
+import Studio.PartIndex as PartIndex
+import Studio.PartSearch as PartSearch
 import Studio.Shortcuts as StudioShortcuts exposing (TurnDirection(..))
 import Studio.UrlPayload as UrlPayload exposing (PartKitItem)
 import Task
 import Technic.Animation as Animation exposing (Animated)
-import Technic.Catalog as Catalog exposing (Category(..), PartItem)
+import Technic.Catalog as Catalog
 import Technic.Machine as Machine exposing (MachineState)
 import Technic.Placement as Placement
 import UI.Button as Button
@@ -92,7 +105,6 @@ import UI.Icon as Icon
 import UI.PartCard as PartCard
 import UI.ShortcutHelp as ShortcutHelp
 import UI.SnapshotModal as SnapshotModal
-import Url
 import Viewport
 import Viewport.Framing exposing (ViewPreset(..))
 import Viewport.Shortcuts as ViewportShortcuts
@@ -126,14 +138,17 @@ motorRpm =
 -}
 type alias Model =
     { studio : Core.Model
+    , free : Bool
     , inventory : List PartKitItem
-    , kitFromUrl : Bool
+    , ldrawBase : String
     , machine : MachineState
     , playing : Bool
     , currentTime : Float
     , simulation : Simulation.Model
     , animated : Animated
-    , activeCategory : Category
+    , activeTab : FreeCatalog.Tab
+    , paintColour : Int
+    , search : Search
     , helpOpen : Bool
     , menuOpen : Bool
     , windowWidth : Int
@@ -157,13 +172,53 @@ type alias Thumbnail =
     }
 
 
+{-| The dock's part search: what was typed, the part library once it has been
+fetched (`parts-index.json` is only read when the search is first used), and the
+matches for the query.
+-}
+type alias Search =
+    { query : String
+    , index : SearchIndex
+    , results : List PartIndex.Part
+    }
+
+
+{-| Whether the part library has arrived.
+-}
+type SearchIndex
+    = NotLoaded
+    | Loading
+    | Loaded PartIndex.PartIndex
+    | Failed String
+
+
+{-| The most matches the dock lists at once.
+-}
+resultLimit : Int
+resultLimit =
+    40
+
+
+{-| The colours the free dock's colour row offers, in row order (LDraw codes:
+black, blue, green, red, white, light bluish gray, tan, yellow).
+-}
+paintColours : List Int
+paintColours =
+    [ 14, 15, 4, 1, 2, 0, 71, 19 ]
+
+
 {-| Messages handled by the Brick Play application.
 -}
 type Msg
     = StudioMsg Core.Msg
     | AddPart PartKitItem
-    | AddCatalogPart PartItem
-    | SetCategory Category
+    | AddFreePart { file : String, color : Int, name : String }
+    | SetFreeTab FreeCatalog.Tab
+    | SetPaintColour Int
+    | SearchInput String
+    | SearchOpened
+    | SearchLoaded (Result Http.Error PartIndex.PartIndex)
+    | ToggleGlue
     | Undo
     | Redo
     | Delete
@@ -216,11 +271,15 @@ init flags =
                 Nothing ->
                     Document.empty
 
-        kitFromUrl =
-            not (List.isEmpty payload.parts)
+        -- No hash, or `free=1`, is free building; any other hash is a puzzle.
+        free =
+            payload.free || String.isEmpty (String.trim (String.replace "#" "" flags.initialHash))
 
         inventory =
-            if kitFromUrl then
+            if free then
+                []
+
+            else if payload.partsListed then
                 payload.parts
 
             else
@@ -246,12 +305,15 @@ init flags =
                         -- Mouse: left-drag empty space pans, right-drag orbits.
                         -- Touch: one finger on empty space pans; the globe orbits.
                         >> Core.setDragMode (Core.DragPartsOrPan Core.OneFingerPans)
+                        -- Glue locks parts in a puzzle; free building may glue and unglue.
+                        >> Core.setGlueEditable free
                     )
 
         initialModel =
             { studio = initialStudio
+            , free = free
             , inventory = inventory
-            , kitFromUrl = kitFromUrl
+            , ldrawBase = flags.ldrawBase
             , machine = Machine.analyseMachine initialDoc initialStudio.viewport.partCache
             , playing = False
             , currentTime = 0.0
@@ -264,12 +326,9 @@ init flags =
                     , requestedMotorIndex = Nothing
                     }
             , animated = Animation.none
-            , activeCategory =
-                if kitFromUrl then
-                    ProjectCategory
-
-                else
-                    GearsCategory
+            , activeTab = FreeCatalog.BricksTab
+            , paintColour = 14
+            , search = emptySearch
             , helpOpen = False
             , menuOpen = False
             , windowWidth = 1280
@@ -297,13 +356,13 @@ init flags =
 
 
 {-| Technic mode, derived from the model: on when the document holds a gear that
-`Technic.Machine` recognises, or when the URL kit lists a gear part. Technic
-mode is also what offers the catalog dock (see `catalogDock`).
+`Technic.Machine` recognises, or when a puzzle's kit lists a gear part. Free
+building has no kit, so only the board's gears count there.
 -}
 technicMode : Model -> Bool
 technicMode model =
     not (List.isEmpty model.machine.gears)
-        || (model.kitFromUrl && List.any (\item -> isGearFile item.part) model.inventory)
+        || List.any (\item -> isGearFile item.part) model.inventory
 
 
 isGearFile : String -> Bool
@@ -311,43 +370,69 @@ isGearFile file =
     List.any (\spec -> spec.partFile == file) Data.gearParts
 
 
-{-| The dock lists the Technic catalog, with its category tabs, exactly when
-Technic mode is on (unlimited). Otherwise it lists the counted kit.
+{-| The search box is empty (or only spaces), so the dock shows its tab.
 -}
-catalogDock : Model -> Bool
-catalogDock model =
-    technicMode model
+notSearching : Model -> Bool
+notSearching model =
+    PartSearch.normaliseQuery model.search.query == ""
 
 
-{-| The URL kit as catalog parts, for the Project tab: empty without a URL kit.
+{-| The parts the free dock lists: the tab's entries, or the search results while
+a search is typed. Results are offered in the chosen colour like the tabs.
 -}
-projectParts : Model -> List PartItem
-projectParts model =
-    if model.kitFromUrl then
-        List.map Catalog.fromKitItem model.inventory
+freeEntries : Model -> List FreeCatalog.Entry
+freeEntries model =
+    if notSearching model then
+        FreeCatalog.entriesFor model.activeTab
 
     else
-        []
+        List.map (\part -> { file = part.file, name = part.description, description = part.description }) model.search.results
 
 
-{-| The catalog parts of the visible category, in tab order: the project parts
-for the Project tab, else the curated parts of the category.
--}
-catalogItems : Model -> List PartItem
-catalogItems model =
-    Catalog.partsForCategoryWithProject (projectParts model) model.activeCategory
-
-
-{-| The (file, colour) pairs the dock shows: the catalog parts of the visible
-category in catalog mode, else the kit items.
+{-| The (file, colour) pairs the dock shows: the free entries in the paint colour
+in free building, else the kit items.
 -}
 dockPairs : Model -> List ( String, Int )
 dockPairs model =
-    if catalogDock model then
-        List.map (\item -> ( item.file, item.color )) (catalogItems model)
+    if model.free then
+        List.map (\entry -> ( entry.file, model.paintColour )) (freeEntries model)
 
     else
         List.map (\item -> ( item.part, item.color )) model.inventory
+
+
+{-| The search state for a query, with its matches when the library is loaded.
+-}
+searchState : String -> SearchIndex -> Search
+searchState query index =
+    { query = query
+    , index = index
+    , results =
+        case index of
+            Loaded library ->
+                PartSearch.matching resultLimit query library.parts
+
+            _ ->
+                []
+    }
+
+
+emptySearch : Search
+emptySearch =
+    searchState "" NotLoaded
+
+
+{-| The part library, fetched on first use: returns the index state and the
+command that fetches it, if it has to.
+-}
+ensureLibrary : String -> SearchIndex -> ( SearchIndex, Cmd Msg )
+ensureLibrary ldrawBase index =
+    case index of
+        NotLoaded ->
+            ( Loading, PartIndex.fetch ldrawBase SearchLoaded )
+
+        _ ->
+            ( index, Cmd.none )
 
 
 {-| Ask for the images of the parts in the dock that have none yet.
@@ -391,20 +476,6 @@ thumbnailRequests items thumbnails =
     List.foldl addRequest ( [], [] ) items
         |> Tuple.second
         |> List.reverse
-
-
-{-| The readable name of a dock catalog part: a project part is named as a placed
-part is (its title from the pipeline, else its part number), a curated part by
-its catalogue name.
--}
-dockName : Model -> PartItem -> String
-dockName model item =
-    case item.category of
-        ProjectCategory ->
-            placedName model item.file item.color
-
-        _ ->
-            item.name
 
 
 {-| The readable name of a kit item: the part's .dat title once the pipeline has
@@ -469,14 +540,16 @@ placedName model file color =
                     partNumber file
 
 
-{-| Remaining count for a specific kit item.
+{-| Remaining count for a specific kit item: its count less the unglued parts of
+that file and colour on the board. A glued part is part of the puzzle, not drawn
+from the kit, so it does not count.
 -}
 remainingForItem : Model -> PartKitItem -> Int
 remainingForItem model item =
     let
         placed =
             Core.getPlacements model.studio
-                |> List.filter (\p -> p.part == item.part && p.color == item.color)
+                |> List.filter (\p -> p.part == item.part && p.color == item.color && not (Core.isGlued p.id model.studio))
                 |> List.length
     in
     max 0 (item.count - placed)
@@ -489,45 +562,28 @@ remainingCount model =
     List.sum (List.map (remainingForItem model) model.inventory)
 
 
-{-| Encode current document and kit inventory into a shareable URL hash. The
-Technic catalog is not part of a link: its gears come with the model.
+{-| The hash the address bar keeps for the build (see `Link`): the whole board
+with its glue while free building, else the puzzle with its kit.
+-}
+liveHash : Model -> String
+liveHash model =
+    if model.free then
+        Link.freeHash model.studio.document
+
+    else
+        Link.puzzleHash model.studio.document model.inventory
+
+
+{-| The link Share link copies. A puzzle keeps the current state. A free build
+shares a puzzle: its glued parts stay on the board, and the rest become the kit.
 -}
 shareHash : Model -> String
 shareHash model =
-    let
-        doc =
-            model.studio.document
+    if model.free then
+        Link.freeShareHash model.studio.document
 
-        modelStr =
-            Writer.writeDocument doc
-
-        -- Technic mode without a URL kit shares the model alone: its catalog
-        -- is not part of a link. A URL kit is kept, unlimited, as its Project tab.
-        partsStr =
-            if technicMode model && not model.kitFromUrl then
-                ""
-
-            else
-                UrlPayload.encodeParts model.inventory
-
-        hasModel =
-            not (List.isEmpty (Document.mainPlacements doc))
-
-        hasParts =
-            not (String.isEmpty (String.trim partsStr))
-    in
-    case ( hasModel, hasParts ) of
-        ( True, True ) ->
-            "model=" ++ Url.percentEncode modelStr ++ "&parts=" ++ Url.percentEncode partsStr
-
-        ( True, False ) ->
-            "model=" ++ Url.percentEncode modelStr
-
-        ( False, True ) ->
-            "parts=" ++ Url.percentEncode partsStr
-
-        ( False, False ) ->
-            ""
+    else
+        liveHash model
 
 
 {-| Update URL hash if the given core events contain a document change.
@@ -544,7 +600,7 @@ syncDocHash model events =
                     False
     in
     if List.any hasDocChange events then
-        Ports.setUrlHash (shareHash model)
+        Ports.setUrlHash (liveHash model)
 
     else
         Cmd.none
@@ -750,11 +806,43 @@ step msg model =
             else
                 placePart item.part item.color (kitItemName model item) model
 
-        AddCatalogPart item ->
-            placePart item.file item.color (dockName model item) model
+        AddFreePart part ->
+            placePart part.file part.color part.name model
 
-        SetCategory category ->
-            ( { model | activeCategory = category }, Cmd.none )
+        SetFreeTab tab ->
+            ( { model | activeTab = tab }, Cmd.none )
+
+        SetPaintColour colour ->
+            ( { model | paintColour = colour }, Cmd.none )
+
+        SearchInput query ->
+            let
+                ( index, loadCmd ) =
+                    ensureLibrary model.ldrawBase model.search.index
+            in
+            ( { model | search = searchState query index }, loadCmd )
+
+        SearchOpened ->
+            let
+                ( index, loadCmd ) =
+                    ensureLibrary model.ldrawBase model.search.index
+            in
+            ( { model | search = searchState model.search.query index }, loadCmd )
+
+        SearchLoaded result ->
+            let
+                index =
+                    case result of
+                        Ok library ->
+                            Loaded library
+
+                        Err _ ->
+                            Failed "the part library could not be fetched"
+            in
+            ( { model | search = searchState model.search.query index }, Cmd.none )
+
+        ToggleGlue ->
+            runCore (\studio -> Core.setGlued (not (Core.selectionGlued studio)) studio) model
 
         Undo ->
             runCore Core.undo model
@@ -775,7 +863,12 @@ step msg model =
             runCore Core.lowerSelected model
 
         Clear ->
-            runCore (Core.resetDocument Document.empty) model
+            if model.free then
+                runCore (Core.resetDocument Document.empty) model
+
+            else
+                -- A puzzle keeps its glued parts.
+                runCore Core.clearUnglued model
 
         ToggleFine ->
             ( { model | studio = Core.setFineMove (not (Core.fineMove model.studio)) model.studio }
@@ -922,14 +1015,15 @@ step msg model =
                 nextId =
                     model.toastCounter + 1
             in
+            -- The address bar keeps the build itself (`syncDocHash`); a free build's
+            -- shared link is a puzzle, so only the copy goes out.
             ( { model
                 | menuOpen = False
                 , toast = Just { message = "Link copied to clipboard!", id = nextId }
                 , toastCounter = nextId
               }
             , Cmd.batch
-                [ Ports.setUrlHash hash
-                , Ports.copyToClipboard ("#" ++ hash)
+                [ Ports.copyToClipboard ("#" ++ hash)
                 , Process.sleep 3000 |> Task.perform (\_ -> DismissToast nextId)
                 ]
             )
@@ -1044,16 +1138,25 @@ applyShortcut keyEvent ( model, cmd ) =
         ( next, Cmd.batch [ cmd, actionCmd ] )
 
     else
-        case ViewportShortcuts.actionFor (shortcutContext model) keyEvent of
-            Just action ->
+        case PlayShortcuts.actionFor { glueEditable = model.free, helpVisible = model.helpOpen, menuOpen = model.menuOpen } keyEvent of
+            Just PlayShortcuts.ToggleGlue ->
                 let
                     ( next, actionCmd ) =
-                        update (msgForAction action) model
+                        update ToggleGlue model
                 in
                 ( next, Cmd.batch [ cmd, actionCmd ] )
 
             Nothing ->
-                ( model, cmd )
+                case ViewportShortcuts.actionFor (shortcutContext model) keyEvent of
+                    Just action ->
+                        let
+                            ( next, actionCmd ) =
+                                update (msgForAction action) model
+                        in
+                        ( next, Cmd.batch [ cmd, actionCmd ] )
+
+                    Nothing ->
+                        ( model, cmd )
 
 
 {-| Escape closes an open menu first. Asked of the studio's own shortcut table,
@@ -1593,9 +1696,21 @@ menuConfig model =
         , { label = "Undo", shortcut = "Ctrl+Z", enabled = Core.canUndo model.studio, onSelect = MenuPicked Undo }
         , { label = "Redo", shortcut = "Ctrl+Shift+Z", enabled = Core.canRedo model.studio, onSelect = MenuPicked Redo }
         , { label = "Delete", shortcut = "Del", enabled = Core.hasSelection model.studio, onSelect = MenuPicked Delete }
-        , { label = "Clear", shortcut = "", enabled = List.length (Core.getPlacements model.studio) > 0, onSelect = MenuPicked Clear }
+        , { label = "Clear", shortcut = "", enabled = clearable model, onSelect = MenuPicked Clear }
         ]
     }
+
+
+{-| Whether Clear has anything to remove: any part in free building, else any
+unglued part (a puzzle's glued parts stay).
+-}
+clearable : Model -> Bool
+clearable model =
+    if model.free then
+        not (List.isEmpty (Core.getPlacements model.studio))
+
+    else
+        List.any (\p -> not (Core.isGlued p.id model.studio)) (Core.getPlacements model.studio)
 
 
 {-| The visible shortcut-reference button: it toggles the help overlay, as the
@@ -1725,8 +1840,22 @@ selectionBar model =
         selected =
             Core.hasSelection model.studio
 
+        -- A selection of glued parts only is locked: its move buttons are off.
+        movable =
+            Core.selectionMovable model.studio
+
+        glued =
+            Core.selectionGlued model.studio
+
+        -- The label says "Glued" when every selected part is, as the Glue button does.
         label =
             selectionName model
+                ++ (if glued && not movable then
+                        " (glued)"
+
+                    else
+                        ""
+                   )
 
         actions =
             if selected then
@@ -1742,13 +1871,19 @@ selectionBar model =
                     , Attr.style "font-weight" "700"
                     ]
                     [ Keyed.node "span" [] [ ( label, span [] [ text label ] ) ] ]
-                , actionButton (TurnSelection TurnLeft) "rotate-ccw" "Turn left" "←"
-                , actionButton (TurnSelection TurnRight) "rotate-cw" "Turn right" "→"
-                , actionButton (TurnSelection TipForward) "corner-right-down" "Tip" "↑"
-                , actionButton RaiseSelection "arrow-up" "Raise" "E"
-                , actionButton LowerSelection "arrow-down" "Lower" "Q"
-                , actionButton Delete "trash-2" "Delete" "Delete"
+                , actionButton movable (TurnSelection TurnLeft) "rotate-ccw" "Turn left" "←"
+                , actionButton movable (TurnSelection TurnRight) "rotate-cw" "Turn right" "→"
+                , actionButton movable (TurnSelection TipForward) "corner-right-down" "Tip" "↑"
+                , actionButton movable RaiseSelection "arrow-up" "Raise" "E"
+                , actionButton movable LowerSelection "arrow-down" "Lower" "Q"
+                , actionButton movable Delete "trash-2" "Delete" "Delete"
                 ]
+                    ++ (if model.free then
+                            [ glueButton glued ]
+
+                        else
+                            []
+                       )
 
             else
                 []
@@ -1836,12 +1971,73 @@ boolText on =
         "false"
 
 
-actionButton : Msg -> String -> String -> String -> Html Msg
-actionButton msg icon label shortcut =
+{-| A selection button. When `enabled` is off it is dimmed and does nothing.
+-}
+actionButton : Bool -> Msg -> String -> String -> String -> Html Msg
+actionButton enabled msg icon label shortcut =
     button
-        [ onClick msg
-        , Attr.attribute "aria-label" label
-        , Attr.title (label ++ " (" ++ shortcut ++ ")")
+        ((if enabled then
+            [ onClick msg ]
+
+          else
+            [ Attr.disabled True ]
+         )
+            ++ [ Attr.attribute "aria-label" label
+               , Attr.title (label ++ " (" ++ shortcut ++ ")")
+               , Attr.style "display" "flex"
+               , Attr.style "flex-direction" "column"
+               , Attr.style "align-items" "center"
+               , Attr.style "justify-content" "center"
+               , Attr.style "gap" "0.125rem"
+               , Attr.style "min-width" "3rem"
+               , Attr.style "min-height" "2.75rem"
+               , Attr.style "padding" "0.25rem 0.375rem"
+               , Attr.style "border" "none"
+               , Attr.style "border-radius" "9999px"
+               , Attr.style "background" "rgba(255, 255, 255, 0.1)"
+               , Attr.style "color" "var(--color-text-on-dark)"
+               , Attr.style "font-size" "0.6875rem"
+               , Attr.style "font-weight" "600"
+               , Attr.style "opacity" (boolOpacity enabled)
+               , Attr.style "cursor" (boolCursor enabled)
+               , Attr.style "transition" "all 150ms ease"
+               , Attr.class "touch-target"
+               ]
+        )
+        [ Icon.featherSized 18 icon
+        , span [ Attr.attribute "aria-hidden" "true" ] [ text label ]
+        ]
+
+
+boolOpacity : Bool -> String
+boolOpacity enabled =
+    if enabled then
+        "1"
+
+    else
+        "0.4"
+
+
+boolCursor : Bool -> String
+boolCursor enabled =
+    if enabled then
+        "pointer"
+
+    else
+        "not-allowed"
+
+
+{-| The Glue toggle of the action bar (free building): `aria-pressed` is on while
+the selection holds glued parts, and a press glues the unglued ones or unglues the
+glued ones. Yellow while on, like the Fine toggle.
+-}
+glueButton : Bool -> Html Msg
+glueButton glued =
+    button
+        [ onClick ToggleGlue
+        , Attr.attribute "aria-pressed" (boolText glued)
+        , Attr.attribute "aria-label" (glueLabel glued)
+        , Attr.title "Glue the selection to the board, locked (L)"
         , Attr.style "display" "flex"
         , Attr.style "flex-direction" "column"
         , Attr.style "align-items" "center"
@@ -1852,26 +2048,34 @@ actionButton msg icon label shortcut =
         , Attr.style "padding" "0.25rem 0.375rem"
         , Attr.style "border" "none"
         , Attr.style "border-radius" "9999px"
-        , Attr.style "background" "rgba(255, 255, 255, 0.1)"
-        , Attr.style "color" "var(--color-text-on-dark)"
+        , Attr.style "background" (fineBackground glued)
+        , Attr.style "color" (fineColour glued)
         , Attr.style "font-size" "0.6875rem"
         , Attr.style "font-weight" "600"
         , Attr.style "cursor" "pointer"
         , Attr.style "transition" "all 150ms ease"
         , Attr.class "touch-target"
         ]
-        [ Icon.featherSized 18 icon
-        , span [ Attr.attribute "aria-hidden" "true" ] [ text label ]
+        [ Icon.featherSized 18 "lock"
+        , span [ Attr.attribute "aria-hidden" "true" ] [ text (glueLabel glued) ]
         ]
 
 
-{-| The dock: the Technic catalog with its tabs in Technic mode, else the
-counted kit.
+glueLabel : Bool -> String
+glueLabel glued =
+    if glued then
+        "Glued"
+
+    else
+        "Glue"
+
+
+{-| The dock: the free catalog in free building, else the counted kit.
 -}
 viewDock : Model -> Html Msg
 viewDock model =
-    if catalogDock model then
-        catalogDockView model
+    if model.free then
+        freeDockView model
 
     else
         kitDockView model
@@ -1940,11 +2144,12 @@ viewKitCard model item =
         }
 
 
-{-| The Technic catalog dock: the category tabs in a narrow column on the left,
-then the picture cards of the visible category. The cards are unlimited.
+{-| The free-building dock: the colour row on the left, then the tabs and the part
+search above the cards of the visible tab (or the search results). The cards are
+unlimited.
 -}
-catalogDockView : Model -> Html Msg
-catalogDockView model =
+freeDockView : Model -> Html Msg
+freeDockView model =
     div
         [ Attr.style "display" "flex"
         , Attr.style "align-items" "stretch"
@@ -1962,81 +2167,123 @@ catalogDockView model =
         , Attr.style "pointer-events" "auto"
         , keepFocusOnCanvas
         ]
-        [ categoryTabs model
+        [ colourRow model
         , div
-            [ Attr.attribute "role" "group"
-            , Attr.attribute "aria-label" "Parts"
-            , Attr.style "display" "flex"
-            , Attr.style "align-items" "center"
-            , Attr.style "gap" "0.5rem"
+            [ Attr.style "display" "flex"
+            , Attr.style "flex-direction" "column"
+            , Attr.style "gap" "0.375rem"
             , Attr.style "flex" "1 1 auto"
             , Attr.style "min-width" "0"
-            , Attr.style "overflow-x" "auto"
-            , Attr.style "padding" "0.125rem"
             ]
-            (List.map (catalogCard model) (catalogItems model))
+            [ div
+                [ Attr.style "display" "flex"
+                , Attr.style "align-items" "center"
+                , Attr.style "gap" "0.375rem"
+                , Attr.style "min-width" "0"
+                ]
+                [ tabRow model
+                , searchField model
+                ]
+            , cardsRow model
+            ]
         ]
 
 
-{-| The category tabs: a narrow column on the left of the catalog dock. The
-Project tab comes first, and only when the URL gave a kit.
+{-| The colour row: the swatches of `paintColours`, two to a column, the chosen
+one outlined. Parts added from the dock take this colour.
 -}
-categoryTabs : Model -> Html Msg
-categoryTabs model =
-    let
-        categories =
-            if model.kitFromUrl then
-                [ ProjectCategory, GearsCategory, BeamsCategory, AxlesCategory, PinsCategory ]
-
-            else
-                [ GearsCategory, BeamsCategory, AxlesCategory, PinsCategory ]
-    in
+colourRow : Model -> Html Msg
+colourRow model =
     div
-        [ Attr.attribute "role" "tablist"
-        , Attr.attribute "aria-orientation" "vertical"
-        , Attr.attribute "aria-label" "Part categories"
-        , Attr.style "display" "flex"
-        , Attr.style "flex-direction" "column"
-        , Attr.style "justify-content" "space-between"
+        [ Attr.attribute "role" "group"
+        , Attr.attribute "aria-label" "Colour of parts added"
+        , Attr.style "display" "grid"
+        , Attr.style "grid-template-columns" "repeat(2, 1.25rem)"
+        , Attr.style "grid-template-rows" "repeat(4, 1.25rem)"
+        , Attr.style "gap" "0.25rem"
+        , Attr.style "align-content" "center"
         , Attr.style "flex-shrink" "0"
-        , Attr.style "width" "4.5rem"
-        , Attr.style "min-height" "0"
         ]
-        (List.map (categoryTab model.activeCategory) categories)
+        (List.map (swatch model.paintColour) paintColours)
 
 
-categoryTab : Category -> Category -> Html Msg
-categoryTab active cat =
+swatch : Int -> Int -> Html Msg
+swatch chosen code =
     let
-        isSelected =
-            active == cat
+        name =
+            Colours.nameOf code
 
-        label =
-            case cat of
-                ProjectCategory ->
-                    "Project"
-
-                PinsCategory ->
-                    "Pins"
-
-                _ ->
-                    Catalog.categoryLabel cat
+        isChosen =
+            chosen == code
     in
     button
-        [ onClick (SetCategory cat)
-        , Attr.attribute "role" "tab"
-        , Attr.attribute "aria-selected"
-            (if isSelected then
-                "true"
+        [ onClick (SetPaintColour code)
+        , Attr.attribute "aria-label" name
+        , Attr.attribute "aria-pressed" (boolText isChosen)
+        , Attr.title name
+        , Attr.style "width" "1.25rem"
+        , Attr.style "height" "1.25rem"
+        , Attr.style "padding" "0"
+        , Attr.style "border-radius" "9999px"
+        , Attr.style "background" (swatchBackground code)
+        , Attr.style "border"
+            (if isChosen then
+                "2px solid var(--color-brand-yellow)"
 
              else
-                "false"
+                "1px solid rgba(255, 255, 255, 0.35)"
             )
-        , Attr.title (Catalog.categoryLabel cat)
+        , Attr.style "cursor" "pointer"
+        , Attr.class "touch-target"
+        ]
+        []
+
+
+{-| A swatch's CSS colour, from the colour table the 3D view uses.
+-}
+swatchBackground : Int -> String
+swatchBackground code =
+    let
+        rgb =
+            Colors.resolveColor code 16
+
+        channel value =
+            String.fromInt (round (value * 255))
+    in
+    "rgb(" ++ channel rgb.r ++ ", " ++ channel rgb.g ++ ", " ++ channel rgb.b ++ ")"
+
+
+{-| The free dock's tabs, in a row. The search results replace the cards while a
+search is typed, and the tabs stay in place.
+-}
+tabRow : Model -> Html Msg
+tabRow model =
+    div
+        [ Attr.attribute "role" "tablist"
+        , Attr.attribute "aria-label" "Part categories"
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "gap" "0.25rem"
+        , Attr.style "flex" "1 1 auto"
+        , Attr.style "min-width" "0"
+        , Attr.style "overflow-x" "auto"
+        ]
+        (List.map (tabButton model.activeTab) FreeCatalog.tabs)
+
+
+tabButton : FreeCatalog.Tab -> FreeCatalog.Tab -> Html Msg
+tabButton active tab =
+    let
+        isSelected =
+            active == tab
+    in
+    button
+        [ onClick (SetFreeTab tab)
+        , Attr.attribute "role" "tab"
+        , Attr.attribute "aria-selected" (boolText isSelected)
         , Attr.style "flex-shrink" "0"
-        , Attr.style "width" "100%"
-        , Attr.style "padding" "0.1875rem 0.25rem"
-        , Attr.style "font-size" "0.6875rem"
+        , Attr.style "padding" "0.25rem 0.5rem"
+        , Attr.style "font-size" "0.75rem"
         , Attr.style "font-weight" "600"
         , Attr.style "line-height" "1.2"
         , Attr.style "white-space" "nowrap"
@@ -2060,24 +2307,105 @@ categoryTab active cat =
         , Attr.style "transition" "all 150ms ease"
         , Attr.class "touch-target"
         ]
-        [ text label ]
+        [ text (FreeCatalog.tabLabel tab) ]
 
 
-{-| One catalog part as a compact picture card. Its name, part number and
-description are in the tooltip and the accessible name.
+{-| The part search box. Typing searches the whole part library; a form field, so
+no keyboard shortcut fires while it has the focus.
 -}
-catalogCard : Model -> PartItem -> Html Msg
-catalogCard model item =
+searchField : Model -> Html Msg
+searchField model =
+    input
+        [ Attr.type_ "search"
+        , Attr.id "play-part-search"
+        , Attr.attribute "aria-label" "Search all parts"
+        , Attr.placeholder "Search parts"
+        , Attr.value model.search.query
+        , onInput SearchInput
+        , onFocus SearchOpened
+        , Attr.style "width" "8.5rem"
+        , Attr.style "min-width" "0"
+        , Attr.style "flex-shrink" "1"
+        , Attr.style "box-sizing" "border-box"
+        , Attr.style "padding" "0.25rem 0.5rem"
+        , Attr.style "font-size" "0.75rem"
+        , Attr.style "border" "1px solid rgba(255, 255, 255, 0.2)"
+        , Attr.style "border-radius" "0.375rem"
+        , Attr.style "background" "rgba(255, 255, 255, 0.08)"
+        , Attr.style "color" "var(--color-text-on-dark)"
+        ]
+        []
+
+
+{-| The cards row: the tab's parts, or the search results, with a note while the
+library loads, when it cannot be read, or when nothing matches.
+-}
+cardsRow : Model -> Html Msg
+cardsRow model =
     let
-        name =
-            dockName model item
+        note message =
+            [ div
+                [ Attr.style "color" "var(--color-text-subtle)"
+                , Attr.style "font-size" "0.8125rem"
+                , Attr.style "white-space" "nowrap"
+                , Attr.style "padding" "0 0.25rem"
+                ]
+                [ text message ]
+            ]
+
+        children =
+            if notSearching model then
+                List.map (freeCard model) (freeEntries model)
+
+            else
+                case model.search.index of
+                    NotLoaded ->
+                        note "Loading the part library…"
+
+                    Loading ->
+                        note "Loading the part library…"
+
+                    Failed reason ->
+                        note ("No part library: " ++ reason ++ ".")
+
+                    Loaded _ ->
+                        case model.search.results of
+                            [] ->
+                                note ("No parts match \"" ++ String.trim model.search.query ++ "\".")
+
+                            _ ->
+                                List.map (freeCard model) (freeEntries model)
+    in
+    div
+        [ Attr.attribute "role" "group"
+        , Attr.attribute "aria-label" "Parts"
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "gap" "0.5rem"
+        , Attr.style "flex" "1 1 auto"
+        , Attr.style "min-height" "0"
+        , Attr.style "min-width" "0"
+        , Attr.style "overflow-x" "auto"
+        , Attr.style "padding" "0.125rem"
+        ]
+        children
+
+
+{-| One free-dock part as a compact picture card, in the paint colour. Its name
+and part number are in the tooltip and the accessible name.
+-}
+freeCard : Model -> FreeCatalog.Entry -> Html Msg
+freeCard model entry =
+    let
+        colourName =
+            Colours.nameOf model.paintColour
     in
     PartCard.compactView
-        { imageUrl = Maybe.map .url (Dict.get (PartCard.thumbnailKey item.file item.color) model.thumbnails)
-        , tooltip = name ++ " (" ++ item.file ++ ")" ++ descriptionSuffix item.description
-        , ariaLabel = "Add " ++ name ++ " (" ++ partNumber item.file ++ ")"
+        { imageUrl = Maybe.map .url (Dict.get (PartCard.thumbnailKey entry.file model.paintColour) model.thumbnails)
+        , tooltip = entry.name ++ " (" ++ partNumber entry.file ++ ", " ++ colourName ++ ")" ++ descriptionSuffix entry.description
+        , ariaLabel = "Add " ++ entry.name ++ " (" ++ colourName ++ ")"
         , badge = Nothing
-        , onClick = Just (AddCatalogPart item)
+        , onClick = Just (AddFreePart { file = entry.file, color = model.paintColour, name = entry.name })
         , attributes = [ keepFocusOnCanvas ]
         }
 
@@ -2106,7 +2434,7 @@ only in Technic mode, where it applies.
 helpRows : Model -> List ( String, List ( String, String ) )
 helpRows model =
     [ ( "Build"
-      , [ ( "Menu, top right", "Undo, redo, delete, clear, and this list" )
+      , [ ( "Menu, top right", "Share link, undo, redo, delete, clear, and this list" )
         , ( "Drag a part", "Move it as seen from the camera (snaps to studs)" )
         , ( "Fine (action bar) or Shift", "1 LDU moves for drags and W A S D Q E nudges" )
         , ( "Wheel while dragging", "Raise / lower (Shift: coarser, Alt: finer)" )
@@ -2121,6 +2449,23 @@ helpRows model =
         , ( "Ctrl + click  Shift + click", "Add to or remove from the selection" )
         , ( "Esc", "Cancel a drag, or deselect" )
         ]
+            ++ (if model.free then
+                    [ ( "L  (action bar: Glue)", "Glue the selected parts to the board, locked, or unglue them" ) ]
+
+                else
+                    []
+               )
+      )
+    , ( "Dock"
+      , if model.free then
+            [ ( "Tabs and colour row", "Bricks, plates, slopes and tiles, Technic; the colour row sets the colour of the next part" )
+            , ( "Search box", "Find any part in the whole library by name or number, then tap it to add it" )
+            ]
+
+        else
+            [ ( "Cards", "Each card is one part of the kit; its count shows on the picture" )
+            , ( "Glued parts", "A glued part is locked: it cannot be moved, turned or recoloured" )
+            ]
       )
     , ( "Camera"
       , [ ( "Drag the globe, bottom right", "Orbit the camera (also by touch)" )

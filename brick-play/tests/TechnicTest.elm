@@ -8,13 +8,14 @@ import Data
 import Dict
 import EmbeddedParts
 import Expect
+import Free.Catalog as FreeCatalog
 import Gear.Detect as Detect
 import Gear.Phase as Phase
 import Gear.Placements as Placements
 import Html.Attributes as Attr
 import LDraw.Document as Document
 import LDraw.Resolve exposing (PartStatus(..))
-import Main exposing (Flags, Model, Msg(..), accomplishmentBanner, init, shareHash, technicMode, thumbnailRequests, update, view, viewToast)
+import Main exposing (Flags, Model, Msg(..), accomplishmentBanner, init, remainingForItem, shareHash, technicMode, thumbnailRequests, update, view, viewToast)
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (vec3)
 import Render.Camera as Camera
@@ -155,7 +156,7 @@ suite =
                 \_ ->
                     let
                         ( model0, _ ) =
-                            init (modelFlags pair8x24)
+                            init (freeFlags pair8x24)
 
                         ( model1, _ ) =
                             update TogglePlay model0
@@ -173,7 +174,7 @@ suite =
                 \_ ->
                     let
                         ( model0, _ ) =
-                            init (modelFlags pair8x24)
+                            init (freeFlags pair8x24)
 
                         space =
                             { key = " "
@@ -299,16 +300,16 @@ suite =
                                 |> update (WindowResized 705 813)
                     in
                     Expect.equal ( 705, 813 ) ( model.studio.viewport.width, model.studio.viewport.height )
-            , test "SetCategory updates active category tab" <|
+            , test "SetFreeTab updates the active dock tab" <|
                 \_ ->
                     let
                         ( model0, _ ) =
                             init testFlags
 
                         ( model1, _ ) =
-                            update (SetCategory BeamsCategory) model0
+                            update (SetFreeTab FreeCatalog.TechnicTab) model0
                     in
-                    Expect.equal model1.activeCategory BeamsCategory
+                    Expect.equal model1.activeTab FreeCatalog.TechnicTab
             ]
         , describe "URL Payload Initialization"
             [ test "initializes document and analyzes machine immediately from hash modelText" <|
@@ -342,7 +343,7 @@ suite =
                     Expect.all
                         [ \m -> Expect.equal 2 (List.length m.inventory)
                         , \m -> Expect.equal True (technicMode m)
-                        , \m -> Expect.equal True m.kitFromUrl
+                        , \m -> Expect.equal False m.free
                         ]
                         model
             , test "init with twin 24T example loads beam, 2 axles, 1 gear and project kit" <|
@@ -417,7 +418,7 @@ suite =
                 \_ ->
                     let
                         played =
-                            init (modelFlags pair8x24)
+                            init (freeFlags pair8x24)
                                 |> Tuple.first
                                 |> update TogglePlay
                                 |> Tuple.first
@@ -440,7 +441,7 @@ suite =
                     let
                         playFor ticks =
                             List.foldl (\ms m -> Tuple.first (update (Tick ms) m))
-                                (init (modelFlags pair8x24) |> Tuple.first |> update TogglePlay |> Tuple.first)
+                                (init (freeFlags pair8x24) |> Tuple.first |> update TogglePlay |> Tuple.first)
                                 ticks
                     in
                     Expect.equal (playFor [ 1000 ]).simulation.gearAngles (playFor [ 250, 250, 500 ]).simulation.gearAngles
@@ -448,7 +449,7 @@ suite =
                 \_ ->
                     let
                         paused =
-                            init (modelFlags pair8x24)
+                            init (freeFlags pair8x24)
                                 |> Tuple.first
                                 |> update TogglePlay
                                 |> Tuple.first
@@ -473,7 +474,7 @@ suite =
                 \_ ->
                     let
                         played =
-                            init (modelFlags pair8x24)
+                            init (freeFlags pair8x24)
                                 |> Tuple.first
                                 |> update TogglePlay
                                 |> Tuple.first
@@ -490,15 +491,15 @@ suite =
                             ( m.playing, m.currentTime, Animation.isAnimating { playing = m.playing, currentTime = m.currentTime } )
                     in
                     Expect.all
-                        [ \_ -> Expect.equal ( False, 0, False ) (rest (edited (AddCatalogPart gear8) paused))
-                        , \_ -> Expect.equal ( False, 0, False ) (rest (edited (AddCatalogPart gear8) played))
+                        [ \_ -> Expect.equal ( False, 0, False ) (rest (edited (addFree gear8) paused))
+                        , \_ -> Expect.equal ( False, 0, False ) (rest (edited (addFree gear8) played))
                         , \_ -> Expect.equal ( False, 0, False ) (rest (edited (pressKey { key = "a", ctrl = True, shift = False }) paused |> edited (pressKey { key = "d", ctrl = False, shift = False })))
-                        , \_ -> Expect.equal ( False, 0, False ) (rest (edited (AddCatalogPart gear8) paused |> edited TogglePlay |> edited (Tick 300) |> edited Undo))
+                        , \_ -> Expect.equal ( False, 0, False ) (rest (edited (addFree gear8) paused |> edited TogglePlay |> edited (Tick 300) |> edited Undo))
                         ]
                         ()
             , test "selecting while playing does not stop the machine" <|
                 \_ ->
-                    init (modelFlags pair8x24)
+                    init (freeFlags pair8x24)
                         |> Tuple.first
                         |> update TogglePlay
                         |> Tuple.first
@@ -573,7 +574,7 @@ suite =
                             List.drop 3 ids |> List.head
 
                         playing =
-                            init (modelFlags (pair8x24 ++ "\n" ++ axleThroughGear ++ "\n" ++ axleAside))
+                            init (freeFlags (pair8x24 ++ "\n" ++ axleThroughGear ++ "\n" ++ axleAside))
                                 |> Tuple.first
                                 |> withAxleMesh
                                 |> update TogglePlay
@@ -589,14 +590,14 @@ suite =
                 \_ ->
                     let
                         playing =
-                            init (modelFlags (pair8x24 ++ "\n" ++ axleThroughGear))
+                            init (freeFlags (pair8x24 ++ "\n" ++ axleThroughGear))
                                 |> Tuple.first
                                 |> withAxleMesh
                                 |> update TogglePlay
                                 |> Tuple.first
 
                         edited =
-                            update (AddCatalogPart gear8) playing |> Tuple.first
+                            update (addFree gear8) playing |> Tuple.first
                     in
                     Expect.all
                         [ \_ -> Expect.equal False (Set.isEmpty playing.animated.sources)
@@ -606,7 +607,7 @@ suite =
                         ()
             , test "at rest nothing is animated" <|
                 \_ ->
-                    init (modelFlags pair8x24)
+                    init (freeFlags pair8x24)
                         |> Tuple.first
                         |> (\m -> Animation.isAnimating { playing = m.playing, currentTime = m.currentTime })
                         |> Expect.equal False
@@ -659,19 +660,11 @@ suite =
 dockThumbnailTests : Test
 dockThumbnailTests =
     let
-        -- What the dock lists: the catalog of its tab in Technic mode (the URL
-        -- kit as the Project tab), else the kit.
+        -- What the dock lists: the free tab in free building (in the paint
+        -- colour), else the kit.
         dockPairs model =
-            if technicMode model then
-                let
-                    projectParts =
-                        if model.kitFromUrl then
-                            List.map Catalog.fromKitItem model.inventory
-
-                        else
-                            []
-                in
-                List.map (\item -> ( item.file, item.color )) (Catalog.partsForCategoryWithProject projectParts model.activeCategory)
+            if model.free then
+                List.map (\entry -> ( entry.file, model.paintColour )) (FreeCatalog.entriesFor model.activeTab)
 
             else
                 List.map (\item -> ( item.part, item.color )) model.inventory
@@ -685,13 +678,19 @@ dockThumbnailTests =
                 |> Tuple.first
 
         technicStart =
-            Tuple.first (init (modelFlags pair8x24))
+            Tuple.first (init (freeFlags pair8x24))
     in
     describe "Dock thumbnails"
-        [ test "init asks for the gears of the catalog, in catalog order, in Technic mode" <|
+        [ test "init asks for the Bricks tab, in the paint colour" <|
             \_ ->
-                Expect.equal [ "3647.dat", "4019.dat", "3648.dat", "3649.dat" ]
+                Expect.equal (List.map .file (FreeCatalog.entriesFor FreeCatalog.BricksTab))
                     (requestedFiles technicStart)
+        , test "free cards are requested in the paint colour, yellow at the start" <|
+            \_ ->
+                thumbnailRequests (dockPairs technicStart) Dict.empty
+                    |> List.map .color
+                    |> List.all (\c -> c == 14)
+                    |> Expect.equal True
         , test "requests carry the colour's rgb from the colour table" <|
             \_ ->
                 case thumbnailRequests [ ( "3647.dat", 7 ) ] Dict.empty of
@@ -705,15 +704,15 @@ dockThumbnailTests =
 
                     other ->
                         Expect.fail ("expected one request, got " ++ String.fromInt (List.length other))
-        , test "a category change asks for that category's parts" <|
+        , test "a tab change asks for that tab's parts, the Technic tab including the gears" <|
             \_ ->
                 let
                     model =
                         technicStart
-                            |> update (SetCategory BeamsCategory)
+                            |> update (SetFreeTab FreeCatalog.TechnicTab)
                             |> Tuple.first
                 in
-                Expect.equal (Catalog.partsForCategory BeamsCategory |> List.map .file) (requestedFiles model)
+                Expect.equal (List.map .file (FreeCatalog.entriesFor FreeCatalog.TechnicTab)) (requestedFiles model)
         , test "the kit from #parts= is requested on init, and no catalog is" <|
             \_ ->
                 let
@@ -734,17 +733,17 @@ dockThumbnailTests =
                 let
                     model =
                         technicStart
-                            |> loaded "3647.dat" 7
-                            |> loaded "3648.dat" 7
+                            |> loaded "3005.dat" 14
+                            |> loaded "3004.dat" 14
                 in
-                Expect.equal [ "4019.dat", "3649.dat" ] (requestedFiles model)
+                Expect.equal (List.drop 2 (List.map .file (FreeCatalog.entriesFor FreeCatalog.BricksTab))) (requestedFiles model)
         , test "a part in another colour is a different thumbnail" <|
             \_ ->
                 let
                     model =
-                        loaded "3647.dat" 4 technicStart
+                        loaded "3005.dat" 4 technicStart
                 in
-                Expect.equal True (List.member "3647.dat" (requestedFiles model))
+                Expect.equal True (List.member "3005.dat" (requestedFiles model))
         , test "duplicates in the list are asked for once" <|
             \_ ->
                 Expect.equal 1 (List.length (thumbnailRequests [ ( "3647.dat", 7 ), ( "3647.dat", 7 ) ] Dict.empty))
@@ -792,9 +791,26 @@ withAxleMesh model =
     }
 
 
+{-| A puzzle with the model and the default kit (a bare `model=` link).
+-}
 modelFlags : String -> Flags
 modelFlags text =
     { testFlags | initialHash = "#model=" ++ Url.percentEncode text }
+
+
+{-| Free building with the model on the board.
+-}
+freeFlags : String -> Flags
+freeFlags text =
+    { testFlags | initialHash = "#free=1&model=" ++ Url.percentEncode text }
+
+
+{-| The message a tap on a free dock card sends for a catalogue part, in the part's
+own colour.
+-}
+addFree : Catalog.PartItem -> Msg
+addFree item =
+    AddFreePart { file = item.file, color = item.color, name = item.name }
 
 
 gear8 : Catalog.PartItem
@@ -967,7 +983,7 @@ dockPlacementTests =
                 |> Maybe.withDefault gear8
 
         addFromDock file model =
-            update (AddCatalogPart (dockItem file)) model |> Tuple.first
+            update (addFree (dockItem file)) model |> Tuple.first
 
         origins model =
             Core.getPlacements model.studio |> List.map (\p -> Mat4.transform p.matrix (vec3 0 0 0))
@@ -1146,7 +1162,7 @@ snapshotTests =
             Tuple.first (init testFlags)
 
         selected =
-            update (AddCatalogPart gear8) start
+            update (addFree gear8) start
                 |> Tuple.first
                 |> (\m -> Tuple.first (update (StudioMsg (Core.SelectOnly 0)) m))
     in
@@ -1195,7 +1211,7 @@ menuTests =
             Tuple.first (init testFlags)
 
         selected =
-            update (AddCatalogPart gear8) start
+            update (addFree gear8) start
                 |> Tuple.first
                 |> (\m -> Tuple.first (update (StudioMsg (Core.SelectOnly 0)) m))
     in
@@ -1240,7 +1256,7 @@ menuTests =
             \_ ->
                 let
                     ( added, _ ) =
-                        update (AddCatalogPart gear8) start
+                        update (addFree gear8) start
 
                     ( undone, _ ) =
                         update (MenuPicked Undo) added
@@ -1271,18 +1287,18 @@ menuTests =
             \_ ->
                 Query.fromHtml (view start)
                     |> Query.hasNot [ Selector.attribute (Attr.attribute "role" "status") ]
-        , test "the open menu lists its actions, and the tabs select a category" <|
+        , test "the open menu lists its actions, and the free dock's tabs are a horizontal row" <|
             \_ ->
                 let
                     ( opened, _ ) =
-                        update ToggleMenu (Tuple.first (init (modelFlags pair8x24)))
+                        update ToggleMenu (Tuple.first (init (freeFlags pair8x24)))
                 in
                 Query.fromHtml (view opened)
                     |> Expect.all
                         [ Query.findAll [ Selector.attribute (Attr.attribute "role" "menuitem") ] >> Query.count (Expect.equal 5)
                         , Query.has [ Selector.text "Share link" ]
                         , Query.findAll [ Selector.attribute (Attr.attribute "role" "tab") ] >> Query.count (Expect.equal 4)
-                        , Query.has [ Selector.attribute (Attr.attribute "aria-orientation" "vertical") ]
+                        , Query.hasNot [ Selector.attribute (Attr.attribute "aria-orientation" "vertical") ]
                         ]
         ]
 
@@ -1358,7 +1374,7 @@ touchTests : Test
 touchTests =
     let
         start =
-            Tuple.first (init (modelFlags pair8x24))
+            Tuple.first (init (freeFlags pair8x24))
 
         at width model =
             update (WindowResized width 844) model |> Tuple.first
@@ -1424,12 +1440,12 @@ touchTests =
                 Expect.greaterThan 1.0e-6 (abs (azimuth moved - azimuth start))
         , test "a dock part tap records its name for touch screens" <|
             \_ ->
-                Expect.equal (Just gear8.name) (update (AddCatalogPart gear8) start |> Tuple.first |> .lastTapped)
+                Expect.equal (Just gear8.name) (update (addFree gear8) start |> Tuple.first |> .lastTapped)
         , test "the touch label appears only once a part has been tapped" <|
             \_ ->
                 Expect.all
                     [ \_ -> Query.fromHtml (view start) |> Query.findAll [ Selector.class "touch-only" ] |> Query.count (Expect.equal 0)
-                    , \_ -> Query.fromHtml (view (update (AddCatalogPart gear8) start |> Tuple.first)) |> Query.findAll [ Selector.class "touch-only" ] |> Query.count (Expect.greaterThan 0)
+                    , \_ -> Query.fromHtml (view (update (addFree gear8) start |> Tuple.first)) |> Query.findAll [ Selector.class "touch-only" ] |> Query.count (Expect.greaterThan 0)
                     ]
                     ()
         ]
@@ -1509,7 +1525,7 @@ technicTests =
             Tuple.first (init testFlags)
 
         withGears =
-            Tuple.first (init (modelFlags pair8x24))
+            Tuple.first (init (freeFlags pair8x24))
 
         space =
             pressKey { key = " ", ctrl = False, shift = False }
@@ -1591,58 +1607,64 @@ technicTests =
                     , ( cleared.studio.gearAlignment, cleared.studio.dragSettles )
                     , ( start.studio.gearAlignment, start.studio.dragSettles )
                     ]
-        , test "the dock is the Technic catalog, with its tabs, when there is no URL kit" <|
+        , test "free building's dock has four tabs: Bricks, Plates, Slopes & tiles and Technic" <|
             \_ ->
                 Expect.all
                     [ \_ -> tabs withGears |> Query.count (Expect.equal 4)
                     , \_ -> Query.fromHtml (view withGears) |> Query.has [ Selector.attribute (Attr.attribute "aria-label" "Parts") ]
                     ]
                     ()
-        , test "a URL kit adds a Project tab first, selected, before the catalog tabs" <|
+        , test "a puzzle's dock is its counted kit, with no tabs" <|
             \_ ->
                 let
                     kit =
                         Tuple.first (init { testFlags | initialHash = "#parts=3648.dat:7:1,6590.dat:7:2" })
                 in
                 Expect.all
-                    [ \_ -> tabs kit |> Query.count (Expect.equal 5)
-                    , \_ -> tabs kit |> Query.first |> Query.has [ Selector.text "Project", Selector.attribute (Attr.attribute "aria-selected" "true") ]
-                    , \_ -> Query.fromHtml (view kit) |> Query.has [ Selector.attribute (Attr.attribute "aria-label" "Parts") ]
-                    , \_ -> Query.fromHtml (view kit) |> Query.hasNot [ Selector.attribute (Attr.attribute "aria-label" "Kit") ]
+                    [ \_ -> tabs kit |> Query.count (Expect.equal 0)
+                    , \_ -> Query.fromHtml (view kit) |> Query.has [ Selector.attribute (Attr.attribute "aria-label" "Kit") ]
+                    , \_ -> Query.fromHtml (view kit) |> Query.hasNot [ Selector.attribute (Attr.attribute "aria-label" "Parts") ]
                     ]
                     ()
-        , test "a Technic kit part is unlimited: the Project tab adds it past its count" <|
+        , test "a Technic kit part is counted in a puzzle: adding it stops at its count" <|
             \_ ->
                 let
                     item =
-                        Catalog.fromKitItem { part = "3649.dat", color = 7, count = 2 }
+                        { part = "3649.dat", color = 7, count = 2 }
 
                     model =
                         Tuple.first (init { testFlags | initialHash = "#parts=3649.dat:7:2" })
-                            |> update (AddCatalogPart item)
+                            |> update (AddPart item)
                             |> Tuple.first
-                            |> update (AddCatalogPart item)
+                            |> update (AddPart item)
                             |> Tuple.first
-                            |> update (AddCatalogPart item)
+                            |> update (AddPart item)
                             |> Tuple.first
                 in
-                Expect.equal 3 (List.length (Core.getPlacements model.studio))
-        , test "a Technic link keeps its kit as parts=; a catalog dock shares the model alone" <|
+                Expect.equal 2 (List.length (Core.getPlacements model.studio))
+        , test "free building shares a puzzle with the model alone and the counts of its unglued parts" <|
+            \_ ->
+                let
+                    link =
+                        shareHash withGears
+                in
+                Expect.all
+                    [ \_ -> Expect.equal False (String.contains "model=" link)
+                    , \_ -> Expect.equal True (String.contains "parts=3647.dat%3A7%3A1%2C3648.dat%3A7%3A1" link)
+                    ]
+                    ()
+        , test "a Technic link keeps its kit as parts=, and its share keeps that kit" <|
             \_ ->
                 let
                     kitLink =
                         Tuple.first (init { testFlags | initialHash = "#model=" ++ Url.percentEncode pair8x24 ++ "&parts=3648.dat%3A7%3A1" })
                 in
-                Expect.all
-                    [ \_ -> Expect.equal False (String.contains "parts=" (shareHash withGears))
-                    , \_ -> Expect.equal True (String.contains "parts=3648.dat%3A7%3A1" (shareHash kitLink))
-                    ]
-                    ()
+                Expect.equal True (String.contains "parts=3648.dat%3A7%3A1" (shareHash kitLink))
         , test "a gear added from the catalog turns the alignment on and goes on the axle line" <|
             \_ ->
                 let
                     model =
-                        update (AddCatalogPart gear8) start |> Tuple.first
+                        update (addFree gear8) start |> Tuple.first
                 in
                 Expect.all
                     [ \_ -> Expect.equal True model.studio.gearAlignment
@@ -1660,15 +1682,15 @@ technicTests =
                             model =
                                 Tuple.first (init { testFlags | initialHash = hash })
                         in
-                        ( technicMode model, model.kitFromUrl, List.length model.machine.gears )
+                        ( technicMode model, not model.free, List.length model.machine.gears )
                     )
                     [ twinGearboxHash, speedReducerHash, gearTrainHash ]
                     |> Expect.equal [ ( True, True, 1 ), ( True, True, 1 ), ( True, True, 2 ) ]
-        , test "the Twin 24T and 3-Gear Train examples list their 24T in the Project tab, and it adds a second 24T" <|
+        , test "the Twin 24T and 3-Gear Train examples keep one 24T of their kit, and it places a second" <|
             \_ ->
                 let
                     kit24 =
-                        Catalog.fromKitItem { part = "3648.dat", color = 7, count = 1 }
+                        { part = "3648.dat", color = 7, count = 2 }
 
                     count24 model =
                         List.length (List.filter (\p -> p.part == "3648.dat") (Core.getPlacements model.studio))
@@ -1677,8 +1699,8 @@ technicTests =
                         List.map (\hash -> Tuple.first (init { testFlags | initialHash = hash })) [ twinGearboxHash, gearTrainHash ]
                 in
                 Expect.all
-                    [ \_ -> Expect.all (List.map (\m _ -> Query.fromHtml (view m) |> Query.has [ Selector.attribute (Attr.attribute "aria-label" "Add 24T Gear (3648)") ]) starts) ()
-                    , \_ -> List.map (\m -> count24 (Tuple.first (update (AddCatalogPart kit24) m))) starts |> Expect.equal [ 2, 2 ]
+                    [ \_ -> List.map (\m -> remainingForItem m kit24) starts |> Expect.equal [ 1, 1 ]
+                    , \_ -> List.map (\m -> count24 (Tuple.first (update (AddPart kit24) m))) starts |> Expect.equal [ 2, 2 ]
                     ]
                     ()
         , test "the 3-gear train example is accomplished as it loads" <|
@@ -1693,7 +1715,7 @@ technicTests =
                     model =
                         Tuple.first (init { testFlags | initialHash = cottageHash })
                 in
-                Expect.equal ( False, True ) ( technicMode model, model.kitFromUrl )
+                Expect.equal ( False, True ) ( technicMode model, not model.free )
         ]
 
 

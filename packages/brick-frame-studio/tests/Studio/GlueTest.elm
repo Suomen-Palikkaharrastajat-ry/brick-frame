@@ -271,6 +271,30 @@ coreSuite =
                         Core.undo locked
                 in
                 Expect.equal True (Core.isGlued 1 undone)
+        , test "recolouring a mixed selection changes only its unglued parts" <|
+            \_ ->
+                let
+                    ( recoloured, _, _ ) =
+                        Core.update (Core.SetColorSelection 1) (select [ 0, 1 ] (modelWith boardText))
+
+                    colours =
+                        Core.getPlacements recoloured |> List.map (\p -> ( p.id, p.color ))
+                in
+                Expect.equal [ ( 0, 4 ), ( 1, 1 ), ( 2, 4 ) ] colours
+        , test "recolouring a glued-only selection changes nothing" <|
+            \_ ->
+                let
+                    base =
+                        select [ 0 ] (modelWith boardText)
+
+                    ( recoloured, _, events ) =
+                        Core.update (Core.SetColorSelection 1) base
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (written base) (written recoloured)
+                    , \_ -> Expect.equal [] events
+                    ]
+                    ()
         , test "clearUnglued keeps the glued parts and drops the rest" <|
             \_ ->
                 let

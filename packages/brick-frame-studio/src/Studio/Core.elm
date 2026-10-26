@@ -38,6 +38,7 @@ module Studio.Core exposing
     , selectAll
     , selectionCount
     , selectionGlued
+    , selectionMovable
     , setCollisionMode
     , setDragMode
     , setDragSettles
@@ -712,13 +713,21 @@ clearUnglued model =
     resetDocument kept model
 
 
-{-| The selected placements a move, turn, nudge or delete may change: the
+{-| The selected placements a move, turn, nudge, delete or recolour may change: the
 selection without the glued parts. Every such command uses this, so a glued part
 stays where it is, and a mixed selection moves only its unglued parts.
 -}
 movableSelection : Model -> Set Int
 movableSelection model =
     Set.diff model.selection (Document.gluedIds model.document)
+
+
+{-| Whether the selection holds a part that a move or recolour may change (a
+selected part that is not glued). With only glued parts selected, `False`.
+-}
+selectionMovable : Model -> Bool
+selectionMovable model =
+    not (Set.isEmpty (movableSelection model))
 
 
 {-| In puzzle mode an undo or redo that would unglue a part does nothing. `stack`
@@ -1486,10 +1495,14 @@ updateInner msg model =
             if Set.isEmpty model.selection then
                 ( { model | activeColour = newColor }, Cmd.none, [] )
 
+            else if Set.isEmpty (movableSelection model) then
+                -- A glued part is locked, its colour included.
+                ( model, Cmd.none, [] )
+
             else
                 let
                     recolorPairs =
-                        List.map (\id -> ( id, newColor )) (Set.toList model.selection)
+                        List.map (\id -> ( id, newColor )) (Set.toList (movableSelection model))
 
                     ( newDoc, newHistory ) =
                         Edit.record (Recolor recolorPairs) model.document model.history

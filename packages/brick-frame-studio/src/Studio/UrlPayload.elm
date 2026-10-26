@@ -9,6 +9,7 @@ module Studio.UrlPayload exposing
     , encodePlayHash
     , encodePlayModelHash
     , extractKit
+    , kitOfPlacements
     )
 
 {-| URL hash encoding and decoding for exporting Studio models and part kits
@@ -35,10 +36,17 @@ type alias PartKitItem =
 
 
 {-| Decoded payload from a URL hash fragment.
+
+`free` is set by `free=1` (Brick Play's free building mode). `partsListed` is set
+when a `parts=` key is present at all, even an empty one, so an empty kit is kept
+apart from no kit.
+
 -}
 type alias Payload =
     { parts : List PartKitItem
     , modelText : Maybe String
+    , free : Bool
+    , partsListed : Bool
     }
 
 
@@ -46,6 +54,14 @@ type alias Payload =
 -}
 extractKit : Document -> List PartKitItem
 extractKit doc =
+    kitOfPlacements (Document.mainPlacements doc)
+
+
+{-| Group placements by part file and colour into a kit inventory, sorted by file
+then colour, each with its count.
+-}
+kitOfPlacements : List Document.Placement -> List PartKitItem
+kitOfPlacements placements =
     let
         counts =
             List.foldl
@@ -66,7 +82,7 @@ extractKit doc =
                         acc
                 )
                 Dict.empty
-                (Document.mainPlacements doc)
+                placements
     in
     counts
         |> Dict.values
@@ -196,6 +212,8 @@ decodeHash rawHash =
     in
     { parts = parts
     , modelText = modelText
+    , free = Dict.get "free" entries == Just "1"
+    , partsListed = Dict.member "parts" entries
     }
 
 

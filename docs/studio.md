@@ -97,8 +97,11 @@ In `Studio.Core`:
   gizmo handles and the gear alignment use. A press on a glued part does not start
   a drag (it selects, or does nothing in `DragPartsOnly`). A mixed selection moves
   only its unglued parts. Glued parts stay obstacles for snapping and free spots.
+  A glued part's colour does not change either (`SetColorSelection` uses the same
+  selection).
 - `setGlueEditable False` (puzzle mode) makes `setGlued` a no-op and refuses
   undo or redo that would unglue a part. Default `True`.
+- `selectionMovable` says whether the selection holds an unglued part.
 - `clearUnglued` resets the document to its glued parts. `resetDocument` (Clear)
   is unchanged.
 
@@ -230,6 +233,17 @@ bar to the component. It keeps the chrome minimal: no title badge (a visually
 hidden `h1` keeps the heading), one top-right menu, and a compact dock. Technic
 mode (below) adds the gear chrome to the same view.
 
+- **Modes.** The URL hash picks free building (no hash, or `free=1`) or a puzzle
+  (any other hash). Free building's dock is the curated catalog (`Free.Catalog`:
+  Bricks, Plates, Slopes & tiles, Technic), unlimited, with a colour row for the
+  parts added next and a search over the whole part library. The search reads
+  `parts-index.json` once, on first use, through `Studio.PartIndex` and the shared
+  matcher `Studio.PartSearch` (the palette uses the same ranking). Glue is free
+  building only: the Glue toggle in the action bar and `L` (`Shortcuts`) glue or
+  unglue the selection, and a glued selection shows "(glued)" with its move buttons
+  off. A puzzle's dock is its counted kit, its glued parts are locked, and Clear
+  keeps them (`Core.clearUnglued`). The hash formats are in
+  [examples.md](examples.md).
 - **No gizmo.** `Core.setGizmoStyle NoGizmo` draws and hit-tests no arrows or
   rings. A body drag still moves a part on the view-relative plane
   (`Studio.DragPlane`), and turning, raising and lowering go through the keyboard
@@ -269,9 +283,9 @@ mode (below) adds the gear chrome to the same view.
   left is disabled, not hidden.
 - **Dock height.** The dock is `PartCard.compactPanelHeight` (130 px) tall, the same
   as the camera globe panel, and its bottom edge sits on the globe's
-  (0.75 rem from the bottom). The Technic catalog's category tabs are a narrow vertical
-  column (`role="tablist"`, `aria-orientation="vertical"`) on the dock's left; the
-  card row scrolls sideways when it overflows.
+  (0.75 rem from the bottom). The free dock has the colour row on its left, then a row
+  of tabs (`role="tablist"`) with the search box, above the card row, which scrolls
+  sideways when it overflows. A puzzle's counted kit is one row of cards.
 - **Mesh status (Technic mode).** With one gear selected, a status pill says how
   it sits against its nearest other gear (`Machine.gearFeedback`, worded by
   `Machine.feedbackText`), e.g. `24T ↔ 24T: 40 LDU apart — needs 60` or
@@ -456,7 +470,7 @@ The **Export** menu in the header provides both file downloads and instant cross
 1. **File exports**: Download the active document as an LDraw model (`.ldr`), multi-part archive (`.mpd`), WebGL/glTF 3D scene (`.gltf`), AR model (`.usdz` for iOS Quick Look), or take a 1080p picture (`.png`) of the current view.
 2. **Send to App**: Transfer the project directly into companion Palikkakehys applications without server roundtrips:
    - **Brick Play**: Exports the document as a limited building kit inventory. Placements are grouped by part file and colour into a piece kit (`Studio.UrlPayload.extractKit`). In Brick Play, users build freely within the constraints of this kit, spawning bricks from inventory cards in the bottom dock until the available counts are exhausted.
-   - **Brick Play with model**: Exports the complete assembled model alongside its part kit. The model loads directly onto the canvas, where Technic mode (mechanism simulation, motor control, and accomplishment evaluation) switches on by itself, and the kit is counted in the dock outside Technic mode; in Technic mode it is a Project tab of the unlimited catalog.
+   - **Brick Play with model**: Exports the complete assembled model alongside its part kit. The model loads directly onto the canvas as a puzzle, where Technic mode (mechanism simulation, motor control, and accomplishment evaluation) switches on by itself, and the kit is always counted in the dock.
 
 Each companion app entry opens the target app in a new browser tab and includes a **Copy Link** button that copies the shareable URL to the clipboard, displaying an ephemeral toast confirmation.
 

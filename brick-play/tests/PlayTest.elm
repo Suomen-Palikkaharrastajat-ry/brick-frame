@@ -505,11 +505,14 @@ kitPairs model =
     List.map (\item -> ( item.part, item.color )) model.inventory
 
 
+{-| A puzzle with the default kit (a bare `model=` link). No hash would be free
+building, which has its own tests in FreeTest.
+-}
 testFlags : Flags
 testFlags =
     { ldrawBase = "/ldraw"
     , ldrawFallbackBase = ""
-    , initialHash = ""
+    , initialHash = "#model="
     , supportsPointerEvents = True
     }
 
