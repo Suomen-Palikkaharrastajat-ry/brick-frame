@@ -210,9 +210,11 @@ the lattice for its new orientation, moving the whole selection rigidly, unless 
 mode is on; a nudge is relative, so it keeps the lattice it had. A rotate-gizmo arc
 drag does the same once, on release (not during the drag), in the same undo step.
 The studio workspace (`studio-app`) has its own turn, drag and delete paths and applies
-the same rules: an arc release re-snaps, and glued parts (`0 !PALIKKA GLUED`) are
-never moved, turned, recoloured or deleted there, while a duplicate of a glued part
-is an unglued copy. Brick Play adds
+the same rules: an arc release, the arrow and X/Y/Z keys and the action-bar turns all
+re-snap (`Workspace.latticeMovesFor`, the same rule as `rotateSelectionBy`), in the
+same undo step as the turn, and nothing re-snaps in fine mode or at move step 1, where
+placement is free. Glued parts (`0 !PALIKKA GLUED`) are never moved, turned, recoloured
+or deleted there, while a duplicate of a glued part is an unglued copy. Brick Play adds
 every dock piece at `freeSpotFor`, so the first lands in the middle of the view
 and the next ones beside the selected piece. `Core.setDragSettles False` makes
 horizontal-plane body drags keep the press-time height instead of settling on

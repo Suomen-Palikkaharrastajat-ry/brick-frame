@@ -1171,11 +1171,14 @@ updatePage msg model =
                     case Edit.selectionCenter ids m.document of
                         Just pivot ->
                             commit
-                                (Rotate ids
-                                    { pivot = pivot
-                                    , axis = axis
-                                    , radians = degrees (toFloat (sign * m.rotateStep))
-                                    }
+                                (turnCommand m
+                                    ids
+                                    (Rotate ids
+                                        { pivot = pivot
+                                        , axis = axis
+                                        , radians = degrees (toFloat (sign * m.rotateStep))
+                                        }
+                                    )
                                 )
                                 m
 
@@ -4419,7 +4422,7 @@ turnSelection turn ids model =
                         { azimuth = model.viewport.camera.azimuth, rotateStepDegrees = model.rotateStep }
                         turn
             in
-            commit (Rotate ids { pivot = pivot, axis = axis, radians = radians }) model
+            commit (turnCommand model ids (Rotate ids { pivot = pivot, axis = axis, radians = radians })) model
 
         Nothing ->
             ( model, Cmd.none )
@@ -4437,84 +4440,115 @@ isBodyPress drag =
             False
 
 
-{-| The move that puts the first studded part of an arc turn back on the stud
-lattice, applied to the whole dragged group (the same rule as `Studio.Core`'s
-`rotateSelectionBy`). It is worked out in world space and expressed in the
-active submodel's frame. Nothing in fine mode, for a non-arc drag, or when no
-dragged part is studded.
+{-| The lattice re-snap of an arc drag's group (see `latticeMovesFor`), worked out
+for the document as the drag left it. Nothing for a non-arc drag.
 -}
 arcLatticeMoves : Model -> Drag -> List Command
 arcLatticeMoves model drag =
     case drag.kind of
         ArcDrag _ ->
-            let
-                accum =
-                    case List.reverse model.context.path of
-                        head :: _ ->
-                            head.accumulatedTransform
-
-                        [] ->
-                            Mat4.identity
-
-                resolveLines name =
-                    case Dict.get name model.viewport.partCache of
-                        Just (Resolve.Loaded lines) ->
-                            Just lines
-
-                        _ ->
-                            Nothing
-
-                studded =
-                    drag.ids
-                        |> List.filterMap (\id -> Document.getPlacement id model.document)
-                        |> List.filterMap
-                            (\p ->
-                                let
-                                    conn =
-                                        Connectivity.extractPartConnectivity p.part resolveLines
-                                in
-                                if Connectivity.isStudded conn then
-                                    Just ( conn, p )
-
-                                else
-                                    Nothing
-                            )
-                        |> List.head
-            in
-            case ( studded, Mat4.inverse accum ) of
-                ( Just ( conn, p ), Just inv ) ->
-                    let
-                        worldMatrix =
-                            Mat4.mul accum p.matrix
-
-                        origin =
-                            Transform.position worldMatrix
-
-                        offset =
-                            Connectivity.studOffset conn worldMatrix
-
-                        dx =
-                            DragPlane.snapTo offset.x studPitch (Vec3.getX origin) - Vec3.getX origin
-
-                        dz =
-                            DragPlane.snapTo offset.z studPitch (Vec3.getZ origin) - Vec3.getZ origin
-                    in
-                    if model.fineMove || (abs dx < 1.0e-4 && abs dz < 1.0e-4) then
-                        []
-
-                    else
-                        [ Translate drag.ids
-                            (Vec3.sub
-                                (Mat4.transform inv (Vec3.add origin (vec3 dx 0 dz)))
-                                (Mat4.transform inv origin)
-                            )
-                        ]
-
-                _ ->
-                    []
+            latticeMovesFor model model.document drag.ids
 
         _ ->
             []
+
+
+{-| A turn of `ids` as one command: the turn, then the lattice re-snap that
+`latticeMovesFor` works out for the turned document (a 1×2 turned 90° has its
+studs on the other axis). Both go in one undo step. A glued part is never in
+`ids`, so it never moves.
+-}
+turnCommand : Model -> List Int -> Command -> Command
+turnCommand model ids turned =
+    let
+        ( turnedDocument, _ ) =
+            Edit.apply turned model.document
+    in
+    case latticeMovesFor model turnedDocument ids of
+        [] ->
+            turned
+
+        moves ->
+            Group (turned :: moves)
+
+
+{-| The move that puts the first studded part of `ids` back on the stud lattice
+in `document`, applied to the whole selection so a group moves rigidly (the same
+rule as `Studio.Core`'s `restudDelta`). It is worked out in world space and
+expressed in the active submodel's frame. Nothing in fine mode or at move step 1
+(free placement), or when no id is studded or already on the lattice.
+-}
+latticeMovesFor : Model -> Document -> List Int -> List Command
+latticeMovesFor model document ids =
+    if model.fineMove || model.gridStep <= 1 then
+        []
+
+    else
+        let
+            accum =
+                case List.reverse model.context.path of
+                    head :: _ ->
+                        head.accumulatedTransform
+
+                    [] ->
+                        Mat4.identity
+
+            resolveLines name =
+                case Dict.get name model.viewport.partCache of
+                    Just (Resolve.Loaded lines) ->
+                        Just lines
+
+                    _ ->
+                        Nothing
+
+            studded =
+                ids
+                    |> List.filterMap (\id -> Document.getPlacement id document)
+                    |> List.filterMap
+                        (\p ->
+                            let
+                                conn =
+                                    Connectivity.extractPartConnectivity p.part resolveLines
+                            in
+                            if Connectivity.isStudded conn then
+                                Just ( conn, p )
+
+                            else
+                                Nothing
+                        )
+                    |> List.head
+        in
+        case ( studded, Mat4.inverse accum ) of
+            ( Just ( conn, p ), Just inv ) ->
+                let
+                    worldMatrix =
+                        Mat4.mul accum p.matrix
+
+                    origin =
+                        Transform.position worldMatrix
+
+                    offset =
+                        Connectivity.studOffset conn worldMatrix
+
+                    dx =
+                        DragPlane.snapTo offset.x studPitch (Vec3.getX origin) - Vec3.getX origin
+
+                    dz =
+                        DragPlane.snapTo offset.z studPitch (Vec3.getZ origin) - Vec3.getZ origin
+                in
+                if abs dx < 1.0e-4 && abs dz < 1.0e-4 then
+                    []
+
+                else
+                    [ Translate ids
+                        (Vec3.sub
+                            (Mat4.transform inv (Vec3.add origin (vec3 dx 0 dz)))
+                            (Mat4.transform inv origin)
+                        )
+                    ]
+
+            _ ->
+                []
 
 
 {-| Finish a drag: the document already shows the move or rotation, so record its undo,

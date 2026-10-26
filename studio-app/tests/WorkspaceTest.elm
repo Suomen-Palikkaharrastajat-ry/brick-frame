@@ -416,11 +416,13 @@ editingSuite =
                                 |> step SelectAll
                                 |> step (RotateSelection AxisY 1)
                     in
-                    -- Both bricks turn about their midpoint (x = 150): the one at
-                    -- x = 0 ends up on the same X as the one at x = 300.
+                    -- Both bricks turn about their midpoint (x = 150), which is off the stud
+                    -- lattice once turned, so the pair moves together onto it (x = 140 or 160).
+                    -- The one at x = 0 ends up on the same X as the one at x = 300.
                     Expect.all
-                        [ \m -> Expect.within (Expect.Absolute 0.01) 150 (Maybe.withDefault 0 (positionOf 0 m))
-                        , \m -> Expect.within (Expect.Absolute 0.01) 150 (Maybe.withDefault 0 (positionOf 1 m))
+                        [ \m -> Expect.equal True (List.all (\id -> onStudLattice id m) [ 0, 1 ])
+                        , \m -> Expect.within (Expect.Absolute 10.0001) 150 (Maybe.withDefault 0 (positionOf 0 m))
+                        , \m -> Expect.within (Expect.Absolute 0.01) (Maybe.withDefault 0 (positionOf 0 m)) (Maybe.withDefault 0 (positionOf 1 m))
                         ]
                         after
             , test "the turn step can be 15°" <|
@@ -954,7 +956,8 @@ editingSuite =
                             step (ViewportMsg (Viewport.KeyPressed (pressed "ArrowRight" False))) ready
                     in
                     Expect.all
-                        [ \m -> Expect.within (Expect.Absolute 0.01) 150 (Maybe.withDefault 0 (positionOf 0 m))
+                        [ \m -> Expect.within (Expect.Absolute 10.0001) 150 (Maybe.withDefault 0 (positionOf 0 m))
+                        , \m -> Expect.equal True (onStudLattice 0 m)
                         , \m -> Expect.equal (cameraView ready) (cameraView m)
                         , \m -> Expect.equal False (Set.member "ArrowRight" m.viewport.heldKeys)
                         ]
@@ -3679,6 +3682,85 @@ onStudLattice id model =
             False
 
 
+{-| Two 1×2 bricks (3004.dat, two studs along X) with their origins on the stud
+lattice, the second 300 LDU along X. A glued first brick comes from `brick12GluedFile`.
+-}
+brick12File : String
+brick12File =
+    "1 4 0 0 10 1 0 0 0 1 0 0 0 1 3004.dat\n1 14 300 0 10 1 0 0 0 1 0 0 0 1 3004.dat\n"
+
+
+brick12GluedFile : String
+brick12GluedFile =
+    "0 !PALIKKA GLUED\n" ++ brick12File
+
+
+brick12Part : String
+brick12Part =
+    String.join "\n"
+        [ "4 16 -20 0 -10 20 0 -10 20 0 10 -20 0 10"
+        , "4 16 -20 -24 -10 20 -24 -10 20 -24 10 -20 -24 10"
+        , "4 16 -20 0 10 20 0 10 20 -24 10 -20 -24 10"
+        , "4 16 -20 0 -10 20 0 -10 20 -24 -10 -20 -24 -10"
+        , "4 16 -20 0 -10 -20 0 10 -20 -24 10 -20 -24 -10"
+        , "4 16 20 0 -10 20 0 10 20 -24 10 20 -24 -10"
+        ]
+
+
+brick12Model : String -> Workspace.Model
+brick12Model file =
+    start
+        |> Workspace.update (FileTextReceived file)
+        |> Tuple.first
+        |> Workspace.update (ViewportMsg (Viewport.PartLoaded "3004.dat" (Ok brick12Part)))
+        |> Tuple.first
+        |> Workspace.update (ViewportMsg (Viewport.WindowResize 800 600))
+        |> Tuple.first
+
+
+turnLeft : { direction : Shortcuts.TurnDirection, fortyFive : Bool }
+turnLeft =
+    { direction = Shortcuts.TurnLeft, fortyFive = False }
+
+
+{-| The selection turned a quarter by dragging its first rotate arc from the press
+point round the arc centre, as the arc test does. Nothing when no arc is shown.
+-}
+arcQuarterTurn : Workspace.Model -> Maybe Workspace.Model
+arcQuarterTurn ready =
+    Edit.selectionCenter (selected ready) ready.document
+        |> Maybe.map (Gizmo.arcHandles ready.viewport.camera 800 600)
+        |> Maybe.andThen List.head
+        |> Maybe.andThen
+            (\arc ->
+                case arc.screenPoints of
+                    ( sx, sy ) :: _ ->
+                        let
+                            ( cx, cy ) =
+                                arc.screenCenter
+
+                            ( ex, ey ) =
+                                ( cx + (sy - cy), cy - (sx - cx) )
+                        in
+                        Just (ready |> mouseDown sx sy False |> mouseMove ex ey |> mouseUp ex ey)
+
+                    [] ->
+                        Nothing
+            )
+
+
+{-| Whether two ground positions (document X and Z) agree within a hundredth of an LDU.
+-}
+sameGround : Maybe ( Float, Float ) -> Maybe ( Float, Float ) -> Bool
+sameGround a b =
+    case ( a, b ) of
+        ( Just ( x0, z0 ), Just ( x1, z1 ) ) ->
+            abs (x0 - x1) < 0.01 && abs (z0 - z1) < 0.01
+
+        _ ->
+            False
+
+
 nudgeRight : Shortcuts.Nudge
 nudgeRight =
     Shortcuts.Nudge { direction = Shortcuts.Right, fine = False }
@@ -3828,6 +3910,98 @@ glueSuite =
 
                         Nothing ->
                             Expect.fail "expected rotation arc handle"
+            ]
+        , describe "keyboard turns and the stud lattice"
+            [ test "a keyboard turn of a 1x2 puts it on the lattice, where an arc turn does" <|
+                \_ ->
+                    let
+                        loaded12 =
+                            brick12Model brick12File
+
+                        ready =
+                            click (screenOf 0 loaded12) loaded12
+                    in
+                    case arcQuarterTurn (step (UseTool RotateTool) ready) of
+                        Just arc ->
+                            Expect.all
+                                [ \m -> Expect.equal True (onStudLattice 0 m)
+                                , \m -> Expect.equal True (sameGround (groundOf 0 m) (groundOf 0 arc))
+                                ]
+                                (step (TurnSelection turnLeft) ready)
+
+                        Nothing ->
+                            Expect.fail "expected rotation arc handle"
+            , test "one undo takes back a keyboard turn and its lattice move together" <|
+                \_ ->
+                    let
+                        loaded12 =
+                            brick12Model brick12File
+
+                        ready =
+                            click (screenOf 0 loaded12) loaded12
+
+                        turned =
+                            step (TurnSelection turnLeft) ready
+
+                        matrices m =
+                            List.map (\id -> Maybe.map (\p -> Mat4.toRecord p.matrix) (Document.getPlacement id m.document)) [ 0, 1 ]
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal True (onStudLattice 0 turned)
+                        , \_ -> Expect.notEqual (matrices ready) (matrices turned)
+                        , \_ -> Expect.equal (matrices ready) (matrices (step Undo turned))
+                        ]
+                        ()
+            , test "at move step 1 a keyboard turn is not re-snapped" <|
+                \_ ->
+                    let
+                        base =
+                            brick12Model brick12File
+
+                        atStepOne =
+                            step (SetGridStep 1) base
+
+                        turnedAtStepOne =
+                            step (TurnSelection turnLeft) (click (screenOf 0 atStepOne) atStepOne)
+
+                        turnedAtStudStep =
+                            step (TurnSelection turnLeft) (click (screenOf 0 base) base)
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal False (onStudLattice 0 turnedAtStepOne)
+                        , \_ -> Expect.equal True (onStudLattice 0 turnedAtStudStep)
+                        ]
+                        ()
+            , test "fine mode skips the re-snap as well" <|
+                \_ ->
+                    let
+                        base =
+                            brick12Model brick12File
+
+                        fine =
+                            step ToggleFineMove base
+                    in
+                    step (TurnSelection turnLeft) (click (screenOf 0 fine) fine)
+                        |> onStudLattice 0
+                        |> Expect.equal False
+            , test "a glued 1x2 stays where it is while the free one turns onto the lattice" <|
+                \_ ->
+                    let
+                        ready =
+                            step SelectAll (brick12Model brick12GluedFile)
+
+                        turned =
+                            step (TurnSelection turnLeft) ready
+
+                        glued m =
+                            Maybe.map (\p -> Mat4.toRecord p.matrix) (Document.getPlacement 0 m.document)
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal (glued ready) (glued m)
+                        , \m -> Expect.notEqual (groundOf 1 ready) (groundOf 1 m)
+                        , \m -> Expect.equal True (onStudLattice 1 m)
+                        ]
+                        turned
             ]
         , describe "move steps"
             [ test "at move step 8 a sideways nudge still moves one stud" <|
