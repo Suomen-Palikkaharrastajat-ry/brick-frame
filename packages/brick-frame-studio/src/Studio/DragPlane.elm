@@ -354,8 +354,10 @@ supportTop footprint others =
   - `plane`, `cursor` — the working plane and where the cursor ray meets it
     (render space); `cursor` minus `plane.point` is the drag delta.
   - `original` — the lead part's position when the drag started (LDraw).
-  - `gridStep` — snap X/Z (and Y in `Facing` mode) to this grid, in LDU; X and Z
-    are shifted by `offset` (see `snapTo`).
+  - `gridStep` — snap X/Z to this grid, in LDU; X and Z are shifted by `offset`
+    (see `snapTo`).
+  - `verticalStep` — snap Y to this grid in `Facing` mode, in LDU (a height
+    step need not match the X/Z grid).
   - `offset` — the lead part's stud offset (`LDraw.Connectivity.studOffset`), so a
     studded part lands on the stud lattice; `{ x = 0, z = 0 }` for Technic parts.
   - `elevationOffset` — the wheel lift (LDraw; negative is up), added last.
@@ -370,6 +372,7 @@ type alias Target =
     , cursor : Vec3
     , original : Vec3
     , gridStep : Float
+    , verticalStep : Float
     , offset : { x : Float, z : Float }
     , elevationOffset : Float
     , footprint : Box
@@ -403,8 +406,11 @@ targetPosition t =
         step =
             max 1.0e-3 t.gridStep
 
-        snap v =
-            toFloat (round (v / step)) * step
+        vertical =
+            max 1.0e-3 t.verticalStep
+
+        snapY v =
+            toFloat (round (v / vertical)) * vertical
 
         ox =
             Vec3.getX t.original
@@ -440,7 +446,7 @@ targetPosition t =
                         restingOn (supportTop moved t.others)
 
                     Facing ->
-                        oy + snap (Vec3.getY delta)
+                        oy + snapY (Vec3.getY delta)
 
         lowest =
             if t.keepHeight then

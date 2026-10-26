@@ -1525,32 +1525,74 @@ doubleTapPixels =
     30
 
 
-{-| Where the ring anchors: the screen point of the part's centre, or `Nothing`
-while the part is off screen or behind the eye.
+{-| Where the ring anchors: the screen rectangle of the part's bounding box (the
+projection of its eight corners), or `Nothing` while the part is off screen or
+behind the eye.
 -}
-partScreenPoint : Model -> Int -> Maybe ( Float, Float )
-partScreenPoint model id =
+partScreenRect : Model -> Int -> Maybe Ring.Rect
+partScreenRect model id =
     case List.filter (\p -> p.id == id) (Core.getPlacements model.studio) of
         placed :: _ ->
-            Ring.screenPoint
+            let
+                corners =
+                    boxCorners (Core.partBox placed.part model.studio)
+                        |> List.map (\corner -> Gizmo.toRender (Mat4.transform placed.matrix corner))
+            in
+            Ring.screenRect
                 model.studio.viewport.camera
                 model.studio.viewport.width
                 model.studio.viewport.height
-                (partCentre model placed)
+                corners
 
         [] ->
             Nothing
 
 
-{-| A placed part's centre in render space: its bounding sphere's centre once the
-scene has it, else its origin.
+{-| The eight corners of a part's local box (LDraw).
 -}
-partCentre : Model -> Document.Placement -> Vec3
-partCentre model placed =
-    model.studio.viewport.instancedScene
-        |> Maybe.andThen (\scene -> List.filter (\p -> p.source == placed.id) scene.placements |> List.head)
-        |> Maybe.map .center
-        |> Maybe.withDefault (Gizmo.toRender (Mat4.transform placed.matrix (Vec3.vec3 0 0 0)))
+boxCorners : { min : Vec3, max : Vec3 } -> List Vec3
+boxCorners box =
+    let
+        xs =
+            [ Vec3.getX box.min, Vec3.getX box.max ]
+
+        ys =
+            [ Vec3.getY box.min, Vec3.getY box.max ]
+
+        zs =
+            [ Vec3.getZ box.min, Vec3.getZ box.max ]
+    in
+    List.concatMap
+        (\x ->
+            List.concatMap (\y -> List.map (\z -> Vec3.vec3 x y z) zs) ys
+        )
+        xs
+
+
+{-| The screen areas the context ring keeps clear of when it can: the dock band
+along the bottom (a generous bound, since the gear, tidy and hint rows sit above
+the dock) and, on a wide window, the camera globe in the bottom-right corner.
+-}
+ringAvoid : Model -> List Ring.Rect
+ringAvoid model =
+    let
+        width =
+            toFloat model.windowWidth
+
+        height =
+            toFloat model.windowHeight
+
+        dock =
+            { left = 0, top = height - 12 - 130 - 120, right = width, bottom = height }
+
+        globe =
+            { left = width - 12 - 200, top = height - 12 - 200, right = width, bottom = height }
+    in
+    if isNarrow model then
+        [ dock ]
+
+    else
+        [ dock, globe ]
 
 
 syncKeyPause : Model -> Model
@@ -2548,14 +2590,15 @@ viewCanvas model =
 
 
 {-| The context ring for the selected part (`Ring`). It is shown only while a part
-is selected by a double-click or double-tap and its centre is on screen.
+is selected by a double-click or double-tap and its box is on screen.
 -}
 ringView : Model -> Html Msg
 ringView model =
     case model.ringPart of
         Just id ->
             Ring.view
-                { anchor = partScreenPoint model id
+                { part = partScreenRect model id
+                , avoid = ringAvoid model
                 , canvas = ( toFloat model.studio.viewport.width, toFloat model.studio.viewport.height )
                 , free = model.free
                 , glued = Core.selectionGlued model.studio

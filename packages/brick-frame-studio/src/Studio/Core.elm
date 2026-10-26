@@ -2557,6 +2557,7 @@ movePlaneDrag initialDrag grab ( x, y ) model =
                         , cursor = cursorPoint
                         , original = origPos
                         , gridStep = dragGridStep model
+                        , verticalStep = dragGridStep model
                         , offset = Connectivity.studOffset leadConn leadP.matrix
                         , elevationOffset = drag.elevationOffset
                         , footprint = footprint
@@ -2727,27 +2728,43 @@ endDrag model =
                     inversePairs =
                         List.map (\p -> ( p.id, p.matrix )) originalPlacements
 
+                    -- An arc turn can leave a studded part off the stud lattice; the
+                    -- re-snap (not during the drag) joins the turn's undo step, as in
+                    -- `rotateSelectionBy`. Glued parts are never in `drag.ids`.
+                    latticeMoves =
+                        case drag.kind of
+                            ArcDrag _ ->
+                                restudDelta model model.document drag.ids
+                                    |> Maybe.map (\delta -> [ Translate drag.ids delta ])
+                                    |> Maybe.withDefault []
+
+                            _ ->
+                                []
+
+                    ( snapped, snapUndo ) =
+                        Edit.apply (Group latticeMoves) model.document
+
                     rotations =
                         if model.gearAlignment then
                             GearAlign.alignmentCommandsKeeping (Document.gluedIds model.document)
                                 model.viewport.partCache
-                                { before = drag.original, after = model.document }
+                                { before = drag.original, after = snapped }
 
                         else
                             []
 
                     ( aligned, rotationUndo ) =
-                        Edit.apply (Group rotations) model.document
+                        Edit.apply (Group rotations) snapped
 
-                    -- Undo the turns first (they came last), then put the dragged
-                    -- placements back where the drag started.
+                    -- Undo the turns first (they came last), then the re-snap, then put
+                    -- the dragged placements back where the drag started.
                     undoCommand =
-                        case rotations of
+                        case latticeMoves ++ rotations of
                             [] ->
                                 SetMatrix inversePairs
 
                             _ ->
-                                Group [ rotationUndo, SetMatrix inversePairs ]
+                                Group [ rotationUndo, snapUndo, SetMatrix inversePairs ]
 
                     updated =
                         { model

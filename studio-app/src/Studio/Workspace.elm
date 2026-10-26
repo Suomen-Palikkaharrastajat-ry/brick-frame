@@ -798,7 +798,7 @@ nudgeDelta model (StudioShortcuts.Nudge nudge) =
                 1
 
             else
-                toFloat model.gridStep
+                lateralStep model
 
         vertical =
             if nudge.fine || model.fineMove then
@@ -958,7 +958,7 @@ updatePage msg model =
             stepHistory Edit.redo model
 
         DeleteSelection ->
-            whenSelected (\ids -> commit (Remove ids)) model
+            whenMovable (\ids -> commit (Remove ids)) model
 
         DuplicateSelection ->
             whenSelected duplicate model
@@ -1166,7 +1166,7 @@ updatePage msg model =
             ( { model | context = { context | coordinateFrame = nextFrame } }, Cmd.none )
 
         RotateSelection axis sign ->
-            whenSelected
+            whenMovable
                 (\ids m ->
                     case Edit.selectionCenter ids m.document of
                         Just pivot ->
@@ -1185,7 +1185,7 @@ updatePage msg model =
                 model
 
         SetColorSelection colour ->
-            whenSelected (\ids -> commit (Recolor (List.map (\id -> ( id, colour )) ids))) model
+            whenMovable (\ids -> commit (Recolor (List.map (\id -> ( id, colour )) ids))) model
 
         NextGridStep ->
             ( { model | gridStep = nextStep gridSteps model.gridStep }, Cmd.none )
@@ -1197,10 +1197,10 @@ updatePage msg model =
             ( { model | gridStep = nextStep (List.reverse gridSteps) model.gridStep }, Cmd.none )
 
         NudgeSelection nudge ->
-            whenSelected (\ids m -> commit (Translate ids (nudgeDelta m nudge)) m) model
+            whenMovable (\ids m -> commit (Translate ids (nudgeDelta m nudge)) m) model
 
         TurnSelection turn ->
-            whenSelected (turnSelection turn) model
+            whenMovable (turnSelection turn) model
 
         NextSnapDistance ->
             ( { model | snapDistance = nextSnapStep snapSteps model.snapDistance }, Cmd.none )
@@ -1694,7 +1694,7 @@ updatePage msg model =
                         }
 
                     ( recoloured, recolourCmd ) =
-                        whenSelected (\ids -> commit (Recolor (List.map (\id -> ( id, code )) ids))) picked
+                        whenMovable (\ids -> commit (Recolor (List.map (\id -> ( id, code )) ids))) picked
 
                     ( previewed, previewCmd ) =
                         case model.palette.armed of
@@ -1720,7 +1720,7 @@ updatePage msg model =
             ( { model | preview = preview }, Cmd.map PreviewMsg previewCmd )
 
         SetPosition axis value ->
-            whenSelected
+            whenMovable
                 (\ids m ->
                     case Edit.selectionCenter ids m.document of
                         Just center ->
@@ -1762,7 +1762,7 @@ updatePage msg model =
                 model
 
         SetRotation axis degrees ->
-            case Set.toList model.selection |> List.filterMap (\id -> Document.getPlacement id model.document) of
+            case movableIds model |> List.filterMap (\id -> Document.getPlacement id model.document) of
                 [ placement ] ->
                     let
                         current =
@@ -2199,7 +2199,7 @@ placeArmedPart part ( x, y ) model =
                         Vec3.getZ docHit
 
                     step =
-                        toFloat (max 1 model.gridStep)
+                        lateralStep model
 
                     targetX =
                         toFloat (round (docHitX / step)) * step
@@ -2348,6 +2348,45 @@ httpError error =
             message
 
 
+{-| The stud pitch (LDU): the sideways step of every move step above 1, so
+studded parts keep to the stud lattice (`LDraw.Connectivity.studOffset`).
+-}
+studPitch : Float
+studPitch =
+    20
+
+
+{-| The sideways (X and Z) step of keys, the gizmo, body drags and duplicates:
+a stud pitch whenever the move step is not 1, so the 8 and 4 steps only change
+height; 1 LDU places freely.
+-}
+lateralStep : Model -> Float
+lateralStep model =
+    if model.gridStep <= 1 then
+        1
+
+    else
+        studPitch
+
+
+{-| What each move step does, for the snap bar's tooltip.
+-}
+gridStepHelp : Int -> String
+gridStepHelp step =
+    case step of
+        20 ->
+            "Stud: sideways one stud (20 LDU), kept on the stud lattice; up or down 8 LDU"
+
+        8 ->
+            "Plate: up or down 8 LDU (a plate's height); sideways moves stay on the stud lattice"
+
+        4 ->
+            "Half plate: up or down 4 LDU; sideways moves stay on the stud lattice"
+
+        _ ->
+            "Fine: free placement, 1 LDU on every axis"
+
+
 {-| Move steps in LDU, coarsest first: a stud pitch, a plate-ish half step, a
 quarter step and a single unit.
 -}
@@ -2453,6 +2492,31 @@ whenSelected edit model =
                 edit ids model
 
 
+{-| Run an edit on the selected placements that may change them (move, turn,
+delete, recolour), or do nothing when no selected placement is unglued.
+-}
+whenMovable : (List Int -> Model -> ( Model, Cmd Msg )) -> Model -> ( Model, Cmd Msg )
+whenMovable edit model =
+    if model.drag /= Nothing then
+        ( model, Cmd.none )
+
+    else
+        case movableIds model of
+            [] ->
+                ( model, Cmd.none )
+
+            ids ->
+                edit ids model
+
+
+{-| The selection without glued parts: what a move, turn, delete or recolour
+may touch. Glued parts stay put (`0 !PALIKKA GLUED`).
+-}
+movableIds : Model -> List Int
+movableIds model =
+    Set.toList (Set.diff model.selection (Document.gluedIds model.document))
+
+
 {-| Where a part added from the palette goes, in document space: the nearest
 grid spot to the selection (or the camera target) that no placed part overlaps
 (`DragPlane.freeSpotPlacement`). The part rests on whatever is under that spot:
@@ -2511,7 +2575,7 @@ freeSpotMatrix file model =
                 , matrix = startMatrix
                 , offset = Connectivity.studOffset (Connectivity.extractPartConnectivity file resolveLines) startMatrix
                 , start = start
-                , gridStep = toFloat (max 1 model.gridStep)
+                , gridStep = lateralStep model
                 , others = others
                 }
 
@@ -2533,7 +2597,7 @@ recordAligned cache command document history =
             Edit.apply command document
 
         rotations =
-            GearAlign.alignmentCommands cache { before = document, after = edited }
+            GearAlign.alignmentCommandsKeeping (Document.gluedIds document) cache { before = document, after = edited }
     in
     case rotations of
         [] ->
@@ -2564,7 +2628,7 @@ duplicate : List Int -> Model -> ( Model, Cmd Msg )
 duplicate ids model =
     let
         offset =
-            Mat4.makeTranslate3 (toFloat model.gridStep) 0 0
+            Mat4.makeTranslate3 (lateralStep model) 0 0
 
         parts =
             ids
@@ -3319,7 +3383,7 @@ selectAt x y shift model =
 currentHandles : Model -> List Handle
 currentHandles model =
     if model.tool == MoveTool then
-        case Edit.selectionCenter (Set.toList model.selection) model.document of
+        case Edit.selectionCenter (movableIds model) model.document of
             Just localCenter ->
                 let
                     accum =
@@ -3422,7 +3486,7 @@ currentArcHandles model =
 
 defaultArcHandles : Model -> List ArcHandle
 defaultArcHandles model =
-    case Edit.selectionCenter (Set.toList model.selection) model.document of
+    case Edit.selectionCenter (movableIds model) model.document of
         Just localCenter ->
             let
                 accum =
@@ -3469,7 +3533,7 @@ startDrag point model =
                 Just
                     { kind = LinearDrag handle
                     , plane = Nothing
-                    , ids = Set.toList model.selection
+                    , ids = movableIds model
                     , start = point
                     , lastPoint = point
                     , original = model.document
@@ -3490,7 +3554,7 @@ startDrag point model =
                 (\arcHandle ->
                     { kind = ArcDrag arcHandle
                     , plane = Nothing
-                    , ids = Set.toList model.selection
+                    , ids = movableIds model
                     , start = point
                     , lastPoint = point
                     , original = model.document
@@ -3524,26 +3588,32 @@ grabPart ( x, y ) model =
 
     else
         Viewport.pickBodyPoint x y model.viewport
-            |> Maybe.map
+            |> Maybe.andThen
                 (\hit ->
-                    { kind = PlaneDrag hit.point
-                    , plane = Just (DragPlane.choose model.viewport.camera hit.point)
-                    , ids =
-                        if Set.member hit.source model.selection then
-                            Set.toList model.selection
+                    -- A glued part is an obstacle, not something to grab: a press on it does not drag.
+                    if Document.isGlued hit.source model.document then
+                        Nothing
 
-                        else
-                            [ hit.source ]
-                    , start = ( x, y )
-                    , lastPoint = ( x, y )
-                    , original = model.document
-                    , amount = 0
-                    , elevationOffset = 0.0
-                    , axisLock = Nothing
-                    , modeAnchor = ( x, y )
-                    , baseElevation = 0.0
-                    , shiftToggle = Nothing
-                    }
+                    else
+                        Just
+                            { kind = PlaneDrag hit.point
+                            , plane = Just (DragPlane.choose model.viewport.camera hit.point)
+                            , ids =
+                                if Set.member hit.source model.selection then
+                                    movableIds model
+
+                                else
+                                    [ hit.source ]
+                            , start = ( x, y )
+                            , lastPoint = ( x, y )
+                            , original = model.document
+                            , amount = 0
+                            , elevationOffset = 0.0
+                            , axisLock = Nothing
+                            , modeAnchor = ( x, y )
+                            , baseElevation = 0.0
+                            , shiftToggle = Nothing
+                            }
                 )
 
 
@@ -3633,7 +3703,16 @@ moveLinearDrag : Drag -> Gizmo.Handle -> ( Float, Float ) -> Model -> ( Model, C
 moveLinearDrag drag handle point model =
     let
         amount =
-            Gizmo.dragAmount (toFloat model.gridStep) handle drag.start point
+            Gizmo.dragAmount
+                (if handle.axis == AxisY then
+                    toFloat (max 1 model.gridStep)
+
+                 else
+                    lateralStep model
+                )
+                handle
+                drag.start
+                point
     in
     applyDragDelta drag amount point (Vec3.scale amount (Edit.axisVector handle.axis)) model
 
@@ -3685,11 +3764,23 @@ projectedVerticalDelta camera width height leadPos ( anchorX, anchorY ) ( curren
             currentY - anchorY
 
 
-{-| The grid step of a body drag on the working plane: 1 LDU while Shift is
-held (the fine move), else the move step.
+{-| The sideways (X and Z) grid of a body drag on the working plane: 1 LDU while
+Shift is held (the fine move), else the sideways step (`lateralStep`).
 -}
 dragGridStep : Model -> Float
 dragGridStep model =
+    if model.shiftHeld || model.fineMove then
+        1
+
+    else
+        lateralStep model
+
+
+{-| The height grid of a body drag in `Facing` mode: 1 LDU while Shift is held
+or fine move is on, else the move step itself (8 or 4 move heights, not sideways).
+-}
+dragVerticalStep : Model -> Float
+dragVerticalStep model =
     if model.shiftHeld || model.fineMove then
         1
 
@@ -3821,6 +3912,7 @@ movePlaneDrag initialDrag grab ( x, y ) model =
                         , cursor = point
                         , original = origWorld
                         , gridStep = dragGridStep model
+                        , verticalStep = dragVerticalStep model
                         , offset = Connectivity.studOffset leadConn (Mat4.mul accum leadP.matrix)
                         , elevationOffset = offset
                         , footprint = footprint
@@ -4345,6 +4437,86 @@ isBodyPress drag =
             False
 
 
+{-| The move that puts the first studded part of an arc turn back on the stud
+lattice, applied to the whole dragged group (the same rule as `Studio.Core`'s
+`rotateSelectionBy`). It is worked out in world space and expressed in the
+active submodel's frame. Nothing in fine mode, for a non-arc drag, or when no
+dragged part is studded.
+-}
+arcLatticeMoves : Model -> Drag -> List Command
+arcLatticeMoves model drag =
+    case drag.kind of
+        ArcDrag _ ->
+            let
+                accum =
+                    case List.reverse model.context.path of
+                        head :: _ ->
+                            head.accumulatedTransform
+
+                        [] ->
+                            Mat4.identity
+
+                resolveLines name =
+                    case Dict.get name model.viewport.partCache of
+                        Just (Resolve.Loaded lines) ->
+                            Just lines
+
+                        _ ->
+                            Nothing
+
+                studded =
+                    drag.ids
+                        |> List.filterMap (\id -> Document.getPlacement id model.document)
+                        |> List.filterMap
+                            (\p ->
+                                let
+                                    conn =
+                                        Connectivity.extractPartConnectivity p.part resolveLines
+                                in
+                                if Connectivity.isStudded conn then
+                                    Just ( conn, p )
+
+                                else
+                                    Nothing
+                            )
+                        |> List.head
+            in
+            case ( studded, Mat4.inverse accum ) of
+                ( Just ( conn, p ), Just inv ) ->
+                    let
+                        worldMatrix =
+                            Mat4.mul accum p.matrix
+
+                        origin =
+                            Transform.position worldMatrix
+
+                        offset =
+                            Connectivity.studOffset conn worldMatrix
+
+                        dx =
+                            DragPlane.snapTo offset.x studPitch (Vec3.getX origin) - Vec3.getX origin
+
+                        dz =
+                            DragPlane.snapTo offset.z studPitch (Vec3.getZ origin) - Vec3.getZ origin
+                    in
+                    if model.fineMove || (abs dx < 1.0e-4 && abs dz < 1.0e-4) then
+                        []
+
+                    else
+                        [ Translate drag.ids
+                            (Vec3.sub
+                                (Mat4.transform inv (Vec3.add origin (vec3 dx 0 dz)))
+                                (Mat4.transform inv origin)
+                            )
+                        ]
+
+                _ ->
+                    []
+
+        _ ->
+            []
+
+
 {-| Finish a drag: the document already shows the move or rotation, so record its undo,
 schedule hints and save the draft once.
 -}
@@ -4494,21 +4666,29 @@ finishDrag model =
                         inversePairs =
                             List.map (\p -> ( p.id, p.matrix )) originalPlacements
 
-                        -- The turns that close the new gear meshes go in the same undo step.
+                        -- An arc turn can leave a studded part off the stud lattice. The re-snap
+                        -- and the turns that close the new gear meshes go in the same undo step.
+                        latticeMoves =
+                            arcLatticeMoves model drag
+
+                        ( snapped, snapUndo ) =
+                            Edit.apply (Group latticeMoves) model.document
+
                         rotations =
-                            GearAlign.alignmentCommands model.viewport.partCache
-                                { before = drag.original, after = model.document }
+                            GearAlign.alignmentCommandsKeeping (Document.gluedIds model.document)
+                                model.viewport.partCache
+                                { before = drag.original, after = snapped }
 
                         ( aligned, rotationUndo ) =
-                            Edit.apply (Group rotations) model.document
+                            Edit.apply (Group rotations) snapped
 
                         undoCommand =
-                            case rotations of
+                            case latticeMoves ++ rotations of
                                 [] ->
                                     SetMatrix inversePairs
 
                                 _ ->
-                                    Group [ rotationUndo, SetMatrix inversePairs ]
+                                    Group [ rotationUndo, snapUndo, SetMatrix inversePairs ]
 
                         updated =
                             { model
@@ -6330,7 +6510,7 @@ viewSnapBar model =
             , Attr.style "pointer-events" "auto"
             , Attr.style "box-shadow" "none"
             ]
-            [ chip NextGridStep "Move step" (String.fromInt model.gridStep ++ " LDU") "Change move step ( [ or ] )"
+            [ chip NextGridStep "Move step" (String.fromInt model.gridStep ++ " LDU") ("Change move step ( [ or ] ). " ++ gridStepHelp model.gridStep)
             , chip NextRotateStep "Turn step" (String.fromInt model.rotateStep ++ "°") "Change turn step ( , or . )"
             , chip NextSnapDistance "Snap" (snapValue model.snapDistance) "Change connection snapping distance"
             , chip NextCollisionMode "Collision" (collisionValue model.collisionMode) "Change how overlapping parts are handled"

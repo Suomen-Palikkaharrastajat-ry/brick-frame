@@ -1,9 +1,11 @@
 module Ring exposing
     ( Config
+    , Rect
     , panelHeight
     , panelPosition
     , panelWidth
     , screenPoint
+    , screenRect
     , view
     )
 
@@ -14,9 +16,11 @@ only), a W A S D Q E move pad, and the move-step control (`Step.StepSize`: Stud,
 ½ stud, Bit).
 
 The ring is a cluster of 44 px round buttons. `panelPosition` places it beside the
-part's screen point, flipped to the other side near the canvas edge and kept
-inside the canvas. `screenPoint` projects a render-space point with the camera,
-the same matrices the studio's outlines use. Both are pure.
+part's screen rectangle (its projected bounding box), 12 px to the right, flipped
+to the left, then above or below when neither side has room. It is kept inside the
+canvas and clear of the dock and camera globe when it can be. `screenPoint` and
+`screenRect` project render-space points with the camera, the same matrices the
+studio's outlines use. All are pure.
 
 Every button is a real `<button>` with an `aria-label`, and its tooltip gives the
 shortcut. Buttons do not take focus on a mouse press (`UI.Focus.keepFocusOnCanvas`),
@@ -36,16 +40,28 @@ import UI.Focus as Focus
 import UI.Icon as Icon
 
 
+{-| A rectangle on screen, in canvas pixels.
+-}
+type alias Rect =
+    { left : Float
+    , top : Float
+    , right : Float
+    , bottom : Float
+    }
+
+
 {-| What the ring shows and what its buttons send.
 
-`anchor` is the part's screen point, `Nothing` while it is off screen (the ring
-then stays hidden). `canvas` is the canvas size in pixels. `movable` is False when
-the selection is glued, and `glued` says whether it is.
+`part` is the part's screen rectangle, `Nothing` while it is off screen (the ring
+then stays hidden). `canvas` is the canvas size in pixels, and `avoid` lists the
+rectangles the ring keeps clear of when it can (the dock and the camera globe).
+`movable` is False when the selection is glued, and `glued` says whether it is.
 
 -}
 type alias Config msg =
-    { anchor : Maybe ( Float, Float )
+    { part : Maybe Rect
     , canvas : ( Float, Float )
+    , avoid : List Rect
     , free : Bool
     , glued : Bool
     , movable : Bool
@@ -75,35 +91,95 @@ panelHeight =
     270
 
 
-{-| The top-left corner of the ring for a part at `anchor` on a canvas of
-`canvas` pixels. It sits to the right of the part, or to its left when the right
-side has no room, and is kept inside the canvas with an 8 px margin.
+{-| The gap, in pixels, between a part's screen rectangle and the ring.
 -}
-panelPosition : ( Float, Float ) -> ( Float, Float ) -> ( Float, Float )
-panelPosition ( anchorX, anchorY ) ( canvasWidth, canvasHeight ) =
+partGap : Float
+partGap =
+    12
+
+
+{-| The top-left corner of the ring beside a part's screen rectangle, on a canvas
+of `canvas` pixels.
+
+It tries four places in order: right of the part, left of it, above it and below
+it. Right and left are centred on the part vertically, above and below are centred
+on it horizontally, and each place is kept inside the canvas with an 8 px margin.
+The first place that fits the canvas and clears every `avoid` rectangle wins; failing
+that, the first that fits the canvas; failing that, the right side clamped inside it.
+
+-}
+panelPosition : { part : Rect, canvas : ( Float, Float ), avoid : List Rect } -> ( Float, Float )
+panelPosition { part, canvas, avoid } =
     let
+        ( canvasWidth, canvasHeight ) =
+            canvas
+
         inset =
             8
 
-        gap =
-            48
+        centreX =
+            (part.left + part.right) / 2
 
-        beside =
-            anchorX + gap
+        centreY =
+            (part.top + part.bottom) / 2
 
-        left =
-            if beside + panelWidth <= canvasWidth - inset then
-                beside
+        clampX x =
+            clampTo inset (canvasWidth - panelWidth - inset) x
 
-            else
-                anchorX - gap - panelWidth
+        clampY y =
+            clampTo inset (canvasHeight - panelHeight - inset) y
 
-        top =
-            anchorY - panelHeight / 2
+        sideY =
+            clampY (centreY - panelHeight / 2)
+
+        candidates =
+            [ ( part.right + partGap + panelWidth <= canvasWidth - inset
+              , ( part.right + partGap, sideY )
+              )
+            , ( part.left - partGap - panelWidth >= inset
+              , ( part.left - partGap - panelWidth, sideY )
+              )
+            , ( part.top - partGap - panelHeight >= inset
+              , ( clampX (centreX - panelWidth / 2), part.top - partGap - panelHeight )
+              )
+            , ( part.bottom + partGap + panelHeight <= canvasHeight - inset
+              , ( clampX (centreX - panelWidth / 2), part.bottom + partGap )
+              )
+            ]
+
+        fitting =
+            candidates
+                |> List.filter Tuple.first
+                |> List.map Tuple.second
+
+        clear =
+            List.filter (\( x, y ) -> not (List.any (overlaps (rectAt x y)) avoid)) fitting
     in
-    ( clampTo inset (canvasWidth - panelWidth - inset) left
-    , clampTo inset (canvasHeight - panelHeight - inset) top
-    )
+    case clear of
+        first :: _ ->
+            first
+
+        [] ->
+            case fitting of
+                first :: _ ->
+                    first
+
+                [] ->
+                    ( clampX (part.right + partGap), sideY )
+
+
+{-| The rectangle of a ring whose top-left corner is at (x, y).
+-}
+rectAt : Float -> Float -> Rect
+rectAt x y =
+    { left = x, top = y, right = x + panelWidth, bottom = y + panelHeight }
+
+
+{-| Whether two rectangles share any area.
+-}
+overlaps : Rect -> Rect -> Bool
+overlaps a b =
+    a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
 
 
 clampTo : Float -> Float -> Float -> Float
@@ -150,18 +226,42 @@ screenPoint camera width height point =
             Just ( x, y )
 
 
-{-| The ring over the canvas. Empty when `anchor` is `Nothing`.
+{-| The smallest screen rectangle around the points that project onto a canvas of
+`width` by `height`, or `Nothing` when none does.
+-}
+screenRect : Camera -> Int -> Int -> List Vec3 -> Maybe Rect
+screenRect camera width height points =
+    case List.filterMap (screenPoint camera width height) points of
+        ( x0, y0 ) :: rest ->
+            Just
+                (List.foldl
+                    (\( x, y ) r ->
+                        { left = min r.left x
+                        , top = min r.top y
+                        , right = max r.right x
+                        , bottom = max r.bottom y
+                        }
+                    )
+                    { left = x0, top = y0, right = x0, bottom = y0 }
+                    rest
+                )
+
+        [] ->
+            Nothing
+
+
+{-| The ring over the canvas. Empty when `part` is `Nothing`.
 -}
 view : Config msg -> Html msg
 view config =
-    case config.anchor of
+    case config.part of
         Nothing ->
             text ""
 
-        Just anchor ->
+        Just part ->
             let
                 ( left, top ) =
-                    panelPosition anchor config.canvas
+                    panelPosition { part = part, canvas = config.canvas, avoid = config.avoid }
             in
             div
                 [ Attr.attribute "role" "group"

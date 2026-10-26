@@ -199,7 +199,8 @@ ringTests =
         [ test "is hidden when its part is off screen" <|
             \_ ->
                 Ring.view
-                    { anchor = Nothing
+                    { part = Nothing
+                    , avoid = []
                     , canvas = ( 800, 600 )
                     , free = True
                     , glued = False
@@ -607,18 +608,35 @@ layoutTests =
                 Query.fromHtml (view (openRing puzzle))
                     |> Query.findAll [ Selector.attribute (Attr.attribute "aria-label" "Glue") ]
                     |> Query.count (Expect.equal 0)
-        , test "the ring flips to the left of the part near the right edge" <|
+        , test "the ring sits 12 px to the right of a part's screen box, centred on it" <|
             \_ ->
-                Ring.panelPosition ( 900, 300 ) ( 1000, 800 )
-                    |> Expect.equal ( 632, 165 )
-        , test "the ring sits to the right of a part with room" <|
+                Ring.panelPosition
+                    { part = screenBox 100 300 160 400, canvas = ( 1000, 800 ), avoid = [] }
+                    |> Expect.equal ( 172, 215 )
+        , test "the ring flips to the left of a part near the right edge" <|
             \_ ->
-                Ring.panelPosition ( 100, 300 ) ( 1000, 800 )
-                    |> Expect.equal ( 148, 165 )
-        , test "the ring stays inside the top of the canvas" <|
+                Ring.panelPosition
+                    { part = screenBox 900 300 960 400, canvas = ( 1000, 800 ), avoid = [] }
+                    |> Expect.equal ( 668, 215 )
+        , test "the ring clamps inside the top of the canvas" <|
             \_ ->
-                Ring.panelPosition ( 100, 0 ) ( 1000, 800 )
-                    |> Expect.equal ( 148, 8 )
+                Ring.panelPosition
+                    { part = screenBox 100 0 160 40, canvas = ( 1000, 800 ), avoid = [] }
+                    |> Expect.equal ( 172, 8 )
+        , test "the ring clamps inside the bottom of the canvas" <|
+            \_ ->
+                Ring.panelPosition
+                    { part = screenBox 100 780 160 800, canvas = ( 1000, 800 ), avoid = [] }
+                    |> Expect.equal ( 172, 522 )
+        , test "the ring moves above a part when the right side would cover the dock" <|
+            \_ ->
+                let
+                    dock =
+                        { left = 0, top = 520, right = 1000, bottom = 800 }
+                in
+                Ring.panelPosition
+                    { part = screenBox 100 400 160 500, canvas = ( 1000, 800 ), avoid = [ dock ] }
+                    |> Expect.equal ( 20, 118 )
         , test "the canvas centre projects to the centre of the canvas" <|
             \_ ->
                 let
@@ -654,6 +672,13 @@ layoutTests =
 
 
 -- Models and helpers
+
+
+{-| A screen rectangle from its left, top, right and bottom edges.
+-}
+screenBox : Float -> Float -> Float -> Float -> Ring.Rect
+screenBox left top right bottom =
+    { left = left, top = top, right = right, bottom = bottom }
 
 
 flagsFor : String -> Bool -> Bool -> Flags

@@ -127,7 +127,10 @@ press that never moves the part is a click and selects that part alone. The gizm
 and rings stay the move and rotate tools' own. An armed palette part is placed
 by the click rather than grabbing the part under it. Empty space pans the camera
 with a left drag (right drag orbits it), and Shift + drag on a part moves it
-finely. Translation snaps to a grid of 20/8/4/1 LDU; rotation is in 90° or
+finely. The move step (20/8/4/1 LDU) sets the height step, and sideways (X and Z)
+moves use the stud lattice (one stud, 20 LDU) for every step above 1, so only the 8
+and 4 steps change height alone; at 1 LDU placement is free (`Workspace.lateralStep`).
+Rotation is in 90° or
 15° steps; the inspector accepts exact position and Euler angles. Selected parts
 get outlines from `Studio.Overlay`, and at rest nothing else is outlined: gear
 hints (meshed / cannot turn) appear only in the status summary, and red
@@ -204,7 +207,12 @@ does the same for a matrix, keeping its height and orientation. `Core.addPart`
 snaps X and Z to the stud lattice too; `Core.addPartAt` keeps the matrix exactly.
 A turn (`rotateSelectionBy`) re-snaps the first studded part of the selection onto
 the lattice for its new orientation, moving the whole selection rigidly, unless fine
-mode is on; a nudge is relative, so it keeps the lattice it had. Brick Play adds
+mode is on; a nudge is relative, so it keeps the lattice it had. A rotate-gizmo arc
+drag does the same once, on release (not during the drag), in the same undo step.
+The studio workspace (`studio-app`) has its own turn, drag and delete paths and applies
+the same rules: an arc release re-snaps, and glued parts (`0 !PALIKKA GLUED`) are
+never moved, turned, recoloured or deleted there, while a duplicate of a glued part
+is an unglued copy. Brick Play adds
 every dock piece at `freeSpotFor`, so the first lands in the middle of the view
 and the next ones beside the selected piece. `Core.setDragSettles False` makes
 horizontal-plane body drags keep the press-time height instead of settling on
@@ -261,10 +269,11 @@ mode (below) adds the gear chrome to the same view.
   ring of round 44 px buttons beside it (`Ring.elm`): Turn left, Turn right, Tip,
   Raise (E), Lower (Q), Delete, Glue (free building, the lock icon), a W A S D Q E
   pad and the move-step control. Every button is a `<button>` with an `aria-label`
-  and a tooltip with its shortcut. The ring sits to the right of the part, flipped
-  to the left near the canvas edge and kept inside the canvas, and follows the part
-  as the camera or the part moves (`Ring.screenPoint` projects the part's bounding
-  sphere centre with the camera). Each button calls the same command as its key
+  and a tooltip with its shortcut. The ring sits beside the part, 12 px to its right
+  (flipped to the left, then above or below, when there is no room), kept inside the
+  canvas and clear of the dock and camera globe when it can be. The part's box is the
+  projection of its eight bounding-box corners (`Ring.screenRect`), and the ring follows
+  the part as the camera or the part moves (`Ring.panelPosition`, pure). Each button calls the same command as its key
   (`Core.turnSelected`, `Core.raiseSelected`, `Core.lowerSelected`,
   `Core.deleteSelection`, `Core.setGlued`, `Core.update (NudgeSelection …)`).
   The ring closes on Escape (Escape closes it before it deselects), on a click or tap

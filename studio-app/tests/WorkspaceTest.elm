@@ -15,6 +15,7 @@ import Http
 import LDraw.Connectivity as Connectivity exposing (CollisionMode(..))
 import LDraw.Document as Document
 import LDraw.Export as Export
+import LDraw.Resolve as Resolve
 import LDraw.Writer as Writer
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (Vec3, vec3)
@@ -85,6 +86,7 @@ suite =
         , threeAxisMovementSuite
         , viewDragSuite
         , commitSuite
+        , glueSuite
         , test "starts with an empty document that is ready to show" <|
             \_ ->
                 Expect.all
@@ -3620,3 +3622,278 @@ overlappingPairs model =
     pairs boxes
         |> List.filter (\( a, b ) -> DragPlane.boxesOverlap a b)
         |> List.length
+
+
+{-| A document with its first part glued (`0 !PALIKKA GLUED`) and a free one beside it.
+-}
+gluedFile : String
+gluedFile =
+    "0 !PALIKKA GLUED\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n1 14 300 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n"
+
+
+gluedLoaded : Workspace.Model
+gluedLoaded =
+    start
+        |> Workspace.update (FileTextReceived gluedFile)
+        |> Tuple.first
+        |> Workspace.update (ViewportMsg (Viewport.PartLoaded "3001.dat" (Ok brickPart)))
+        |> Tuple.first
+        |> Workspace.update (ViewportMsg (Viewport.WindowResize 800 600))
+        |> Tuple.first
+
+
+colourOf : Int -> Workspace.Model -> Maybe Int
+colourOf id model =
+    Document.getPlacement id model.document
+        |> Maybe.map .color
+
+
+{-| Whether a placement's origin is on the stud lattice: X and Z sit on its stud
+offset plus a multiple of the 20 LDU pitch.
+-}
+onStudLattice : Int -> Workspace.Model -> Bool
+onStudLattice id model =
+    case Document.getPlacement id model.document of
+        Just p ->
+            let
+                resolveLines name =
+                    case Dict.get name model.viewport.partCache of
+                        Just (Resolve.Loaded lines) ->
+                            Just lines
+
+                        _ ->
+                            Nothing
+
+                offset =
+                    Connectivity.studOffset (Connectivity.extractPartConnectivity p.part resolveLines) p.matrix
+
+                origin =
+                    Mat4.transform p.matrix (vec3 0 0 0)
+
+                onAxis v o =
+                    abs (v - o - 20 * toFloat (round ((v - o) / 20))) < 0.01
+            in
+            onAxis (Vec3.getX origin) offset.x && onAxis (Vec3.getZ origin) offset.z
+
+        Nothing ->
+            False
+
+
+nudgeRight : Shortcuts.Nudge
+nudgeRight =
+    Shortcuts.Nudge { direction = Shortcuts.Right, fine = False }
+
+
+glueSuite : Test
+glueSuite =
+    describe "glued parts and the stud lattice in the workspace"
+        [ describe "glued parts"
+            [ test "deleting the whole selection keeps the glued part" <|
+                \_ ->
+                    gluedLoaded
+                        |> step SelectAll
+                        |> step DeleteSelection
+                        |> .document
+                        |> Document.placements
+                        |> List.map .id
+                        |> Expect.equal [ 0 ]
+            , test "deleting a glued part on its own does nothing" <|
+                \_ ->
+                    gluedLoaded
+                        |> click (screenOf 0 gluedLoaded)
+                        |> step DeleteSelection
+                        |> .document
+                        |> Document.placements
+                        |> List.map .id
+                        |> Expect.equal [ 0, 1 ]
+            , test "a duplicate of a glued part is an unglued copy" <|
+                \_ ->
+                    let
+                        after =
+                            gluedLoaded
+                                |> click (screenOf 0 gluedLoaded)
+                                |> step DuplicateSelection
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal [ 2 ] (selected m)
+                        , \m -> Expect.equal False (Document.isGlued 2 m.document)
+                        , \m -> Expect.equal True (Document.isGlued 0 m.document)
+                        ]
+                        after
+            , test "a nudge leaves a glued part alone and moves the free part of a mixed selection" <|
+                \_ ->
+                    let
+                        alone =
+                            gluedLoaded
+                                |> click (screenOf 0 gluedLoaded)
+                                |> step (NudgeSelection nudgeRight)
+
+                        mixed =
+                            gluedLoaded
+                                |> step SelectAll
+                                |> step (NudgeSelection nudgeRight)
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal (positionOf 0 gluedLoaded) (positionOf 0 alone)
+                        , \_ -> Expect.equal (positionOf 0 gluedLoaded) (positionOf 0 mixed)
+                        , \_ -> Expect.notEqual (positionOf 1 gluedLoaded) (positionOf 1 mixed)
+                        ]
+                        ()
+            , test "a turn leaves a glued part where it is, with nothing to undo" <|
+                \_ ->
+                    gluedLoaded
+                        |> click (screenOf 0 gluedLoaded)
+                        |> step (RotateSelection AxisY 1)
+                        |> .history
+                        |> Edit.canUndo
+                        |> Expect.equal False
+            , test "a body drag does not move a glued part" <|
+                \_ ->
+                    let
+                        ( x, y ) =
+                            screenOf 0 gluedLoaded
+
+                        dragged =
+                            gluedLoaded
+                                |> mouseDown x y False
+                                |> mouseMove (x + 120) (y + 60)
+                                |> mouseUp (x + 120) (y + 60)
+                    in
+                    Expect.equal (positionOf 0 gluedLoaded) (positionOf 0 dragged)
+            , test "recolouring leaves a glued part its colour" <|
+                \_ ->
+                    gluedLoaded
+                        |> click (screenOf 0 gluedLoaded)
+                        |> step (SetColorSelection 14)
+                        |> colourOf 0
+                        |> Expect.equal (Just 4)
+            , test "the inspector cannot move a glued part" <|
+                \_ ->
+                    gluedLoaded
+                        |> click (screenOf 0 gluedLoaded)
+                        |> step (SetPosition AxisX 50)
+                        |> positionOf 0
+                        |> Expect.equal (Just 0)
+            ]
+        , describe "arc turns and the stud lattice"
+            [ test "an arc turn leaves the studded parts on the lattice, and undoes in one step" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded
+                                |> step SelectAll
+                                |> step (UseTool RotateTool)
+
+                        firstArc =
+                            Edit.selectionCenter [ 0, 1 ] ready.document
+                                |> Maybe.map (Gizmo.arcHandles ready.viewport.camera 800 600)
+                                |> Maybe.andThen List.head
+
+                        dragged =
+                            case firstArc of
+                                Just arc ->
+                                    case arc.screenPoints of
+                                        ( sx, sy ) :: _ ->
+                                            let
+                                                ( cx, cy ) =
+                                                    arc.screenCenter
+
+                                                ( ex, ey ) =
+                                                    ( cx + (sy - cy), cy - (sx - cx) )
+                                            in
+                                            Just
+                                                (ready
+                                                    |> mouseDown sx sy False
+                                                    |> mouseMove ex ey
+                                                    |> mouseUp ex ey
+                                                )
+
+                                        [] ->
+                                            Nothing
+
+                                Nothing ->
+                                    Nothing
+
+                        angles m =
+                            List.map (\id -> Document.getPlacement id m.document |> Maybe.map (.matrix >> Transform.eulerDegrees)) [ 0, 1 ]
+                    in
+                    case dragged of
+                        Just m ->
+                            Expect.all
+                                [ \d -> Expect.equal True (List.all (\id -> onStudLattice id d) [ 0, 1 ])
+                                , \d -> Expect.notEqual (angles ready) (angles d)
+                                , \d -> Expect.equal (angles ready) (angles (step Undo d))
+                                ]
+                                m
+
+                        Nothing ->
+                            Expect.fail "expected rotation arc handle"
+            ]
+        , describe "move steps"
+            [ test "at move step 8 a sideways nudge still moves one stud" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded
+                                |> step (SetGridStep 8)
+                                |> click (screenOf 0 loaded)
+
+                        moved =
+                            step (NudgeSelection nudgeRight) ready
+                    in
+                    case ( groundOf 0 ready, groundOf 0 moved ) of
+                        ( Just ( x0, z0 ), Just ( x1, z1 ) ) ->
+                            Expect.equal ( 20, 0 )
+                                ( round (abs (x1 - x0) + abs (z1 - z0))
+                                , round (min (abs (x1 - x0)) (abs (z1 - z0)))
+                                )
+
+                        _ ->
+                            Expect.fail "expected the part on the ground"
+            , test "at move step 8 a nudge up moves 8 LDU" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded
+                                |> step (SetGridStep 8)
+                                |> click (screenOf 0 loaded)
+
+                        up =
+                            Shortcuts.Nudge { direction = Shortcuts.Up, fine = False }
+
+                        moved =
+                            step (NudgeSelection up) ready
+                    in
+                    case ( elevationOf 0 ready, elevationOf 0 moved ) of
+                        ( Just a, Just b ) ->
+                            Expect.equal -8 (round (b - a))
+
+                        _ ->
+                            Expect.fail "expected the part"
+            , test "at move step 1 a sideways nudge moves 1 LDU" <|
+                \_ ->
+                    let
+                        ready =
+                            loaded
+                                |> step (SetGridStep 1)
+                                |> click (screenOf 0 loaded)
+
+                        moved =
+                            step (NudgeSelection nudgeRight) ready
+                    in
+                    case ( groundOf 0 ready, groundOf 0 moved ) of
+                        ( Just ( x0, z0 ), Just ( x1, z1 ) ) ->
+                            Expect.within (Expect.Absolute 1.0e-3) 1 (abs (x1 - x0) + abs (z1 - z0))
+
+                        _ ->
+                            Expect.fail "expected the part on the ground"
+            , test "at move step 8 a duplicate is offset by one stud" <|
+                \_ ->
+                    loaded
+                        |> step (SetGridStep 8)
+                        |> click (screenOf 0 loaded)
+                        |> step DuplicateSelection
+                        |> positionOf 2
+                        |> Expect.equal (Just 20)
+            ]
+        ]

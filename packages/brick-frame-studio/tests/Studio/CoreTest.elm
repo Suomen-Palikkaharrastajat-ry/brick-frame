@@ -1825,4 +1825,61 @@ latticeSuite =
                     |> (\( m, _, _ ) -> firstPosition m)
                     |> Maybe.map (\p -> ( Vec3.getX p, Vec3.getY p, Vec3.getZ p ))
                     |> Expect.equal (Just ( 10, -24, -10 ))
+        , test "an arc turn is re-snapped to the lattice, as a keyboard turn is" <|
+            \_ ->
+                let
+                    base =
+                        loadedParts [ ( "3004.dat", vec3 0 -24 10 ) ]
+                            |> selectAllPlacements
+                            |> Core.setGizmoStyle Core.MoveAndRotateGizmo
+                            |> Core.setTool RotateTool
+
+                    arc =
+                        Core.currentArcHandles base |> List.head
+
+                    axis =
+                        arc |> Maybe.andThen .axisKind |> Maybe.withDefault AxisY
+
+                    -- The 1×2's origin, rounded so float noise from two turn paths does not matter.
+                    roundedOrigin model =
+                        originOf "3004.dat" model
+                            |> Maybe.map (\p -> ( round (Vec3.getX p), round (Vec3.getY p), round (Vec3.getZ p) ))
+
+                    -- Drag the first arc handle a quarter turn counter-clockwise on screen.
+                    arcTurned =
+                        arc
+                            |> Maybe.andThen
+                                (\handle ->
+                                    case handle.screenPoints of
+                                        ( sx, sy ) :: _ ->
+                                            let
+                                                ( cx, cy ) =
+                                                    handle.screenCenter
+
+                                                ( ex, ey ) =
+                                                    ( cx + (sy - cy), cy - (sx - cx) )
+                                            in
+                                            base
+                                                |> (\m -> Core.update (Core.ViewportMsg (Viewport.MouseButtonDown sx sy 0 False False)) m)
+                                                |> (\( m, _, _ ) -> m)
+                                                |> (\m -> Core.update (Core.ViewportMsg (Viewport.MouseMove ex ey)) m)
+                                                |> (\( m, _, _ ) -> m)
+                                                |> (\m -> Core.update (Core.ViewportMsg (Viewport.MouseUp ex ey)) m)
+                                                |> (\( m, _, _ ) -> m)
+                                                |> roundedOrigin
+                                                |> Just
+
+                                        [] ->
+                                            Nothing
+                                )
+
+                    keyboardTurns =
+                        [ 1, -1 ]
+                            |> List.map
+                                (\n ->
+                                    Core.rotateSelection axis n base
+                                        |> (\( m, _, _ ) -> roundedOrigin m)
+                                )
+                in
+                Expect.equal True (List.member arcTurned (List.map Just keyboardTurns))
         ]
