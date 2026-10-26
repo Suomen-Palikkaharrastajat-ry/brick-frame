@@ -3,6 +3,7 @@ module Main exposing
     , Model
     , Msg(..)
     , accomplishmentBanner
+    , hashFor
     , helpRows
     , init
     , kitItemName
@@ -586,24 +587,19 @@ shareHash model =
         liveHash model
 
 
-{-| Update URL hash if the given core events contain a document change.
+{-| The hash to write after an update from `before` to `after`: the live hash
+when the build changed (its document, its mode or its kit), else nothing. It
+compares the models rather than reading the studio's events, so an edit that
+emits no `DocumentChanged` (or a new one that forgets to) cannot leave the
+address bar behind.
 -}
-syncDocHash : Model -> List Core.Event -> Cmd Msg
-syncDocHash model events =
-    let
-        hasDocChange ev =
-            case ev of
-                Core.DocumentChanged _ ->
-                    True
-
-                _ ->
-                    False
-    in
-    if List.any hasDocChange events then
-        Ports.setUrlHash (liveHash model)
+hashFor : Model -> Model -> Maybe String
+hashFor before after =
+    if before.studio.document /= after.studio.document || before.free /= after.free || before.inventory /= after.inventory then
+        Just (liveHash after)
 
     else
-        Cmd.none
+        Nothing
 
 
 {-| Update the application model.
@@ -664,8 +660,16 @@ updateApp msg model =
 
             else
                 Cmd.none
+
+        hashCmd =
+            case hashFor model settled of
+                Just hash ->
+                    Ports.setUrlHash hash
+
+                Nothing ->
+                    Cmd.none
     in
-    ( settled, Cmd.batch [ cmd, dockCmd ] )
+    ( settled, Cmd.batch [ cmd, dockCmd, hashCmd ] )
 
 
 {-| Brings the derived state in line with what a message just did. A changed
@@ -778,13 +782,10 @@ step msg model =
 
                 nextModel =
                     { model | studio = nextStudio }
-
-                syncCmd =
-                    syncDocHash nextModel events
             in
             List.foldl applyShortcut
                 ( nextModel
-                , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncCmd ]
+                , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
                 )
                 (List.filterMap extractKey events)
 
@@ -1015,7 +1016,7 @@ step msg model =
                 nextId =
                     model.toastCounter + 1
             in
-            -- The address bar keeps the build itself (`syncDocHash`); a free build's
+            -- The address bar keeps the build itself (`hashFor`); a free build's
             -- shared link is a puzzle, so only the copy goes out.
             ( { model
                 | menuOpen = False
@@ -1079,7 +1080,7 @@ placePart file color name model =
             { model | studio = nextStudio, lastTapped = Just name }
     in
     ( nextModel
-    , Cmd.batch [ Cmd.map StudioMsg studioCmd, handleCoreEvents events, syncDocHash nextModel events ]
+    , Cmd.batch [ Cmd.map StudioMsg studioCmd, handleCoreEvents events ]
     )
 
 
@@ -1112,7 +1113,7 @@ runCore edit model =
             { model | studio = nextStudio }
     in
     ( nextModel
-    , Cmd.batch [ Cmd.map StudioMsg studioCmd, handleCoreEvents events, syncDocHash nextModel events ]
+    , Cmd.batch [ Cmd.map StudioMsg studioCmd, handleCoreEvents events ]
     )
 
 
@@ -1633,6 +1634,15 @@ touchLabel model =
             text ""
 
 
+{-| The width of both docks (the free dock and the kit). Fixed, so the cards in
+the dock, or the search results, never widen it: a dock sized to its content
+would grow under the camera globe. A narrower window clips it to its own width.
+-}
+dockWidth : String
+dockWidth =
+    "40rem"
+
+
 {-| Where the bottom area sits. Centred when there is room, leaving the globe its
 corner on the right; on a narrow window it spans the width.
 -}
@@ -2056,7 +2066,13 @@ glueButton glued =
         , Attr.style "transition" "all 150ms ease"
         , Attr.class "touch-target"
         ]
-        [ Icon.featherSized 18 "lock"
+        [ Icon.featherSized 18
+            (if glued then
+                "lock"
+
+             else
+                "unlock"
+            )
         , span [ Attr.attribute "aria-hidden" "true" ] [ text (glueLabel glued) ]
         ]
 
@@ -2094,8 +2110,11 @@ kitDockView model =
         , Attr.style "gap" "0.5rem"
         , Attr.style "box-sizing" "border-box"
         , Attr.style "height" PartCard.compactPanelHeight
+        , Attr.style "width" dockWidth
         , Attr.style "max-width" "100%"
         , Attr.style "overflow-x" "auto"
+        , Attr.style "overflow-y" "hidden"
+        , Attr.class "scroll-thin"
         , Attr.style "padding" "0.5rem"
         , Attr.style "background" "rgba(5, 19, 29, 0.9)"
         , Attr.style "backdrop-filter" "blur(12px)"
@@ -2156,6 +2175,7 @@ freeDockView model =
         , Attr.style "gap" "0.5rem"
         , Attr.style "box-sizing" "border-box"
         , Attr.style "height" PartCard.compactPanelHeight
+        , Attr.style "width" dockWidth
         , Attr.style "min-width" "0"
         , Attr.style "max-width" "100%"
         , Attr.style "padding" "0.5rem"
@@ -2267,6 +2287,8 @@ tabRow model =
         , Attr.style "flex" "1 1 auto"
         , Attr.style "min-width" "0"
         , Attr.style "overflow-x" "auto"
+        , Attr.style "overflow-y" "hidden"
+        , Attr.class "scroll-thin"
         ]
         (List.map (tabButton model.activeTab) FreeCatalog.tabs)
 
@@ -2386,6 +2408,8 @@ cardsRow model =
         , Attr.style "min-height" "0"
         , Attr.style "min-width" "0"
         , Attr.style "overflow-x" "auto"
+        , Attr.style "overflow-y" "hidden"
+        , Attr.class "scroll-thin"
         , Attr.style "padding" "0.125rem"
         ]
         children

@@ -89,6 +89,12 @@ featherSized size name =
                 "aperture" ->
                     FeatherIcons.aperture
 
+                "lock" ->
+                    FeatherIcons.lock
+
+                "unlock" ->
+                    FeatherIcons.unlock
+
                 _ ->
                     FeatherIcons.play
     in

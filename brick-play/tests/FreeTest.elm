@@ -11,7 +11,7 @@ import Html.Attributes as Attr
 import LDraw.Document as Document
 import LDraw.Writer as Writer
 import Link
-import Main exposing (Flags, Model, Msg(..), helpRows, init, remainingCount, remainingForItem, shareHash, update, view)
+import Main exposing (Flags, Model, Msg(..), hashFor, helpRows, init, remainingCount, remainingForItem, shareHash, update, view)
 import Set
 import Studio.Core as Core
 import Studio.PartIndex as PartIndex
@@ -33,6 +33,7 @@ suite =
         , glueTests
         , puzzleLockTests
         , shareTests
+        , hashTests
         , helpTests
         ]
 
@@ -543,6 +544,102 @@ shareTests =
                     , \_ -> Expect.equal 5 (remainingForItem cleared kit)
                     ]
                     ()
+        ]
+
+
+{-| The hash an update writes (`hashFor`, what `updateApp` sends to the address
+bar), with the model the update reached.
+-}
+written : Msg -> Model -> ( Maybe String, Model )
+written msg before =
+    let
+        after =
+            Tuple.first (update msg before)
+    in
+    ( hashFor before after, after )
+
+
+{-| Asserts a free-building update wrote the hash of the board it reached, and
+that the hash opens to a board with as many parts.
+-}
+expectFreeHash : ( Maybe String, Model ) -> Expect.Expectation
+expectFreeHash ( result, model ) =
+    case result of
+        Nothing ->
+            Expect.fail "the update wrote no hash"
+
+        Just hash ->
+            Expect.all
+                [ \h -> Expect.equal (Link.freeHash model.studio.document) h
+                , \h -> Expect.equal (List.length (placementIds model)) (List.length (placementIds (open h)))
+                ]
+                hash
+
+
+hashTests : Test
+hashTests =
+    let
+        twoBricks =
+            addFree "3001.dat" 4 (open "")
+                |> addFree "3001.dat" 14
+    in
+    describe "The address bar follows every edit"
+        [ test "an add writes the board" <|
+            \_ ->
+                written (AddFreePart { file = "3001.dat", color = 4, name = "3001.dat" }) (open "")
+                    |> expectFreeHash
+        , test "a second add writes both bricks, not only the first" <|
+            \_ ->
+                written (AddFreePart { file = "3001.dat", color = 14, name = "3001.dat" }) (addFree "3001.dat" 4 (open ""))
+                    |> expectFreeHash
+        , test "a move writes the moved board" <|
+            \_ ->
+                written RaiseSelection twoBricks
+                    |> expectFreeHash
+        , test "a turn writes the turned board" <|
+            \_ ->
+                written (TurnSelection TurnLeft) twoBricks
+                    |> expectFreeHash
+        , test "a delete writes the board without the part" <|
+            \_ ->
+                written Delete twoBricks
+                    |> expectFreeHash
+        , test "the Glue button writes the glued board" <|
+            \_ ->
+                written ToggleGlue twoBricks
+                    |> expectFreeHash
+        , test "the L key writes the glued board" <|
+            \_ ->
+                let
+                    after =
+                        press "l" twoBricks
+                in
+                expectFreeHash ( hashFor twoBricks after, after )
+        , test "Clear writes the empty board" <|
+            \_ ->
+                written Clear twoBricks
+                    |> expectFreeHash
+        , test "undo and redo write the board they reach" <|
+            \_ ->
+                let
+                    ( undoHash, undone ) =
+                        written Undo twoBricks
+                in
+                Expect.all
+                    [ \_ -> expectFreeHash ( undoHash, undone )
+                    , \_ -> expectFreeHash (written Redo undone)
+                    ]
+                    ()
+        , test "a puzzle writes its model and kit" <|
+            \_ ->
+                let
+                    kit =
+                        { part = "3001.dat", color = 14, count = 2 }
+
+                    ( hash, model ) =
+                        written (AddPart kit) (open "#parts=3001.dat:14:2")
+                in
+                Expect.equal (Just (Link.puzzleHash model.studio.document model.inventory)) hash
         ]
 
 

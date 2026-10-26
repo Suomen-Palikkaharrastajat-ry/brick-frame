@@ -922,8 +922,10 @@ export function initBricksRuntime(options) {
   if (syncUrlHash && typeof window !== 'undefined') {
     // Safari rate-limits history.replaceState (~100 calls / 30s) and then throws
     // SecurityError. Thrown out of a port subscriber that escapes into Elm's
-    // effect dispatch, so writes are coalesced to one per frame and the call is
-    // guarded: a dropped URL update must never take the app down with it.
+    // effect dispatch, so writes are coalesced into one per short timer and the
+    // call is guarded: a dropped URL update must never take the app down with it.
+    // A timer, not requestAnimationFrame: a hidden or unfocused window stops
+    // animation frames, which left the hash stale until something drew a frame.
     let pendingHash = null
     let hashFrame = null
 
@@ -943,10 +945,7 @@ export function initBricksRuntime(options) {
       const normalized = String(hash ?? '')
       pendingHash = normalized.startsWith('#') ? normalized : `#${normalized}`
       if (hashFrame !== null) return
-      hashFrame =
-        typeof window.requestAnimationFrame === 'function'
-          ? window.requestAnimationFrame(flushHash)
-          : setTimeout(flushHash, 16)
+      hashFrame = setTimeout(flushHash, 16)
     })
   }
 
