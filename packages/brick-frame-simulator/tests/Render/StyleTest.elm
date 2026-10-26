@@ -35,8 +35,6 @@ suite =
                             , vibrance = 99
                             , edgeColor = vec3 -1 0.4 2
                             , edgeWidth = 99
-                            , bevelStrength = -1
-                            , studEmbossStrength = 5
                             }
                 in
                 Expect.all
@@ -52,8 +50,6 @@ suite =
                     , \_ -> Expect.within (Expect.Absolute 0.0001) 1 (Vec3.getZ clamped.edgeColor)
                     , \_ -> Expect.notEqual 0 (Vec3.length clamped.lightDirection)
                     , \_ -> Expect.within (Expect.Absolute 0.0001) 8 clamped.edgeWidth
-                    , \_ -> Expect.within (Expect.Absolute 0.0001) 0 clamped.bevelStrength
-                    , \_ -> Expect.within (Expect.Absolute 0.0001) 1 clamped.studEmbossStrength
                     ]
                     ()
         , test "default style remains within expected range" <|
@@ -73,7 +69,7 @@ suite =
                     , \_ -> Expect.atMost 8 style.edgeWidth
                     ]
                     ()
-        , test "fromQuality distinguishes Draft from Realistic bevel and stud logo shading" <|
+        , test "fromQuality makes Realistic differ from Draft in specular and rim" <|
             \_ ->
                 let
                     draft =
@@ -83,11 +79,9 @@ suite =
                         Style.fromQuality Style.Realistic
                 in
                 Expect.all
-                    [ \_ -> Expect.within (Expect.Absolute 0.0001) 0 draft.bevelStrength
-                    , \_ -> Expect.within (Expect.Absolute 0.0001) 0 draft.studEmbossStrength
-                    , \_ -> Expect.greaterThan 0.1 realistic.bevelStrength
-                    , \_ -> Expect.greaterThan 0.1 realistic.studEmbossStrength
-                    , \_ -> Expect.greaterThan draft.specularStrength realistic.specularStrength
+                    [ \_ -> Expect.greaterThan draft.specularStrength realistic.specularStrength
+                    , \_ -> Expect.greaterThan draft.rimStrength realistic.rimStrength
+                    , \_ -> Expect.greaterThan draft.lightStrength realistic.lightStrength
                     ]
                     ()
         ]

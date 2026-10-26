@@ -140,6 +140,12 @@ defaultStyle =
     }
 ```
 
+The Realistic preset (`Render.Style.realisticStyle`) differs from the draft
+only in the same shading terms: a stronger directional light, a glossier
+specular lobe and a stronger rim. The shader adds no per-face edge or logo
+effects, because those were drawn on a fixed lattice that does not follow the
+real part geometry.
+
 `Render.Scene.renderScene` remains available for compatibility and internally
 adapts `Render.Lighting.LightUniforms` via `Render.Style.fromLight`.
 

@@ -1019,8 +1019,6 @@ renderWithGhost config scene =
             , rimStrength = style.rimStrength
             , rimPower = style.rimPower
             , vibrance = style.vibrance
-            , bevelStrength = style.bevelStrength
-            , studEmbossStrength = style.studEmbossStrength
             , u_ghostMode =
                 if ghost then
                     1.0

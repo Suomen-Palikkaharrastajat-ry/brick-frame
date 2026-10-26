@@ -21,7 +21,8 @@ import Math.Vector3 as Vec3 exposing (Vec3, vec3)
 import Render.Lighting exposing (LightUniforms)
 
 
-{-| Quality preset toggle for draft (fast, flat edges) vs realistic (bevel highlights, stud logos).
+{-| Quality preset toggle for draft (fast, flat lighting) vs realistic (stronger
+light, plus specular gloss and rim light).
 -}
 type Quality
     = Draft
@@ -82,11 +83,6 @@ Fields:
     `1.5` (the default) gives a clean antialiased outline; `2.0`–`3.0` suits
     larger viewports or stylised renders.
 
-  - **`bevelStrength`** — Intensity of normal-modulated edge beveling (`0`–`1`).
-    Creates soft specular edge highlights across brick boundaries without extra geometry.
-
-  - **`studEmbossStrength`** — Procedural normal embossing for LEGO stud logos (`0`–`1`).
-
 -}
 type alias Style =
     { lightDirection : Vec3
@@ -99,8 +95,6 @@ type alias Style =
     , vibrance : Float
     , edgeColor : Vec3
     , edgeWidth : Float
-    , bevelStrength : Float
-    , studEmbossStrength : Float
     }
 
 
@@ -118,8 +112,6 @@ defaultStyle =
     , vibrance = 0.25
     , edgeColor = vec3 0 0 0
     , edgeWidth = 1.5
-    , bevelStrength = 0.0
-    , studEmbossStrength = 0.0
     }
 
 
@@ -130,7 +122,8 @@ draftStyle =
     defaultStyle
 
 
-{-| Realistic studio render quality style with edge bevel highlights and embossed stud logos.
+{-| Realistic studio render quality style: stronger directional light with a
+glossy plastic sheen (specular and rim) on top of the draft lighting.
 -}
 realisticStyle : Style
 realisticStyle =
@@ -144,8 +137,6 @@ realisticStyle =
     , vibrance = 0.18
     , edgeColor = vec3 0.1 0.1 0.1
     , edgeWidth = 1.0
-    , bevelStrength = 0.5
-    , studEmbossStrength = 0.75
     }
 
 
@@ -190,8 +181,6 @@ clampStyle style =
         , vibrance = clampVibrance style.vibrance
         , edgeColor = clampVec3 style.edgeColor
         , edgeWidth = clamp 0.25 8.0 style.edgeWidth
-        , bevelStrength = clamp 0 1 style.bevelStrength
-        , studEmbossStrength = clamp 0 1 style.studEmbossStrength
     }
 
 

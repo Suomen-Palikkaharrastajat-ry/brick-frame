@@ -2093,10 +2093,9 @@ panelSuite =
                     in
                     Expect.all
                         [ \_ -> Expect.equal Style.Realistic realistic.renderQuality
-                        , \_ -> Expect.greaterThan 0.1 realistic.viewport.renderStyle.bevelStrength
-                        , \_ -> Expect.greaterThan 0.1 realistic.viewport.renderStyle.studEmbossStrength
+                        , \_ -> Expect.greaterThan 0.1 realistic.viewport.renderStyle.specularStrength
                         , \_ -> Expect.equal Style.Draft backToDraft.renderQuality
-                        , \_ -> Expect.within (Expect.Absolute 0.0001) 0 backToDraft.viewport.renderStyle.bevelStrength
+                        , \_ -> Expect.within (Expect.Absolute 0.0001) 0 backToDraft.viewport.renderStyle.specularStrength
                         ]
                         ()
             , test "export menu opens and closes when selecting an export format or snapshot" <|

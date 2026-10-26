@@ -5900,7 +5900,7 @@ viewExportMenu model =
                      else
                         "Realistic rendering"
                     )
-                    "Bevels and stud logos, slower"
+                    "Glossy highlights and stronger light, slower"
                 , sectionTitle "Export"
                 ]
 
