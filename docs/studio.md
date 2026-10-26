@@ -67,6 +67,41 @@ command; a history is two stacks of inverses, so undo and redo are both `apply`.
 The document records the ids an edit touched (`Document.touched`) and the next
 free id.
 
+### Glued parts
+
+A glued part stays on the board. It is written as a META line directly before
+its part line:
+
+    0 !PALIKKA GLUED
+    1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat
+
+A glued placement is one whose previous line is that exact meta line (surrounding
+whitespace ignored). Files without it parse as before, and it round-trips through
+`LDraw.Writer`. The meta line is only meaningful directly before a placement, so
+every document edit keeps the two together: `Document.removePlacement` takes the
+line along, `groupIntoSubmodel` keeps a glued part glued inside its group (and
+glues the group reference), `explodeSubmodel` drops the glue of the placement it
+inlines, and `Document.autoStepDocument` puts step markers before the line.
+Duplicated or added placements are never glued.
+
+`LDraw.Document` provides `isGlued`, `gluedIds`, `setGlued` (idempotent) and
+`isGlueLine`. Glue is an edit: `Edit.SetGlued` with its inverse, one undo step.
+
+In `Studio.Core`:
+
+- `setGlued : Bool -> Model -> (Model, Cmd Msg, List Event)` glues or unglues the
+  selection as one undo step. `isGlued`, `selectionGlued` query it. Glued parts can
+  be selected.
+- A glued part is never changed by a move. `movableSelection` (the selection
+  without glued parts) is what turn, nudge, raise, lower, delete, body drag,
+  gizmo handles and the gear alignment use. A press on a glued part does not start
+  a drag (it selects, or does nothing in `DragPartsOnly`). A mixed selection moves
+  only its unglued parts. Glued parts stay obstacles for snapping and free spots.
+- `setGlueEditable False` (puzzle mode) makes `setGlued` a no-op and refuses
+  undo or redo that would unglue a part. Default `True`.
+- `clearUnglued` resets the document to its glued parts. `resetDocument` (Clear)
+  is unchanged.
+
 ## Keeping the scene in step
 
 The viewport shows the document through the instanced renderer

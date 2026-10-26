@@ -3,6 +3,7 @@ module Studio.Edit exposing
     , Command(..)
     , History
     , NewPart
+    , Removed
     , apply
     , axisVector
     , canRedo
@@ -35,6 +36,7 @@ puts them back in the same order with the same ids.
 import LDraw.Document as Document exposing (Document, Placement)
 import Math.Matrix4 as Mat4 exposing (Mat4)
 import Math.Vector3 as Vec3 exposing (Vec3)
+import Set
 
 
 {-| An axis of the document's coordinate system (LDraw's, Y pointing down).
@@ -54,6 +56,26 @@ type alias NewPart =
     }
 
 
+{-| A placement taken out of a submodel: where it was (`index` is the start of
+its block, its glue line included), whether it was glued and the placement itself.
+-}
+type alias Removed =
+    { submodel : String
+    , index : Int
+    , glued : Bool
+    , placement : Placement
+    }
+
+
+toInt : Bool -> Int
+toInt flag =
+    if flag then
+        1
+
+    else
+        0
+
+
 {-| One edit.
 
   - `Translate` moves placements by a vector.
@@ -62,9 +84,12 @@ type alias NewPart =
   - `SetMatrix` sets whole matrices, as `( id, matrix )` pairs: what typing a
     position or angle into an inspector does.
   - `Add` appends new placements to the main submodel.
-  - `Remove` deletes placements.
-  - `Restore` puts placements back at entry indices; it is what undoing a
-    `Remove` is, and is exposed because a history may hold it.
+  - `Remove` deletes placements (and their glue lines).
+  - `Restore` puts removed placements back at their entry indices, glued again
+    where they were; it is what undoing a `Remove` is, and is exposed because a
+    history may hold it.
+  - `SetGlued` glues (`True`) or unglues (`False`) placements, as `( id, glued )`
+    pairs.
   - `Group` makes several commands one undo step.
 
 -}
@@ -77,7 +102,8 @@ type Command
     | Add (List NewPart)
     | AddIn String (List NewPart)
     | Remove (List Int)
-    | Restore (List ( String, Int, Placement ))
+    | Restore (List Removed)
+    | SetGlued (List ( Int, Bool ))
     | GroupIntoSubmodel String (List Int)
     | ExplodeSubmodel Int
     | ReplaceDoc Document Document
@@ -154,18 +180,49 @@ apply command doc =
 
         Remove ids ->
             let
-                located =
+                gluedNow =
+                    Document.gluedIds doc
+
+                removed =
                     ids
                         |> List.filterMap (\id -> Document.locatePlacement id doc)
                         |> List.sortBy (\( _, idx, _ ) -> idx)
+                        |> List.map
+                            (\( subName, idx, p ) ->
+                                let
+                                    glued =
+                                        Set.member p.id gluedNow
+                                in
+                                -- A glued placement's block starts at its glue line, just before it.
+                                { submodel = subName
+                                , index = idx - toInt glued
+                                , glued = glued
+                                , placement = p
+                                }
+                            )
             in
-            ( List.foldl (\( _, _, p ) d -> Document.removePlacement p.id d) doc located
-            , Restore located
+            ( List.foldl (\r d -> Document.removePlacement r.placement.id d) doc removed
+            , Restore removed
             )
 
-        Restore entries ->
-            ( List.foldl (\( subName, index, p ) d -> Document.insertPlacementIn subName index p d) doc entries
-            , Remove (List.map (\( _, _, p ) -> p.id) entries)
+        Restore removed ->
+            ( List.foldl
+                (\r d -> Document.insertBlockIn r.submodel r.index r.glued r.placement d)
+                doc
+                removed
+            , Remove (List.map (\r -> r.placement.id) removed)
+            )
+
+        SetGlued pairs ->
+            let
+                gluedNow =
+                    Document.gluedIds doc
+
+                inverse =
+                    List.map (\( id, _ ) -> ( id, Set.member id gluedNow )) pairs
+            in
+            ( List.foldl (\( id, glued ) d -> Document.setGlued glued id d) doc pairs
+            , SetGlued inverse
             )
 
         GroupIntoSubmodel name ids ->

@@ -14,6 +14,7 @@ module Studio.Core exposing
     , canUndo
     , cancelDrag
     , clearSelection
+    , clearUnglued
     , currentArcHandles
     , currentHandles
     , deleteSelection
@@ -26,6 +27,7 @@ module Studio.Core exposing
     , getPlacements
     , hasSelection
     , init
+    , isGlued
     , lowerSelected
     , partBox
     , raiseSelected
@@ -35,12 +37,15 @@ module Studio.Core exposing
     , rotateSelection
     , selectAll
     , selectionCount
+    , selectionGlued
     , setCollisionMode
     , setDragMode
     , setDragSettles
     , setFineMove
     , setGearAlignment
     , setGizmoStyle
+    , setGlueEditable
+    , setGlued
     , setGridStep
     , setHelpVisible
     , setRenderQuality
@@ -259,6 +264,7 @@ type alias Model =
     , dragSettles : Bool
     , fitAfterAdd : Maybe Int
     , gearAlignment : Bool
+    , glueEditable : Bool
     }
 
 
@@ -364,6 +370,7 @@ init config =
             , dragSettles = True
             , fitAfterAdd = Nothing
             , gearAlignment = False
+            , glueEditable = True
             }
 
         ( finalModel, extraCmds, _ ) =
@@ -545,7 +552,8 @@ recordEdit command model =
                 Edit.apply command model.document
 
             rotations =
-                GearAlign.alignmentCommands model.viewport.partCache
+                GearAlign.alignmentCommandsKeeping (Document.gluedIds model.document)
+                    model.viewport.partCache
                     { before = model.document, after = edited }
         in
         case rotations of
@@ -619,6 +627,117 @@ resetDocument doc model =
     )
 
 
+{-| Whether a placement is glued to the board (see `setGlued`).
+-}
+isGlued : Int -> Model -> Bool
+isGlued id model =
+    Document.isGlued id model.document
+
+
+{-| Whether any selected placement is glued.
+-}
+selectionGlued : Model -> Bool
+selectionGlued model =
+    not (Set.isEmpty (Set.intersect model.selection (Document.gluedIds model.document)))
+
+
+{-| Puzzle mode. With `False`, `setGlued` does nothing and glued parts cannot be
+unglued, not even by undo or redo. Default `True`.
+-}
+setGlueEditable : Bool -> Model -> Model
+setGlueEditable editable model =
+    { model | glueEditable = editable }
+
+
+{-| Glue the selected parts to the board (`True`) or unglue the selected glued
+parts (`False`), as one undo step. Parts already in that state are left alone,
+and nothing happens when no selected part changes or glue is not editable.
+
+A glued part cannot be moved, turned, raised, lowered, nudged or deleted (see
+`movableSelection`); it can still be selected.
+
+-}
+setGlued : Bool -> Model -> ( Model, Cmd Msg, List Event )
+setGlued glued model =
+    let
+        gluedNow =
+            Document.gluedIds model.document
+
+        targets =
+            Set.toList (Set.filter (\id -> Set.member id gluedNow /= glued) model.selection)
+    in
+    if not model.glueEditable || List.isEmpty targets then
+        ( model, Cmd.none, [] )
+
+    else
+        let
+            ( newDoc, newHistory ) =
+                Edit.record (SetGlued (List.map (\id -> ( id, glued )) targets)) model.document model.history
+
+            ( nextViewport, viewportCmd, events ) =
+                Viewport.applyDocument newDoc model.viewport
+
+            nextModel =
+                { model
+                    | viewport = nextViewport
+                    , document = Document.clearTouched newDoc
+                    , history = newHistory
+                }
+
+            ( finalModel, extraCmds, emittedEvents ) =
+                handleViewportEvents events ( nextModel, [], [ DocumentChanged nextModel.document ] )
+        in
+        ( finalModel
+        , Cmd.batch (Cmd.map ViewportMsg viewportCmd :: extraCmds)
+        , emittedEvents
+        )
+
+
+{-| Reset the document to its glued parts only, as `resetDocument` does (history
+and selection are cleared too). Brick Play's Clear uses `resetDocument` and
+clears everything; this keeps the parts glued to the board.
+-}
+clearUnglued : Model -> ( Model, Cmd Msg, List Event )
+clearUnglued model =
+    let
+        gluedNow =
+            Document.gluedIds model.document
+
+        kept =
+            Document.placements model.document
+                |> List.map .id
+                |> List.filter (\id -> not (Set.member id gluedNow))
+                |> List.foldl Document.removePlacement model.document
+    in
+    resetDocument kept model
+
+
+{-| The selected placements a move, turn, nudge or delete may change: the
+selection without the glued parts. Every such command uses this, so a glued part
+stays where it is, and a mixed selection moves only its unglued parts.
+-}
+movableSelection : Model -> Set Int
+movableSelection model =
+    Set.diff model.selection (Document.gluedIds model.document)
+
+
+{-| In puzzle mode an undo or redo that would unglue a part does nothing. `stack`
+is the undo or the redo stack; its top is the step that would be taken.
+-}
+unglueBlocked : List Command -> Model -> Bool
+unglueBlocked stack model =
+    let
+        unglues =
+            case stack of
+                (SetGlued pairs) :: _ ->
+                    List.any (\( _, glued ) -> not glued) pairs
+
+                _ ->
+                    False
+    in
+    not model.glueEditable && unglues
+
+
 {-| Fit view to current document contents.
 -}
 fitView : Model -> ( Model, Cmd Msg )
@@ -634,13 +753,21 @@ fitView model =
 -}
 deleteSelection : Model -> ( Model, Cmd Msg, List Event )
 deleteSelection model =
-    if Set.isEmpty model.selection then
+    let
+        movable =
+            movableSelection model
+    in
+    if Set.isEmpty movable then
         ( model, Cmd.none, [] )
 
     else
         let
             toDelete =
-                Set.toList model.selection
+                Set.toList movable
+
+            -- Glued parts stay, and stay selected.
+            remaining =
+                Set.diff model.selection movable
 
             ( newDoc, newHistory ) =
                 Edit.record (Remove toDelete) model.document model.history
@@ -653,14 +780,14 @@ deleteSelection model =
                     | viewport = nextViewport
                     , document = Document.clearTouched newDoc
                     , history = newHistory
-                    , selection = Set.empty
+                    , selection = remaining
                     , drag = Nothing
                     , activeSnap = Nothing
                     , collidingPlacements = Set.empty
                 }
 
             ( finalModel, extraCmds, emittedEvents ) =
-                handleViewportEvents events ( nextModel, [], [ DocumentChanged nextModel.document, SelectionChanged Set.empty ] )
+                handleViewportEvents events ( nextModel, [], [ DocumentChanged nextModel.document, SelectionChanged remaining ] )
         in
         ( finalModel
         , Cmd.batch (Cmd.map ViewportMsg viewportCmd :: extraCmds)
@@ -677,7 +804,7 @@ undo model =
 
 undoInner : Model -> ( Model, Cmd Msg, List Event )
 undoInner model =
-    if not (canUndo model) then
+    if not (canUndo model) || unglueBlocked model.history.undo model then
         ( model, Cmd.none, [] )
 
     else
@@ -724,7 +851,7 @@ redo model =
 
 redoInner : Model -> ( Model, Cmd Msg, List Event )
 redoInner model =
-    if not (canRedo model) then
+    if not (canRedo model) || unglueBlocked model.history.redo model then
         ( model, Cmd.none, [] )
 
     else
@@ -773,13 +900,13 @@ rotateSelection axis steps model =
 -}
 rotateSelectionBy : Axis -> Float -> Model -> ( Model, Cmd Msg, List Event )
 rotateSelectionBy axis angle model =
-    if Set.isEmpty model.selection then
+    if Set.isEmpty (movableSelection model) then
         ( model, Cmd.none, [] )
 
     else
         let
             selectedIds =
-                Set.toList model.selection
+                Set.toList (movableSelection model)
 
             pivot =
                 Edit.selectionCenter selectedIds model.document
@@ -1015,7 +1142,7 @@ With the combined gizmo they step aside while an arc is being dragged; with
 currentHandles : Model -> List Handle
 currentHandles model =
     if model.gizmoStyle /= NoGizmo && model.tool == MoveTool && not (isArcDrag model.drag) then
-        case Edit.selectionCenter (Set.toList model.selection) model.document of
+        case Edit.selectionCenter (Set.toList (movableSelection model)) model.document of
             Just localCenter ->
                 Gizmo.handlesWithFrame
                     Mat4.identity
@@ -1051,7 +1178,7 @@ currentArcHandles model =
                         []
 
             Nothing ->
-                case Edit.selectionCenter (Set.toList model.selection) model.document of
+                case Edit.selectionCenter (Set.toList (movableSelection model)) model.document of
                     Just center ->
                         Gizmo.outerArcHandles
                             model.viewport.camera
@@ -1073,7 +1200,7 @@ currentArcHandles model =
                         []
 
             Nothing ->
-                case Edit.selectionCenter (Set.toList model.selection) model.document of
+                case Edit.selectionCenter (Set.toList (movableSelection model)) model.document of
                     Just localCenter ->
                         Gizmo.arcHandlesWithFrame
                             Mat4.identity
@@ -1576,13 +1703,13 @@ turnSelection turn model =
 
 nudgeSelected : StudioShortcuts.Nudge -> Model -> ( Model, Cmd Msg, List Event )
 nudgeSelected nudge model =
-    if Set.isEmpty model.selection then
+    if Set.isEmpty (movableSelection model) then
         ( model, Cmd.none, [] )
 
     else
         let
             selectedIds =
-                Set.toList model.selection
+                Set.toList (movableSelection model)
 
             delta =
                 nudgeDelta model nudge
@@ -1770,8 +1897,13 @@ handleViewportEvent event ( model, cmds, outEvents ) =
                                 _ ->
                                     drag0
 
+                        -- Grabbing part of the selection keeps all of it, glued parts included.
                         dragSel =
-                            Set.fromList drag.ids
+                            if Set.isEmpty (Set.intersect (Set.fromList drag.ids) model.selection) then
+                                Set.fromList drag.ids
+
+                            else
+                                model.selection
                     in
                     ( { pressModel
                         | viewport = Viewport.captureDrag model.viewport
@@ -1790,12 +1922,22 @@ handleViewportEvent event ( model, cmds, outEvents ) =
                         -- hold the gesture so it does not orbit. The release then
                         -- arrives as `DragEnded`, never `Clicked`, so clear here.
                         let
+                            -- A glued part cannot be grabbed here, but a press on it still selects it.
                             newSel =
                                 if pressModel.shiftHeld then
                                     pressModel.selection
 
                                 else
-                                    Set.empty
+                                    case Viewport.pickSource x y pressModel.viewport of
+                                        Just hit ->
+                                            if isGlued hit pressModel then
+                                                Set.singleton hit
+
+                                            else
+                                                Set.empty
+
+                                        Nothing ->
+                                            Set.empty
                         in
                         ( { pressModel
                             | viewport = Viewport.captureDrag pressModel.viewport
@@ -1905,7 +2047,7 @@ startDrag point model =
         handleDrag kind =
             { kind = kind
             , plane = Nothing
-            , ids = Set.toList model.selection
+            , ids = Set.toList (movableSelection model)
             , start = point
             , lastPoint = point
             , original = model.document
@@ -1948,26 +2090,32 @@ grabPart ( x, y ) model =
 
     else
         Viewport.pickBodyPoint x y model.viewport
-            |> Maybe.map
+            |> Maybe.andThen
                 (\hit ->
-                    { kind = PlaneDrag hit.point
-                    , plane = Just (DragPlane.choose model.viewport.camera hit.point)
-                    , ids =
-                        if Set.member hit.source model.selection then
-                            Set.toList model.selection
+                    -- A glued part is an obstacle, not something to grab: a press on it only selects.
+                    if isGlued hit.source model then
+                        Nothing
 
-                        else
-                            [ hit.source ]
-                    , start = ( x, y )
-                    , lastPoint = ( x, y )
-                    , original = model.document
-                    , amount = 0
-                    , elevationOffset = 0.0
-                    , axisLock = Nothing
-                    , modeAnchor = ( x, y )
-                    , baseElevation = 0.0
-                    , shiftToggle = Nothing
-                    }
+                    else
+                        Just
+                            { kind = PlaneDrag hit.point
+                            , plane = Just (DragPlane.choose model.viewport.camera hit.point)
+                            , ids =
+                                if Set.member hit.source model.selection then
+                                    Set.toList (movableSelection model)
+
+                                else
+                                    [ hit.source ]
+                            , start = ( x, y )
+                            , lastPoint = ( x, y )
+                            , original = model.document
+                            , amount = 0
+                            , elevationOffset = 0.0
+                            , axisLock = Nothing
+                            , modeAnchor = ( x, y )
+                            , baseElevation = 0.0
+                            , shiftToggle = Nothing
+                            }
                 )
 
 
@@ -2300,7 +2448,8 @@ endDrag model =
 
                     rotations =
                         if model.gearAlignment then
-                            GearAlign.alignmentCommands model.viewport.partCache
+                            GearAlign.alignmentCommandsKeeping (Document.gluedIds model.document)
+                                model.viewport.partCache
                                 { before = drag.original, after = model.document }
 
                         else

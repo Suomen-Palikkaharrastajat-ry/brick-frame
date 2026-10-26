@@ -1,4 +1,4 @@
-module Studio.GearAlign exposing (alignmentCommands)
+module Studio.GearAlign exposing (alignmentCommands, alignmentCommandsKeeping)
 
 {-| Tooth alignment of gears that a committed edit has just meshed.
 
@@ -81,7 +81,16 @@ in order after it.
 
 -}
 alignmentCommands : PartCache -> { before : Document, after : Document } -> List Command
-alignmentCommands cache { before, after } =
+alignmentCommands =
+    alignmentCommandsKeeping Set.empty
+
+
+{-| `alignmentCommands`, except that a rigid group with any placement in `fixed`
+(a glued part, say) is never turned, so those placements stay where they are.
+A gear whose group is fixed is left unmeshed rather than moved.
+-}
+alignmentCommandsKeeping : Set Int -> PartCache -> { before : Document, after : Document } -> List Command
+alignmentCommandsKeeping fixed cache { before, after } =
     let
         changed =
             changedIds before after
@@ -105,14 +114,14 @@ alignmentCommands cache { before, after } =
                     |> Set.toList
                     |> List.filter (\( a, b ) -> Set.member a changed || Set.member b changed)
         in
-        alignNew cache changed newMeshes after Set.empty
+        alignNew cache fixed changed newMeshes after Set.empty
 
 
 {-| Close the new meshes one by one. Each turn is applied to the document
 before the next mesh is looked at, and a rigid group turns at most once.
 -}
-alignNew : PartCache -> Set Int -> List ( Int, Int ) -> Document -> Set Int -> List Command
-alignNew cache changed pairs doc turned =
+alignNew : PartCache -> Set Int -> Set Int -> List ( Int, Int ) -> Document -> Set Int -> List Command
+alignNew cache fixed changed pairs doc turned =
     case pairs of
         [] ->
             []
@@ -138,7 +147,7 @@ alignNew cache changed pairs doc turned =
             in
             case lineMembers snap moving of
                 Nothing ->
-                    alignNew cache changed rest doc turned
+                    alignNew cache fixed changed rest doc turned
 
                 Just ( line, members ) ->
                     let
@@ -146,19 +155,22 @@ alignNew cache changed pairs doc turned =
                             List.minimum members |> Maybe.withDefault moving
                     in
                     if Set.member key turned || List.member partner members then
-                        alignNew cache changed rest doc turned
+                        alignNew cache fixed changed rest doc turned
+
+                    else if List.any (\id -> Set.member id fixed) members then
+                        alignNew cache fixed changed rest doc (Set.insert key turned)
 
                     else
                         case turnGroup snap line members moving partner of
                             Nothing ->
-                                alignNew cache changed rest doc (Set.insert key turned)
+                                alignNew cache fixed changed rest doc (Set.insert key turned)
 
                             Just command ->
                                 let
                                     ( turnedDoc, _ ) =
                                         Edit.apply command doc
                                 in
-                                command :: alignNew cache changed rest turnedDoc (Set.insert key turned)
+                                command :: alignNew cache fixed changed rest turnedDoc (Set.insert key turned)
 
 
 {-| The rotation of a rigid group that closes its new mesh, or `Nothing` when

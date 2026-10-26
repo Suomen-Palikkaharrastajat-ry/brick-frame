@@ -89,6 +89,22 @@ isStepMarker raw =
             False
 
 
+{-| The glue lines at the front of a list of entries (in the same order).
+-}
+leadingGlue : List Entry -> List Entry
+leadingGlue entries =
+    case entries of
+        (Raw s) :: rest ->
+            if Document.isGlueLine s then
+                Raw s :: leadingGlue rest
+
+            else
+                []
+
+        _ ->
+            []
+
+
 {-| True when the document's main submodel contains at least one `0 STEP` directive.
 -}
 hasStepMarkers : Document -> Bool
@@ -240,7 +256,15 @@ autoStepDocument partsPerStep doc =
                             count + 1
                     in
                     if nextCount >= stepSize then
-                        ( 0, Raw "0 STEP" :: PlacementEntry p :: acc )
+                        let
+                            -- Glue lines sit directly before their placement, so the step marker goes before them.
+                            heldGlue =
+                                leadingGlue acc
+
+                            earlier =
+                                List.drop (List.length heldGlue) acc
+                        in
+                        ( 0, PlacementEntry p :: heldGlue ++ (Raw "0 STEP" :: earlier) )
 
                     else
                         ( nextCount, PlacementEntry p :: acc )

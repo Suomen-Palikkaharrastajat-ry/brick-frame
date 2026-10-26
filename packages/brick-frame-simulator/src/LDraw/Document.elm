@@ -11,11 +11,15 @@ module LDraw.Document exposing
     , fingerprint
     , fromLines
     , getPlacement
+    , gluedIds
     , groupIntoSubmodel
     , indexOfPlacement
     , indexOfPlacementIn
+    , insertBlockIn
     , insertPlacement
     , insertPlacementIn
+    , isGlueLine
+    , isGlued
     , isMultiFile
     , isSubmodelReference
     , locatePlacement
@@ -26,6 +30,7 @@ module LDraw.Document exposing
     , placements
     , placementsOf
     , removePlacement
+    , setGlued
     , subfiles
     , subfilesSignature
     , submodelByName
@@ -41,6 +46,11 @@ not render (META lines, blank lines, Studio-specific tokens). A document keeps
 all of it: every submodel is an ordered list of entries, where a part reference
 is a structured `Placement` and every other line is kept verbatim as `Raw`.
 `LDraw.Writer` is the reverse of `parse`.
+
+Glue is kept the same way: a placement is glued when the line directly before
+it is `0 !PALIKKA GLUED`. Editing functions here keep that line together with
+its placement (removing, grouping or exploding a placement takes its glue line
+along; `insertBlockIn` puts both back), so a glue line is never left orphaned.
 
 `touched` collects the ids of placements added, changed or removed by the
 editing functions since the last `clearTouched`, so a renderer can update just
@@ -344,9 +354,27 @@ insertPlacement index placement doc =
 -}
 insertPlacementIn : String -> Int -> Placement -> Document -> Document
 insertPlacementIn submodelName index placement doc =
+    insertBlockIn submodelName index False placement doc
+
+
+{-| Put a placement into a specific submodel at an entry index (clamped), with
+its glue line directly before it when `glued`. `index` is where the block starts:
+the glue line's index for a glued placement, the placement's own otherwise. Used
+to undo a removal, so a removed glued placement comes back glued.
+-}
+insertBlockIn : String -> Int -> Bool -> Placement -> Document -> Document
+insertBlockIn submodelName index glued placement doc =
     let
         insert entries =
-            List.take index entries ++ PlacementEntry placement :: List.drop index entries
+            List.take index entries
+                ++ (if glued then
+                        [ Raw glueLine ]
+
+                    else
+                        []
+                   )
+                ++ PlacementEntry placement
+                :: List.drop index entries
 
         targetNorm =
             if String.trim submodelName == "" then
@@ -449,6 +477,31 @@ placementsOf name doc =
             []
 
 
+{-| Whether a line is the glue meta line `0 !PALIKKA GLUED` (surrounding
+whitespace ignored). It only has meaning directly before a placement.
+-}
+isGlueLine : String -> Bool
+isGlueLine text =
+    String.trim text == glueLine
+
+
+{-| Whether a placement is glued, by id. See `setGlued`.
+-}
+isGlued : Int -> Document -> Bool
+isGlued id doc =
+    Set.member id (gluedIds doc)
+
+
+{-| Ids of every glued placement, across all submodels.
+-}
+gluedIds : Document -> Set Int
+gluedIds doc =
+    doc.submodels
+        |> List.concatMap (\s -> blocksOf s.entries)
+        |> List.filterMap gluedBlockId
+        |> Set.fromList
+
+
 {-| The lines of the main submodel, in the form the geometry and gear code
 consume.
 -}
@@ -538,20 +591,50 @@ updatePlacement id change doc =
     mapEntries (List.map entry) { doc | touched = Set.insert id doc.touched }
 
 
-{-| Delete one placement.
+{-| Delete one placement, with its glue line if it has one. Other placements keep
+their own glue lines.
 -}
 removePlacement : Int -> Document -> Document
 removePlacement id doc =
-    let
-        keep e =
-            case e of
-                PlacementEntry p ->
-                    p.id /= id
+    mapEntries
+        (\entries ->
+            blocksOf entries
+                |> List.filter (\block -> blockPlacementId block /= Just id)
+                |> List.concat
+        )
+        { doc | touched = Set.insert id doc.touched }
 
-                Raw _ ->
-                    True
-    in
-    mapEntries (List.filter keep) { doc | touched = Set.insert id doc.touched }
+
+{-| Glue a placement, or unglue it: `True` puts the glue line directly before it,
+`False` removes it. Idempotent, and unknown ids leave the document alone.
+-}
+setGlued : Bool -> Int -> Document -> Document
+setGlued glued id doc =
+    if isGlued id doc == glued then
+        doc
+
+    else
+        let
+            changed =
+                mapEntries
+                    (\entries ->
+                        blocksOf entries
+                            |> List.concatMap
+                                (\block ->
+                                    if blockPlacementId block == Just id then
+                                        if glued then
+                                            Raw glueLine :: block
+
+                                        else
+                                            List.filter (not << isGlueEntry) block
+
+                                    else
+                                        block
+                                )
+                    )
+                    doc
+        in
+        { changed | touched = Set.insert id changed.touched }
 
 
 {-| Group selected placements into a new submodel with the given name.
@@ -667,12 +750,22 @@ groupIntoSubmodel name inputIds doc =
                     tInv =
                         Mat4.makeTranslate (Vec3.negate center)
 
-                    localPlacements =
-                        List.map (\p -> { p | matrix = cleanMatrix (Mat4.mul tInv p.matrix) }) selectedPlacements
+                    gluedNow =
+                        gluedIds doc
+
+                    -- A moved part keeps its glue line, so it stays glued inside the group.
+                    localEntries =
+                        selectedPlacements
+                            |> List.concatMap
+                                (\p ->
+                                    glueEntries (Set.member p.id gluedNow)
+                                        ++ [ PlacementEntry { p | matrix = cleanMatrix (Mat4.mul tInv p.matrix) } ]
+                                )
 
                     newPlacementId =
                         doc.nextId
 
+                    -- A group with a glued member is glued, so the glued part stays on the board.
                     newPlacement =
                         { id = newPlacementId
                         , part = normalise submodelName
@@ -682,44 +775,40 @@ groupIntoSubmodel name inputIds doc =
                         , extra = []
                         }
 
-                    firstIndex =
-                        parentSubmodel.entries
-                            |> List.indexedMap Tuple.pair
-                            |> List.filter
-                                (\( _, e ) ->
-                                    case e of
-                                        PlacementEntry p ->
-                                            List.member p.id inputIds
-
-                                        Raw _ ->
-                                            False
-                                )
-                            |> List.head
-                            |> Maybe.map Tuple.first
-                            |> Maybe.withDefault 0
+                    groupEntries =
+                        glueEntries (List.any (\p -> Set.member p.id gluedNow) selectedPlacements)
+                            ++ [ PlacementEntry newPlacement ]
 
                     selectedIdSet =
                         Set.fromList (List.map .id selectedPlacements)
 
-                    remainingEntries =
-                        List.filter
-                            (\e ->
-                                case e of
-                                    PlacementEntry p ->
-                                        not (Set.member p.id selectedIdSet)
+                    isSelected block =
+                        blockPlacementId block
+                            |> Maybe.map (\id -> Set.member id selectedIdSet)
+                            |> Maybe.withDefault False
 
-                                    Raw _ ->
-                                        True
-                            )
-                            parentSubmodel.entries
-
+                    -- The group goes where the first selected block was; the other selected blocks are dropped.
                     newParentEntries =
-                        List.take firstIndex remainingEntries
-                            ++ (PlacementEntry newPlacement :: List.drop firstIndex remainingEntries)
+                        blocksOf parentSubmodel.entries
+                            |> List.foldl
+                                (\block ( acc, placed ) ->
+                                    if isSelected block then
+                                        if placed then
+                                            ( acc, True )
+
+                                        else
+                                            ( List.reverse groupEntries ++ acc, True )
+
+                                    else
+                                        ( List.reverse block ++ acc, placed )
+                                )
+                                ( [], False )
+                            |> Tuple.first
+                            |> List.reverse
 
                     newSubmodel =
                         { name = submodelName
-                        , entries = List.map PlacementEntry localPlacements
+                        , entries = localEntries
                         }
 
                     isFirstUnnamed s =
@@ -769,7 +858,7 @@ explodeSubmodel placementId doc =
         Nothing ->
             doc
 
-        Just ( parentName, placementIndex, submodelPlacement ) ->
+        Just ( parentName, _, submodelPlacement ) ->
             case submodelByName submodelPlacement.part doc of
                 Nothing ->
                     doc
@@ -817,10 +906,17 @@ explodeSubmodel placementId doc =
                                                 Nothing
                                     )
 
+                        -- The placement's block (its glue line too) gives way to the inlined entries.
                         replaceInEntries entries =
-                            List.take placementIndex entries
-                                ++ inlinedEntries
-                                ++ List.drop (placementIndex + 1) entries
+                            blocksOf entries
+                                |> List.concatMap
+                                    (\block ->
+                                        if blockPlacementId block == Just placementId then
+                                            inlinedEntries
+
+                                        else
+                                            block
+                                    )
 
                         parentNorm =
                             normalise parentName
@@ -925,6 +1021,88 @@ placementOf entry =
             Just p
 
         Raw _ ->
+            Nothing
+
+
+{-| The glue meta line, as written in a file.
+-}
+glueLine : String
+glueLine =
+    "0 !PALIKKA GLUED"
+
+
+isGlueEntry : Entry -> Bool
+isGlueEntry entry =
+    case entry of
+        Raw text ->
+            isGlueLine text
+
+        PlacementEntry _ ->
+            False
+
+
+{-| The glue lines for one placement: one line when glued, none otherwise.
+-}
+glueEntries : Bool -> List Entry
+glueEntries glued =
+    if glued then
+        [ Raw glueLine ]
+
+    else
+        []
+
+
+{-| Split entries into blocks: a placement with the glue lines directly before
+it, or any other entry alone. Concatenating the blocks gives the entries back,
+so an edit can work block by block and keep glue with its placement.
+-}
+blocksOf : List Entry -> List (List Entry)
+blocksOf entries =
+    let
+        flush pending done =
+            List.foldl (\meta acc -> [ meta ] :: acc) done pending
+
+        step entry ( done, pending ) =
+            case entry of
+                PlacementEntry _ ->
+                    ( (pending ++ [ entry ]) :: done, [] )
+
+                Raw text ->
+                    if isGlueLine text then
+                        ( done, pending ++ [ entry ] )
+
+                    else
+                        ( [ entry ] :: flush pending done, [] )
+
+        ( reversedBlocks, leftover ) =
+            List.foldl step ( [], [] ) entries
+    in
+    List.reverse (flush leftover reversedBlocks)
+
+
+{-| The id of the placement a block holds, if any.
+-}
+blockPlacementId : List Entry -> Maybe Int
+blockPlacementId block =
+    block
+        |> List.filterMap placementOf
+        |> List.head
+        |> Maybe.map .id
+
+
+{-| The id of the placement a block holds, when the block is glued.
+-}
+gluedBlockId : List Entry -> Maybe Int
+gluedBlockId block =
+    case block of
+        (Raw text) :: _ :: _ ->
+            if isGlueLine text then
+                blockPlacementId block
+
+            else
+                Nothing
+
+        _ ->
             Nothing
 
 
