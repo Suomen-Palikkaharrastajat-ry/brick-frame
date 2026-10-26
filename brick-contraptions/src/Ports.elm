@@ -1,8 +1,10 @@
 port module Ports exposing
-    ( geometryFlattenFailed
+    ( copyToClipboard
+    , geometryFlattenFailed
     , geometryFlattened
     , requestGeometryFlatten
     , requestThumbnails
+    , setUrlHash
     , thumbnailLoaded
     )
 
@@ -37,3 +39,13 @@ port requestThumbnails : List { file : String, color : Int, rgb : List Float } -
 unknown). Parts that cannot be rendered send nothing.
 -}
 port thumbnailLoaded : ({ file : String, color : Int, url : String, title : String } -> msg) -> Sub msg
+
+
+{-| Update the browser URL hash.
+-}
+port setUrlHash : String -> Cmd msg
+
+
+{-| Copy text to the system clipboard.
+-}
+port copyToClipboard : String -> Cmd msg

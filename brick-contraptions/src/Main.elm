@@ -2,12 +2,15 @@ module Main exposing
     ( Flags
     , Model
     , Msg(..)
+    , accomplishmentBanner
     , init
     , main
+    , shareHash
     , subscriptions
     , thumbnailRequests
     , update
     , view
+    , viewToast
     )
 
 {-| Main application for Brick Contraptions.
@@ -18,7 +21,11 @@ Building and simulating share one view: Space plays and pauses the machine while
 editing stays available. A drag on the canvas picks up and moves parts relative
 to the view; there is no axis gizmo — while something is selected, a floating
 action bar above the dock turns, tips, raises, lowers or deletes it (the same as
-the keyboard). The camera has its own control in the bottom-right corner, a globe to fly it around the model and a zoom slider.
+the keyboard). The camera has its own control, the shared camera globe
+(`UI.CameraGlobe`) in the bottom-right corner: drag it to fly the camera around
+the model, tap it to fly there, and use its zoom slider and reset button. On a
+narrow portrait window (a phone) the bottom area shows either the parts dock or
+the camera globe, switched by a toggle button.
 
 While the machine plays (and while it is paused part-way) every gear in the
 motor's gear train is drawn turning by the shared `Simulation` component, with
@@ -46,20 +53,23 @@ import Browser
 import Browser.Dom
 import Browser.Events
 import Contraption.Animation as Animation exposing (Animated)
-import Contraption.CameraGlobe as CameraGlobe
 import Contraption.Catalog as Catalog exposing (Category(..), PartItem)
 import Contraption.Machine as Machine exposing (MachineState)
 import Contraption.Placement as Placement
 import Data
 import Dict exposing (Dict)
 import EmbeddedParts
+import FeatherIcons
 import Gear.Placements as Placements
 import Html exposing (Html, button, div, h1, header, span, text)
 import Html.Attributes as Attr
 import Html.Events exposing (onClick)
+import Html.Keyed as Keyed
 import LDraw.Colors as Colors
 import LDraw.Document as Document
+import LDraw.Writer as Writer
 import Ports
+import Process
 import Render.Camera as Camera
 import Set
 import Simulation
@@ -68,11 +78,13 @@ import Studio.GearFeedback as GearFeedback
 import Studio.Shortcuts as StudioShortcuts exposing (TurnDirection(..))
 import Studio.UrlPayload as UrlPayload
 import Task
+import UI.CameraGlobe as CameraGlobe
 import UI.Focus as Focus
 import UI.HamburgerMenu as HamburgerMenu
 import UI.Icon as Icon
 import UI.PartCard as PartCard
 import UI.ShortcutHelp as ShortcutHelp
+import Url
 import Viewport
 import Viewport.Framing exposing (ViewPreset(..))
 import Viewport.Shortcuts as ViewportShortcuts
@@ -94,7 +106,9 @@ type alias Model =
     { studio : Core.Model
     , machine : MachineState
     , playing : Bool
-    , globeDrag : Maybe GlobeDrag
+    , globeDrag : Maybe CameraGlobe.Drag
+    , cameraShown : Bool
+    , lastTapped : Maybe String
     , helpOpen : Bool
     , menuOpen : Bool
     , activeCategory : Category
@@ -106,6 +120,8 @@ type alias Model =
     , windowWidth : Int
     , windowHeight : Int
     , thumbnails : Dict String Thumbnail
+    , toast : Maybe { message : String, id : Int }
+    , toastCounter : Int
     }
 
 
@@ -115,19 +131,6 @@ unknown), kept under `PartCard.thumbnailKey file color`.
 type alias Thumbnail =
     { url : String
     , title : String
-    }
-
-
-{-| A press on the camera globe: where it started and last was (relative to the
-globe's centre), how far it has travelled, and which way a horizontal drag turns
-the camera (fixed for the whole drag, so crossing the globe's edge does not
-reverse it).
--}
-type alias GlobeDrag =
-    { start : ( Float, Float )
-    , last : ( Float, Float )
-    , travel : Float
-    , azimuthSign : Float
     }
 
 
@@ -142,9 +145,12 @@ type Msg
     | ZoomTo Float
     | ZoomDone
     | ResetView
+    | ToggleCameraPanel
     | ToggleHelp
     | ToggleMenu
     | CloseMenu
+    | ShareLink
+    | DismissToast Int
     | MenuPicked Msg
     | NoOp
     | SetCategory Category
@@ -155,6 +161,7 @@ type Msg
     | TurnSelection TurnDirection
     | RaiseSelection
     | LowerSelection
+    | ToggleFine
     | Clear
     | FitView
     | Tick Float
@@ -224,6 +231,8 @@ init flags =
             , machine = initialMachine
             , playing = False
             , globeDrag = Nothing
+            , cameraShown = False
+            , lastTapped = Nothing
             , helpOpen = False
             , menuOpen = False
             , activeCategory = activeCategory
@@ -242,6 +251,8 @@ init flags =
             , windowWidth = 1280
             , windowHeight = 800
             , thumbnails = Dict.empty
+            , toast = Nothing
+            , toastCounter = 0
             }
 
         fetchViewportSize =
@@ -374,6 +385,62 @@ startPlaying model =
         }
 
 
+{-| Encode current document and project parts into a shareable URL hash.
+-}
+shareHash : Model -> String
+shareHash model =
+    let
+        doc =
+            model.studio.document
+
+        modelStr =
+            Writer.writeDocument doc
+
+        partsStr =
+            model.projectParts
+                |> List.map (\p -> { part = p.file, color = p.color, count = 1 })
+                |> UrlPayload.encodeParts
+
+        hasModel =
+            not (List.isEmpty (Document.mainPlacements doc))
+
+        hasParts =
+            not (String.isEmpty (String.trim partsStr))
+    in
+    case ( hasModel, hasParts ) of
+        ( True, True ) ->
+            "model=" ++ Url.percentEncode modelStr ++ "&parts=" ++ Url.percentEncode partsStr
+
+        ( True, False ) ->
+            "model=" ++ Url.percentEncode modelStr
+
+        ( False, True ) ->
+            "parts=" ++ Url.percentEncode partsStr
+
+        ( False, False ) ->
+            ""
+
+
+{-| Update URL hash if the given core events contain a document change.
+-}
+syncDocHash : Model -> List Core.Event -> Cmd Msg
+syncDocHash model events =
+    let
+        hasDocChange ev =
+            case ev of
+                Core.DocumentChanged _ ->
+                    True
+
+                _ ->
+                    False
+    in
+    if List.any hasDocChange events then
+        Ports.setUrlHash (shareHash model)
+
+    else
+        Cmd.none
+
+
 step : Msg -> Model -> ( Model, Cmd Msg )
 step msg model =
     case msg of
@@ -392,10 +459,16 @@ step msg model =
 
                 portCmds =
                     handleCoreEvents events
+
+                nextModel =
+                    { model | studio = nextStudio, machine = newMachine }
+
+                syncCmd =
+                    syncDocHash nextModel events
             in
             List.foldl applyShortcut
-                ( { model | studio = nextStudio, machine = newMachine }
-                , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
+                ( nextModel
+                , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncCmd ]
                 )
                 (List.filterMap extractKey events)
 
@@ -407,37 +480,19 @@ step msg model =
                 ( startPlaying model, Cmd.none )
 
         GlobePressed point ->
-            ( { model
-                | globeDrag =
-                    Just
-                        { start = point
-                        , last = point
-                        , travel = 0
-                        , azimuthSign = CameraGlobe.facingSign model.studio.viewport.camera
-                        }
-              }
+            ( { model | globeDrag = Just (CameraGlobe.startDrag model.studio.viewport.camera point) }
             , Cmd.none
             )
 
-        GlobeMoved ( x, y ) ->
+        GlobeMoved point ->
             case model.globeDrag of
                 Just drag ->
                     let
-                        ( lx, ly ) =
-                            drag.last
-
-                        ( azimuthDelta, elevationDelta ) =
-                            CameraGlobe.dragOrbit drag.azimuthSign ( x - lx, y - ly )
+                        ( ( azimuthDelta, elevationDelta ), nextDrag ) =
+                            CameraGlobe.moveDrag drag point
                     in
                     update (viewportMsg (Viewport.RotateCameraBy azimuthDelta elevationDelta))
-                        { model
-                            | globeDrag =
-                                Just
-                                    { drag
-                                        | last = ( x, y )
-                                        , travel = drag.travel + sqrt ((x - lx) ^ 2 + (y - ly) ^ 2)
-                                    }
-                        }
+                        { model | globeDrag = Just nextDrag }
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -447,7 +502,7 @@ step msg model =
                 released =
                     { model | globeDrag = Nothing }
             in
-            case model.globeDrag |> Maybe.andThen (tapTarget model) of
+            case model.globeDrag |> Maybe.andThen (CameraGlobe.releaseDrag model.studio.viewport.camera) of
                 Just ( azimuthDelta, elevationDelta ) ->
                     update (viewportMsg (Viewport.RotateCameraBy azimuthDelta elevationDelta)) released
 
@@ -469,6 +524,9 @@ step msg model =
             , Cmd.batch [ fitCmd, Task.attempt (\_ -> NoOp) (Browser.Dom.blur CameraGlobe.resetButtonId) ]
             )
 
+        ToggleCameraPanel ->
+            ( { model | cameraShown = not model.cameraShown }, Cmd.none )
+
         ToggleHelp ->
             -- The studio pauses its editing keys while the dialog is open, so
             -- Esc and ? reach this app to close it.
@@ -483,6 +541,33 @@ step msg model =
 
         CloseMenu ->
             ( syncKeyPause { model | menuOpen = False }, Cmd.none )
+
+        ShareLink ->
+            let
+                hash =
+                    shareHash model
+
+                nextId =
+                    model.toastCounter + 1
+            in
+            ( { model
+                | menuOpen = False
+                , toast = Just { message = "Link copied to clipboard!", id = nextId }
+                , toastCounter = nextId
+              }
+            , Cmd.batch
+                [ Ports.setUrlHash hash
+                , Ports.copyToClipboard ("#" ++ hash)
+                , Process.sleep 3000 |> Task.perform (\_ -> DismissToast nextId)
+                ]
+            )
+
+        DismissToast id ->
+            if Maybe.map .id model.toast == Just id then
+                ( { model | toast = Nothing }, Cmd.none )
+
+            else
+                ( model, Cmd.none )
 
         MenuPicked action ->
             -- The menu closes, then the chosen message runs as if its button were pressed.
@@ -527,9 +612,12 @@ step msg model =
 
                 portCmds =
                     handleCoreEvents events
+
+                nextModel =
+                    { model | studio = nextStudio, machine = newMachine, lastTapped = Just (dockName model.thumbnails item) }
             in
-            ( { model | studio = nextStudio, machine = newMachine }
-            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
+            ( nextModel
+            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncDocHash nextModel events ]
             )
 
         Undo ->
@@ -542,9 +630,12 @@ step msg model =
 
                 portCmds =
                     handleCoreEvents events
+
+                nextModel =
+                    { model | studio = nextStudio, machine = newMachine }
             in
-            ( { model | studio = nextStudio, machine = newMachine }
-            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
+            ( nextModel
+            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncDocHash nextModel events ]
             )
 
         Redo ->
@@ -557,9 +648,12 @@ step msg model =
 
                 portCmds =
                     handleCoreEvents events
+
+                nextModel =
+                    { model | studio = nextStudio, machine = newMachine }
             in
-            ( { model | studio = nextStudio, machine = newMachine }
-            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
+            ( nextModel
+            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncDocHash nextModel events ]
             )
 
         Delete ->
@@ -572,9 +666,12 @@ step msg model =
 
                 portCmds =
                     handleCoreEvents events
+
+                nextModel =
+                    { model | studio = nextStudio, machine = newMachine }
             in
-            ( { model | studio = nextStudio, machine = newMachine }
-            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
+            ( nextModel
+            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncDocHash nextModel events ]
             )
 
         TurnSelection direction ->
@@ -586,6 +683,11 @@ step msg model =
         LowerSelection ->
             runCore Core.lowerSelected model
 
+        ToggleFine ->
+            ( { model | studio = Core.setFineMove (not (Core.fineMove model.studio)) model.studio }
+            , Cmd.none
+            )
+
         Clear ->
             let
                 ( nextStudio, studioCmd, events ) =
@@ -596,9 +698,12 @@ step msg model =
 
                 portCmds =
                     handleCoreEvents events
+
+                nextModel =
+                    { model | studio = nextStudio, machine = newMachine, currentTime = 0.0 }
             in
-            ( { model | studio = nextStudio, machine = newMachine, currentTime = 0.0 }
-            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds ]
+            ( nextModel
+            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncDocHash nextModel events ]
             )
 
         FitView ->
@@ -648,24 +753,16 @@ runCore edit model =
     let
         ( nextStudio, studioCmd, events ) =
             edit model.studio
+
+        nextModel =
+            { model
+                | studio = nextStudio
+                , machine = Machine.analyseMachine nextStudio.document nextStudio.viewport.partCache
+            }
     in
-    ( { model
-        | studio = nextStudio
-        , machine = Machine.analyseMachine nextStudio.document nextStudio.viewport.partCache
-      }
-    , Cmd.batch [ Cmd.map StudioMsg studioCmd, handleCoreEvents events ]
+    ( nextModel
+    , Cmd.batch [ Cmd.map StudioMsg studioCmd, handleCoreEvents events, syncDocHash nextModel events ]
     )
-
-
-{-| A press that barely moved is a tap: fly the camera to that point of the globe.
--}
-tapTarget : Model -> GlobeDrag -> Maybe ( Float, Float )
-tapTarget model drag =
-    if drag.travel < 3 then
-        CameraGlobe.flyToDelta model.studio.viewport.camera drag.start
-
-    else
-        Nothing
 
 
 extractKey : Core.Event -> Maybe ViewportShortcuts.KeyEvent
@@ -844,9 +941,8 @@ view model =
             List.length model.machine.gears
     in
     div
-        [ Attr.style "position" "relative"
-        , Attr.style "width" "100vw"
-        , Attr.style "height" "100vh"
+        [ Attr.style "position" "fixed"
+        , Attr.style "inset" "0"
         , Attr.style "overflow" "hidden"
         , Attr.style "background" "var(--color-brand)"
         , Attr.style "font-family" "var(--font-sans)"
@@ -891,23 +987,19 @@ view model =
         -- 3D WebGL Canvas
         , Html.map StudioMsg (viewCanvas model)
 
-        -- Camera control: the canvas drag edits, so the camera lives here
-        , div
-            [ Attr.style "position" "absolute"
-            , Attr.style "right" "0.75rem"
-            , Attr.style "bottom" "0.75rem"
-            , Attr.style "z-index" "10"
-            ]
-            [ CameraGlobe.view
-                { camera = model.studio.viewport.camera
-                , onPress = GlobePressed
-                , onMove = GlobeMoved
-                , onRelease = GlobeReleased
-                , onZoom = ZoomTo
-                , onZoomDone = ZoomDone
-                , onReset = ResetView
-                }
-            ]
+        -- Camera control: the canvas drag edits, so the camera lives here. On a
+        -- narrow window it shares the bottom row with the dock instead.
+        , if isNarrow model then
+            text ""
+
+          else
+            div
+                [ Attr.style "position" "absolute"
+                , Attr.style "right" "0.75rem"
+                , Attr.style "bottom" "0.75rem"
+                , Attr.style "z-index" "10"
+                ]
+                [ globeControl model ]
         , if model.helpOpen then
             -- Above the header, dock and camera pad (all z-index 10), which
             -- would otherwise cover the top and bottom of the dialog.
@@ -927,28 +1019,278 @@ view model =
 
         -- Bottom: the selection action bar floats above the Technic dock, whose
         -- bottom edge lines up with the camera globe's
-        , div
-            ([ Attr.style "position" "absolute"
-             , Attr.style "bottom" "0.75rem"
-             , Attr.style "display" "flex"
-             , Attr.style "flex-direction" "column"
-             , Attr.style "gap" "0.5rem"
-             , Attr.style "z-index" "10"
-             , Attr.style "pointer-events" "none"
-             ]
-                ++ dockPlacement model.windowWidth
-            )
-            [ GearFeedback.gearFeedback (Set.toList model.studio.selection) model.studio.document
-                |> Maybe.map GearFeedback.pill
-                |> Maybe.withDefault (text "")
-            , if Core.hasSelection model.studio then
-                selectionBar
+        , bottomArea model
+        , case model.toast of
+            Just t ->
+                viewToast t.message
+
+            Nothing ->
+                text ""
+        ]
+
+
+{-| Toast notification overlay.
+-}
+viewToast : String -> Html Msg
+viewToast message =
+    div
+        [ Attr.attribute "role" "status"
+        , Attr.attribute "aria-live" "polite"
+        , Attr.style "position" "fixed"
+        , Attr.style "top" "1rem"
+        , Attr.style "left" "50%"
+        , Attr.style "transform" "translateX(-50%)"
+        , Attr.style "background" "rgba(5, 19, 29, 0.95)"
+        , Attr.style "color" "var(--color-text-on-dark)"
+        , Attr.style "padding" "0.625rem 1.125rem"
+        , Attr.style "border-radius" "0.5rem"
+        , Attr.style "border" "1px solid rgba(255, 255, 255, 0.2)"
+        , Attr.style "box-shadow" "0 4px 16px rgba(0, 0, 0, 0.5)"
+        , Attr.style "font-size" "0.875rem"
+        , Attr.style "font-weight" "500"
+        , Attr.style "z-index" "60"
+        , Attr.style "pointer-events" "none"
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "gap" "0.5rem"
+        ]
+        [ Icon.featherSized 16 "check"
+        , text message
+        ]
+
+
+{-| Below this window width (CSS px, a portrait phone) the bottom area shows
+either the dock or the camera globe, never both.
+-}
+narrowWidth : Int
+narrowWidth =
+    600
+
+
+isNarrow : Model -> Bool
+isNarrow model =
+    model.windowWidth < narrowWidth
+
+
+{-| The bottom area: the gear feedback pill, the selection action bar, then the
+dock. On a narrow window the dock row also carries the camera toggle, and shows
+the camera globe instead of the dock while the toggle is on.
+-}
+bottomArea : Model -> Html Msg
+bottomArea model =
+    div
+        ([ Attr.style "position" "absolute"
+         , Attr.style "bottom" "0.75rem"
+         , Attr.style "display" "flex"
+         , Attr.style "flex-direction" "column"
+         , Attr.style "gap" "0.5rem"
+         , Attr.style "z-index" "10"
+         , Attr.style "pointer-events" "none"
+         ]
+            ++ dockPlacement model.windowWidth
+        )
+        [ -- Truncated to the row rather than pushing the bar off a phone
+          div
+            [ Attr.style "display" "flex"
+            , Attr.style "justify-content" "center"
+            , Attr.style "max-width" "100%"
+            , Attr.style "min-width" "0"
+            , Attr.style "overflow" "hidden"
+            , Attr.style "white-space" "nowrap"
+            ]
+            [ gearPill model ]
+        , selectionBar model
+        , touchLabel model
+        , if isNarrow model then
+            narrowRow model
+
+          else
+            viewDock model
+        ]
+
+
+{-| The narrow dock row: the dock (or the camera globe) and the toggle between
+them, at a finger-sized width.
+-}
+narrowRow : Model -> Html Msg
+narrowRow model =
+    div
+        [ Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "gap" "0.5rem"
+        , Attr.style "width" "100%"
+        , Attr.style "min-width" "0"
+        ]
+        [ div
+            [ Attr.style "display" "flex"
+            , Attr.style "justify-content" "center"
+            , Attr.style "flex" "1 1 auto"
+            , Attr.style "min-width" "0"
+            , Attr.style "pointer-events" "auto"
+            ]
+            [ if model.cameraShown then
+                globeControl model
 
               else
-                text ""
-            , viewDock model
+                viewDock model
             ]
+        , cameraToggle model
         ]
+
+
+{-| The toggle between the dock and the camera globe on a narrow window. Its icon
+shows what is on screen now; `aria-pressed` is on while the camera is shown.
+-}
+cameraToggle : Model -> Html Msg
+cameraToggle model =
+    let
+        icon =
+            if model.cameraShown then
+                FeatherIcons.camera
+
+            else
+                FeatherIcons.box
+    in
+    button
+        [ onClick ToggleCameraPanel
+        , Attr.attribute "aria-label" "Camera controls"
+        , Attr.attribute "aria-pressed"
+            (if model.cameraShown then
+                "true"
+
+             else
+                "false"
+            )
+        , Attr.title "Camera controls"
+        , Attr.class "touch-target"
+        , Attr.style "display" "flex"
+        , Attr.style "flex-shrink" "0"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "center"
+        , Attr.style "width" "2.75rem"
+        , Attr.style "height" "2.75rem"
+        , Attr.style "padding" "0"
+        , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
+        , Attr.style "border-radius" "0.75rem"
+        , Attr.style "background"
+            (if model.cameraShown then
+                "var(--color-brand-yellow)"
+
+             else
+                "rgba(5, 19, 29, 0.9)"
+            )
+        , Attr.style "color"
+            (if model.cameraShown then
+                "var(--color-brand)"
+
+             else
+                "var(--color-text-on-dark)"
+            )
+        , Attr.style "cursor" "pointer"
+        , Attr.style "pointer-events" "auto"
+        , keepFocusOnCanvas
+        ]
+        [ icon
+            |> FeatherIcons.withSize 20
+            |> FeatherIcons.toHtml [ Attr.attribute "aria-hidden" "true" ]
+        ]
+
+
+{-| The shared camera globe, with the zoom slider and the reset button.
+-}
+globeControl : Model -> Html Msg
+globeControl model =
+    CameraGlobe.view
+        { camera = model.studio.viewport.camera
+        , onPress = GlobePressed
+        , onMove = GlobeMoved
+        , onRelease = GlobeReleased
+        , onZoom = ZoomTo
+        , onZoomDone = ZoomDone
+        , onReset = ResetView
+        , extras = []
+        }
+
+
+{-| On touch screens, where tooltips never show: the name of the dock part last
+tapped, above the dock. Hidden while the camera globe takes the bottom row.
+-}
+touchLabel : Model -> Html Msg
+touchLabel model =
+    case model.lastTapped of
+        Just name ->
+            if isNarrow model && model.cameraShown then
+                text ""
+
+            else
+                div
+                    [ Attr.class "touch-only"
+                    , Attr.style "align-self" "center"
+                    , Attr.style "max-width" "100%"
+                    , Attr.style "overflow" "hidden"
+                    , Attr.style "text-overflow" "ellipsis"
+                    , Attr.style "white-space" "nowrap"
+                    , Attr.style "padding" "0.125rem 0.75rem"
+                    , Attr.style "border-radius" "9999px"
+                    , Attr.style "background" "rgba(5, 19, 29, 0.85)"
+                    , Attr.style "color" "var(--color-text-on-dark)"
+                    , Attr.style "font-size" "0.8125rem"
+                    , Attr.style "font-weight" "600"
+                    , Attr.style "pointer-events" "auto"
+                    ]
+                    [ Keyed.node "span" [] [ ( name, span [] [ text name ] ) ] ]
+
+        Nothing ->
+            text ""
+
+
+{-| The gear feedback pill, keyed by its text so a changed status replaces it.
+-}
+gearPill : Model -> Html Msg
+gearPill model =
+    case GearFeedback.gearFeedback (Set.toList model.studio.selection) model.studio.document of
+        Just feedback ->
+            let
+                label =
+                    GearFeedback.feedbackText feedback
+            in
+            Keyed.node "span" [ Attr.style "display" "contents" ] [ ( label, GearFeedback.pill feedback ) ]
+
+        Nothing ->
+            text ""
+
+
+{-| The name of the selection for the action bar: the part's name when one part
+is selected, else how many parts are.
+-}
+selectionName : Model -> String
+selectionName model =
+    case Set.toList model.studio.selection of
+        [ id ] ->
+            case List.filter (\p -> p.id == id) (Core.getPlacements model.studio) of
+                placed :: _ ->
+                    case List.filter (\item -> item.file == placed.part) Catalog.curatedParts of
+                        item :: _ ->
+                            item.name
+
+                        [] ->
+                            Dict.get (PartCard.thumbnailKey placed.part placed.color) model.thumbnails
+                                |> Maybe.map .title
+                                |> Maybe.withDefault ""
+                                |> String.trim
+                                |> (\title ->
+                                        if String.isEmpty title then
+                                            String.replace ".dat" "" placed.part
+
+                                        else
+                                            title
+                                   )
+
+                [] ->
+                    ""
+
+        ids ->
+            String.fromInt (List.length ids) ++ " parts"
 
 
 {-| The top-right menu: undo, redo, delete, clear and the shortcut list. Each
@@ -961,7 +1303,8 @@ menuConfig model =
     , onToggle = ToggleMenu
     , onClose = CloseMenu
     , items =
-        [ { label = "Undo", shortcut = "Ctrl+Z", enabled = Core.canUndo model.studio, onSelect = MenuPicked Undo }
+        [ { label = "Share link", shortcut = "", enabled = True, onSelect = MenuPicked ShareLink }
+        , { label = "Undo", shortcut = "Ctrl+Z", enabled = Core.canUndo model.studio, onSelect = MenuPicked Undo }
         , { label = "Redo", shortcut = "Ctrl+Shift+Z", enabled = Core.canRedo model.studio, onSelect = MenuPicked Redo }
         , { label = "Delete", shortcut = "Del", enabled = Core.hasSelection model.studio, onSelect = MenuPicked Delete }
         , { label = "Clear", shortcut = "", enabled = List.length (Core.getPlacements model.studio) > 0, onSelect = MenuPicked Clear }
@@ -990,6 +1333,7 @@ helpButton =
         , Attr.style "color" "var(--color-text-on-dark)"
         , Attr.style "cursor" "pointer"
         , Attr.style "transition" "all 150ms ease"
+        , Attr.class "touch-target"
         ]
         [ Icon.featherSized 18 "help-circle" ]
 
@@ -1034,7 +1378,14 @@ accomplishmentBanner gearCount =
         , Attr.style "text-overflow" "ellipsis"
         , Attr.style "box-shadow" "0 10px 25px rgba(0, 0, 0, 0.6)"
         ]
-        [ text ("All " ++ String.fromInt gearCount ++ " gears are rotating together!") ]
+        [ -- Keyed: a text change replaces the element, so a browser that has
+          -- translated the old text cannot leave stale copies behind.
+          let
+            label =
+                "All " ++ String.fromInt gearCount ++ " gears are rotating together!"
+          in
+          Keyed.node "span" [] [ ( label, span [] [ text label ] ) ]
+        ]
 
 
 {-| The studio canvas. While the machine is animated the turning gears are
@@ -1077,32 +1428,126 @@ viewCanvas model =
 
 
 {-| Buttons for the selection, the touch- and mouse-friendly stand-in for an
-axis gizmo. Each does what its keyboard shortcut does.
+axis gizmo. Each does what its keyboard shortcut does. The Fine toggle is always
+last, so it can be set before anything is selected; without a selection the bar
+shows only that toggle.
 -}
-selectionBar : Html Msg
-selectionBar =
+selectionBar : Model -> Html Msg
+selectionBar model =
+    let
+        selected =
+            Core.hasSelection model.studio
+
+        label =
+            selectionName model
+
+        actions =
+            if selected then
+                [ span
+                    [ Attr.class "touch-only"
+                    , Attr.style "max-width" "9rem"
+                    , Attr.style "overflow" "hidden"
+                    , Attr.style "text-overflow" "ellipsis"
+                    , Attr.style "white-space" "nowrap"
+                    , Attr.style "padding" "0 0.5rem"
+                    , Attr.style "color" "var(--color-brand-yellow)"
+                    , Attr.style "font-size" "0.8125rem"
+                    , Attr.style "font-weight" "700"
+                    ]
+                    [ Keyed.node "span" [] [ ( label, span [] [ text label ] ) ] ]
+                , actionButton (TurnSelection TurnLeft) "rotate-ccw" "Turn left" "←"
+                , actionButton (TurnSelection TurnRight) "rotate-cw" "Turn right" "→"
+                , actionButton (TurnSelection TipForward) "corner-right-down" "Tip" "↑"
+                , actionButton RaiseSelection "arrow-up" "Raise" "E"
+                , actionButton LowerSelection "arrow-down" "Lower" "Q"
+                , actionButton Delete "trash-2" "Delete" "Delete"
+                ]
+
+            else
+                []
+    in
     div
         [ Attr.attribute "role" "toolbar"
         , Attr.attribute "aria-label" "Selected parts"
         , Attr.style "align-self" "center"
         , Attr.style "display" "flex"
+        , Attr.style "flex-wrap" "wrap"
+        , Attr.style "justify-content" "center"
+        , Attr.style "align-items" "center"
         , Attr.style "gap" "0.25rem"
+        , Attr.style "max-width" "100%"
+        , Attr.style "box-sizing" "border-box"
         , Attr.style "padding" "0.375rem"
         , Attr.style "background" "rgba(5, 19, 29, 0.85)"
         , Attr.style "backdrop-filter" "blur(8px)"
-        , Attr.style "border-radius" "9999px"
+        , Attr.style "border-radius" "1.5rem"
         , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
         , Attr.style "box-shadow" "0 20px 25px -5px rgba(0, 0, 0, 0.5)"
         , Attr.style "pointer-events" "auto"
         , keepFocusOnCanvas
         ]
-        [ actionButton (TurnSelection TurnLeft) "rotate-ccw" "Turn left" "←"
-        , actionButton (TurnSelection TurnRight) "rotate-cw" "Turn right" "→"
-        , actionButton (TurnSelection TipForward) "corner-right-down" "Tip" "↑"
-        , actionButton RaiseSelection "arrow-up" "Raise" "E"
-        , actionButton LowerSelection "arrow-down" "Lower" "Q"
-        , actionButton Delete "trash-2" "Delete" "Delete"
+        (actions ++ [ fineButton (Core.fineMove model.studio) ])
+
+
+{-| The Fine toggle: 1 LDU moves for body drags and nudges, the touch stand-in
+for holding Shift. `aria-pressed` shows whether it is on; it persists across
+selection changes.
+-}
+fineButton : Bool -> Html Msg
+fineButton on =
+    button
+        [ onClick ToggleFine
+        , Attr.attribute "aria-pressed" (boolText on)
+        , Attr.attribute "aria-label" "Fine moves"
+        , Attr.title "Fine moves: 1 LDU steps (Shift)"
+        , Attr.style "display" "flex"
+        , Attr.style "flex-direction" "column"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "center"
+        , Attr.style "gap" "0.125rem"
+        , Attr.style "min-width" "3rem"
+        , Attr.style "min-height" "2.75rem"
+        , Attr.style "padding" "0.25rem 0.375rem"
+        , Attr.style "border" "none"
+        , Attr.style "border-radius" "9999px"
+        , Attr.style "background" (fineBackground on)
+        , Attr.style "color" (fineColour on)
+        , Attr.style "font-size" "0.6875rem"
+        , Attr.style "font-weight" "600"
+        , Attr.style "cursor" "pointer"
+        , Attr.style "transition" "all 150ms ease"
+        , Attr.class "touch-target"
         ]
+        [ Icon.featherSized 18 "crosshair"
+        , span [ Attr.attribute "aria-hidden" "true" ] [ text "Fine" ]
+        ]
+
+
+fineBackground : Bool -> String
+fineBackground on =
+    if on then
+        "var(--color-brand-yellow)"
+
+    else
+        "rgba(255, 255, 255, 0.1)"
+
+
+fineColour : Bool -> String
+fineColour on =
+    if on then
+        "var(--color-brand)"
+
+    else
+        "var(--color-text-on-dark)"
+
+
+boolText : Bool -> String
+boolText on =
+    if on then
+        "true"
+
+    else
+        "false"
 
 
 actionButton : Msg -> String -> String -> String -> Html Msg
@@ -1127,6 +1572,7 @@ actionButton msg icon label shortcut =
         , Attr.style "font-weight" "600"
         , Attr.style "cursor" "pointer"
         , Attr.style "transition" "all 150ms ease"
+        , Attr.class "touch-target"
         ]
         [ Icon.featherSized 18 icon
         , span [ Attr.attribute "aria-hidden" "true" ] [ text label ]
@@ -1247,6 +1693,7 @@ categoryTab active cat =
             )
         , Attr.style "cursor" "pointer"
         , Attr.style "transition" "all 150ms ease"
+        , Attr.class "touch-target"
         ]
         [ text label ]
 
@@ -1264,16 +1711,7 @@ partCard thumbnails item =
             String.replace ".dat" "" item.file
 
         name =
-            case ( item.category, thumb ) of
-                ( ProjectCategory, Just t ) ->
-                    if String.isEmpty (String.trim t.title) then
-                        item.name
-
-                    else
-                        String.trim t.title
-
-                _ ->
-                    item.name
+            dockName thumbnails item
     in
     PartCard.compactView
         { imageUrl = Maybe.map .url thumb
@@ -1285,6 +1723,23 @@ partCard thumbnails item =
         }
 
 
+{-| The readable name of a dock part: its catalogue name, or for a project part
+the title from the thumbnail pipeline when it has one.
+-}
+dockName : Dict String Thumbnail -> PartItem -> String
+dockName thumbnails item =
+    case ( item.category, Dict.get (PartCard.thumbnailKey item.file item.color) thumbnails ) of
+        ( ProjectCategory, Just t ) ->
+            if String.isEmpty (String.trim t.title) then
+                item.name
+
+            else
+                String.trim t.title
+
+        _ ->
+            item.name
+
+
 descriptionSuffix : String -> String
 descriptionSuffix description =
     if String.isEmpty description then
@@ -1294,14 +1749,14 @@ descriptionSuffix description =
         " — " ++ description
 
 
-{-| Where the parts dock sits. Centred when there is room; on a narrow window it
-hugs the left edge so it never slides under the camera pad on the right.
+{-| Where the bottom area sits. Centred when there is room, leaving the camera
+globe its corner on the right; on a narrow window it spans the width.
 -}
 dockPlacement : Int -> List (Html.Attribute Msg)
 dockPlacement windowWidth =
-    if windowWidth < 900 then
+    if windowWidth < narrowWidth then
         [ Attr.style "left" "0.75rem"
-        , Attr.style "right" "11.5rem"
+        , Attr.style "right" "0.75rem"
         ]
 
     else
@@ -1330,9 +1785,9 @@ helpRows =
       , [ ( "Menu, top right", "Undo, redo, delete, clear, and this list" )
         , ( "Add from the dock", "Gears, axles, beams and pins go on one axle line, next to the selection" )
         , ( "Drag a part", "Slide it at its height, as seen from the camera; it snaps to studs and axles. Grab a gear by its axle hole too" )
-        , ( "Shift + drag a part", "Fine move: 1 LDU steps (Shift held during a drag works too)" )
+        , ( "Fine (action bar) or Shift", "1 LDU moves for drags and W A S D nudges" )
         , ( "Gears turn to mesh automatically", "A gear that meets another turns its axle line so the teeth interlock" )
-        , ( "Action bar (above the dock)", "Turn left / right, tip, raise, lower or remove the selection" )
+        , ( "Action bar (above the dock)", "Turn left / right, tip, raise, lower or remove the selection; Fine toggles 1 LDU moves" )
         , ( "Wheel while dragging", "Raise / lower (Shift: coarser, Alt: finer)" )
         , ( "W A S D", "Move the selected part one grid step (Shift: 1 LDU)" )
         , ( "Q / PgDn  ·  E / PgUp", "Lower / raise the selected part" )
@@ -1411,6 +1866,7 @@ playButton playing =
         , Attr.style "align-items" "center"
         , Attr.style "gap" "0.375rem"
         , Attr.style "white-space" "nowrap"
+        , Attr.class "touch-target"
         ]
         (if playing then
             [ Icon.feather "pause", text "Pause" ]

@@ -24,12 +24,13 @@ Example bases:
   - `/ldraw` (local assets in Vite `public/ldraw`)
   - `https://raw.githubusercontent.com/gkjohnson/ldraw-parts-library/master/complete/ldraw`
 
+
 ## Directory structure on CDN
 
-  - `parts/`      — top-level named parts (e.g. `3001.dat`, `3647.dat`)
-  - `parts/s/`    — sub-parts (referenced as `s\stud4.dat` in LDraw files)
-  - `p/`          — geometric primitives (e.g. `stud.dat`, `1-4ring3.dat`)
-  - `p/48/`       — hi-res primitives (referenced as `48\stud.dat`)
+  - `parts/` — top-level named parts (e.g. `3001.dat`, `3647.dat`)
+  - `parts/s/` — sub-parts (referenced as `s\stud4.dat` in LDraw files)
+  - `p/` — geometric primitives (e.g. `stud.dat`, `1-4ring3.dat`)
+  - `p/48/` — hi-res primitives (referenced as `48\stud.dat`)
 
 For plain filenames the resolver tries `parts/<name>` and then `p/<name>`
 across configured bases. Filenames with a path prefix (`s/`, `48/`) are
@@ -42,6 +43,7 @@ import Http
 import LDraw.Parser as Parser
 import LDraw.Types exposing (LDrawLine(..))
 import Task exposing (Task)
+
 
 
 -- ── Types ─────────────────────────────────────────────────────────────────────
@@ -75,6 +77,7 @@ type alias ResolverConfig =
     }
 
 
+
 -- ── Public API ────────────────────────────────────────────────────────────────
 
 
@@ -103,8 +106,8 @@ markLoading names cache =
 
 {-| Runtime default resolution strategy:
 
-1. Local synced assets mounted by Vite at `/ldraw`
-2. Remote fallback mirror
+1.  Local synced assets mounted by Vite at `/ldraw`
+2.  Remote fallback mirror
 
 -}
 defaultResolverConfig : ResolverConfig
@@ -238,6 +241,7 @@ fetchPartPrimitive config name toMsg =
         |> Task.attempt (toMsg name)
 
 
+
 -- ── Internal ──────────────────────────────────────────────────────────────────
 
 
@@ -268,10 +272,21 @@ partCandidateUrls config name =
             )
 
 
+{-| Whether a bare reference is probably a primitive (`p/`) rather than a part.
+
+Only an ordering hint: every candidate directory is still tried, so a wrong guess
+costs an extra 404, never a missing part. The prefixes were checked against the
+library — none of them starts a file in `parts/` — so primitives such as
+`axleend2.dat` or the `t01i3333.dat` tori no longer cost two failed requests
+(`parts/`, `parts/s/`) before `p/`.
+
+-}
 isLikelyPrimitiveName : String -> Bool
 isLikelyPrimitiveName name =
     String.contains "-" name
         || startsWithDigit name
+        || isLetterTwoDigitsLetter [ 't', 'r' ] name
+        || isLetterDigit 'h' name
         || List.any
             (\prefix -> String.startsWith prefix name)
             [ "stud"
@@ -288,9 +303,82 @@ isLikelyPrimitiveName name =
             , "tang"
             , "box"
             , "tooth"
+            , "toot"
             , "connect"
             , "peghole"
+            , "npeghol"
+            , "stu"
+            , "typest"
+            , "axl"
+            , "clh"
+            , "clip"
+            , "znap"
+            , "wpin"
+            , "tri"
+            , "bush"
+            , "fillet"
+            , "filstud"
+            , "logo"
+            , "rect"
+            , "joint"
+            , "arm"
+            , "mstud"
+            , "zstud"
+            , "hipstud"
+            , "dhinge"
+            , "ddoor"
+            , "dtooth"
+            , "dtrunc"
+            , "dsnap"
+            , "dnpeg"
+            , "dconn"
+            , "phandle"
+            , "handle"
+            , "fric"
+            , "primo"
+            , "slotm"
+            , "ridge"
+            , "bump"
+            , "knob"
+            , "empty"
+            , "ribt"
+            , "plug"
+            , "duplo"
+            , "duphandle"
+            , "st4j"
+            , "stx"
+            , "steer"
+            , "daxle"
+            , "rail"
+            , "beamhol"
+            , "clikit"
+            , "finger"
             ]
+
+
+{-| `t01i3333`-style torus and `r04o1000`-style names: one of the given letters,
+two digits, then a letter.
+-}
+isLetterTwoDigitsLetter : List Char -> String -> Bool
+isLetterTwoDigitsLetter letters name =
+    case String.toList (String.left 4 name) of
+        [ first, d1, d2, kind ] ->
+            List.member first letters && Char.isDigit d1 && Char.isDigit d2 && Char.isAlpha kind
+
+        _ ->
+            False
+
+
+{-| `h1`-style names: the given letter followed by a digit.
+-}
+isLetterDigit : Char -> String -> Bool
+isLetterDigit letter name =
+    case String.toList (String.left 2 name) of
+        [ first, d ] ->
+            first == letter && Char.isDigit d
+
+        _ ->
+            False
 
 
 startsWithDigit : String -> Bool

@@ -37,6 +37,7 @@ import Json.Decode as Decode
 import LDraw.ColorAvailability as ColorAvailability exposing (ColorAvailability(..))
 import Set exposing (Set)
 import Studio.BuildGroups as BuildGroups exposing (Tier(..))
+import Studio.KeyedText as KeyedText
 import Studio.Layout as Layout
 import Studio.PartIndex as PartIndex exposing (Part, PartIndex)
 import UI.Theme as Theme
@@ -784,7 +785,7 @@ compactChip domId onPress onKeyDown isActive isTabStop label =
         [ Html.Events.onClick onPress
         , Html.Events.preventDefaultOn "keydown" onKeyDown
         , Attr.id domId
-        , Attr.class "palette-item"
+        , Attr.class "palette-item touch-target"
         , Attr.attribute "role" "radio"
         , Attr.attribute "aria-checked"
             (if isActive then
@@ -829,14 +830,14 @@ compactChip domId onPress onKeyDown isActive isTabStop label =
                 Theme.textPrimary
             )
         ]
-        [ text label ]
+        [ KeyedText.view label ]
 
 
 chipSized : String -> String -> msg -> Bool -> String -> Html msg
 chipSized padding fontSize onPress isActive label =
     button
         [ Html.Events.onClick onPress
-        , Attr.class "palette-item"
+        , Attr.class "palette-item touch-target"
         , Attr.attribute "aria-pressed" (ariaBool isActive)
         , Attr.style "padding" padding
         , Attr.style "font-size" fontSize
@@ -992,7 +993,7 @@ partCard config state part =
     in
     div
         [ Attr.attribute "role" "listitem"
-        , Attr.class "palette-card"
+        , Attr.class "palette-card touch-target"
         , Attr.style "position" "relative"
         , Attr.style "display" "flex"
         , Attr.style "flex-direction" "column"
@@ -1031,7 +1032,7 @@ cardPickButton config part name isArmed =
         [ Html.Events.onClick (config.onArm part)
         , Html.Events.on "mousedown" (Decode.succeed (config.onStartDrag part))
         , Html.Events.on "dblclick" (Decode.succeed config.onAdd)
-        , Attr.class "palette-item"
+        , Attr.class "palette-item touch-target"
         , Attr.attribute "aria-pressed" (ariaBool isArmed)
         , Attr.attribute "aria-label" (name ++ " (" ++ fileId part ++ ")")
         , Attr.style "display" "flex"
@@ -1095,7 +1096,7 @@ cardTopBar config part name isFavorite availability =
         ]
         [ button
             [ Html.Events.onClick (config.onToggleFavorite part.file)
-            , Attr.class "palette-item"
+            , Attr.class "palette-item touch-target"
             , Attr.attribute "aria-pressed" (ariaBool isFavorite)
             , Attr.attribute "aria-label" favoriteLabel
             , Attr.title favoriteLabel
@@ -1195,7 +1196,7 @@ cardInspectButton : Config msg -> Part -> String -> Html msg
 cardInspectButton config part name =
     button
         [ Html.Events.onClick (config.onInspect (Just part))
-        , Attr.class "palette-item"
+        , Attr.class "palette-item touch-target"
         , Attr.attribute "aria-label" ("Inspect " ++ name ++ " in 3D")
         , Attr.style "margin-top" "4px"
         , Attr.style "padding" "1px 4px"

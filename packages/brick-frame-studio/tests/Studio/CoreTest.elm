@@ -822,6 +822,44 @@ selectionActionSuite =
                         Core.turnSelected StudioShortcuts.TurnLeft empty
                 in
                 Expect.equal empty.history after.history
+        , test "fine mode nudges by 1 LDU; off, by the grid step" <|
+            \_ ->
+                let
+                    start =
+                        position (placementMatrix addedPart) |> Maybe.withDefault (vec3 0 0 0)
+
+                    nudgedBy on =
+                        Core.setFineMove on addedPart
+                            |> Core.update (Core.NudgeSelection (StudioShortcuts.Nudge { direction = StudioShortcuts.Right, fine = False }))
+                            |> (\( m, _, _ ) -> position (placementMatrix m))
+                            |> Maybe.map (\v -> round (Vec3.length (Vec3.sub v start)))
+                in
+                Expect.equal ( nudgedBy True, nudgedBy False ) ( Just 1, Just 20 )
+        , test "fine mode does not touch the selection, history or Shift state" <|
+            \_ ->
+                let
+                    fine =
+                        Core.setFineMove True addedPart
+                in
+                Expect.all
+                    [ \m -> Expect.equal True (Core.fineMove m)
+                    , \m -> Expect.equal addedPart.selection m.selection
+                    , \m -> Expect.equal addedPart.history m.history
+                    , \m -> Expect.equal False m.shiftHeld
+                    ]
+                    fine
+        , test "fine mode persists across selection changes and can be switched off" <|
+            \_ ->
+                let
+                    fine =
+                        Core.setFineMove True addedPart
+                            |> Core.clearSelection
+                in
+                Expect.all
+                    [ \m -> Expect.equal True (Core.fineMove m)
+                    , \m -> Expect.equal False (Core.fineMove (Core.setFineMove False m))
+                    ]
+                    fine
         ]
 
 

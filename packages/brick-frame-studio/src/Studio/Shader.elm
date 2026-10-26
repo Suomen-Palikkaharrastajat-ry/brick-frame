@@ -2,6 +2,12 @@ module Studio.Shader exposing (Uniforms, Vertex, fragmentShader, vertexShader)
 
 {-| A flat-colour shader for the studio's overlays (selection outlines and the
 gizmo). Positions are already in render space, so there is no model matrix.
+
+`color` is declared only in the fragment shader. A uniform declared in both
+stages must have the same precision, and the vertex stage defaults to `highp`
+while the fragment stage here is `mediump`; Safari (iOS especially) refuses to
+link such a pair ("Uniform `color` is not linkable between attached shaders").
+
 -}
 
 import Math.Matrix4 exposing (Mat4)
@@ -28,7 +34,6 @@ vertexShader =
 
         uniform mat4 viewMatrix;
         uniform mat4 projectionMatrix;
-        uniform vec4 color;
 
         void main() {
             gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);

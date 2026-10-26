@@ -43,6 +43,7 @@ optional count `Badge` on the image corner. The dock that holds compact cards is
 import Html exposing (Html, button, div, img, span, text)
 import Html.Attributes as Attr
 import Html.Events
+import Html.Keyed as Keyed
 
 
 {-| What a card shows and does.
@@ -185,7 +186,7 @@ view config =
             , Attr.style "text-align" "center"
             , Attr.style "overflow-wrap" "anywhere"
             ]
-            [ text config.name ]
+            [ keyedText config.name ]
         , span
             [ Attr.style "font-size" "0.6875rem"
             , Attr.style "line-height" "1.1"
@@ -198,7 +199,7 @@ view config =
                     "var(--color-brand-red)"
                 )
             ]
-            [ text config.secondary ]
+            [ keyedText config.secondary ]
         ]
 
 
@@ -279,7 +280,16 @@ compactBadge enabled badge =
         , Attr.style "font-variant-numeric" "tabular-nums"
         , Attr.style "pointer-events" "none"
         ]
-        [ text badge.text ]
+        [ keyedText badge.text ]
+
+
+{-| Text keyed by its value. A browser translating the page rewrites the text
+node it finds; a changed value then gets a new element, so the translated copy
+is not left behind next to the new text.
+-}
+keyedText : String -> Html msg
+keyedText value =
+    Keyed.node "span" [] [ ( value, span [] [ text value ] ) ]
 
 
 {-| The click handler of a card, if it has one.

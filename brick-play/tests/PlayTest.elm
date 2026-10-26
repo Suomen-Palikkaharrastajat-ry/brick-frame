@@ -6,7 +6,7 @@ module PlayTest exposing (suite)
 import Dict
 import Expect
 import Html.Attributes as Attr
-import Main exposing (Flags, Model, Msg(..), helpRows, init, kitItemName, remainingCount, thumbnailRequests, update, view)
+import Main exposing (Flags, Model, Msg(..), helpRows, init, kitItemName, remainingCount, shareHash, thumbnailRequests, update, view, viewToast)
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (vec3)
 import Set
@@ -16,6 +16,7 @@ import Test exposing (Test, describe, test)
 import Test.Html.Event as Event
 import Test.Html.Query as Query
 import Test.Html.Selector as Selector
+import Url
 import Viewport
 
 
@@ -23,6 +24,9 @@ suite : Test
 suite =
     describe "Brick Play"
         [ menuTests
+        , sharingAndToastTests
+        , touchTests
+        , fineTests
         , test "initial inventory has 10 bricks available" <|
             \_ ->
                 let
@@ -288,6 +292,69 @@ suite =
                         , \m -> Expect.equal 4 (remainingCount m)
                         ]
                         model
+            , test "init with cottage example loads 4 placed parts and spare kit inventory" <|
+                \_ ->
+                    let
+                        cottageModel =
+                            "1 19 0 -24 0 1 0 0 0 1 0 0 0 1 3001.dat\n1 15 0 -72 0 1 0 0 0 1 0 0 0 1 60592.dat\n1 19 -30 -48 0 1 0 0 0 1 0 0 0 1 3005.dat\n1 19 30 -48 0 1 0 0 0 1 0 0 0 1 3005.dat"
+
+                        cottageParts =
+                            "3001.dat:19:3,3005.dat:19:6,3001.dat:14:2,3039.dat:4:4,60592.dat:15:1,3004.dat:19:4"
+
+                        flags =
+                            { testFlags | initialHash = "#model=" ++ Url.percentEncode cottageModel ++ "&parts=" ++ Url.percentEncode cottageParts }
+
+                        ( model, _ ) =
+                            init flags
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal 4 (List.length (Core.getPlacements m.studio))
+                        , \m -> Expect.equal 6 (List.length m.inventory)
+                        , \m -> Expect.equal (3 + 6 + 2 + 4 + 1 + 4 - 4) (remainingCount m)
+                        ]
+                        model
+            , test "init with castle watchtower example loads 4 foundation blocks and kit" <|
+                \_ ->
+                    let
+                        towerModel =
+                            "1 71 -20 -24 -20 1 0 0 0 1 0 0 0 1 3003.dat\n1 71 20 -24 -20 1 0 0 0 1 0 0 0 1 3003.dat\n1 71 -20 -24 20 1 0 0 0 1 0 0 0 1 3003.dat\n1 71 20 -24 20 1 0 0 0 1 0 0 0 1 3003.dat"
+
+                        towerParts =
+                            "3003.dat:71:12,3005.dat:71:8,3005.dat:14:2,3024.dat:4:4"
+
+                        flags =
+                            { testFlags | initialHash = "#model=" ++ Url.percentEncode towerModel ++ "&parts=" ++ Url.percentEncode towerParts }
+
+                        ( model, _ ) =
+                            init flags
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal 4 (List.length (Core.getPlacements m.studio))
+                        , \m -> Expect.equal 4 (List.length m.inventory)
+                        , \m -> Expect.equal (12 + 8 + 2 + 4 - 4) (remainingCount m)
+                        ]
+                        model
+            , test "init with arch bridge example loads 4 pier blocks and kit" <|
+                \_ ->
+                    let
+                        bridgeModel =
+                            "1 15 -50 -24 0 1 0 0 0 1 0 0 0 1 3003.dat\n1 15 -50 -48 0 1 0 0 0 1 0 0 0 1 3003.dat\n1 15 50 -24 0 1 0 0 0 1 0 0 0 1 3003.dat\n1 15 50 -48 0 1 0 0 0 1 0 0 0 1 3003.dat"
+
+                        bridgeParts =
+                            "3003.dat:15:4,3001.dat:14:3,3710.dat:1:4,3004.dat:4:4"
+
+                        flags =
+                            { testFlags | initialHash = "#model=" ++ Url.percentEncode bridgeModel ++ "&parts=" ++ Url.percentEncode bridgeParts }
+
+                        ( model, _ ) =
+                            init flags
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal 4 (List.length (Core.getPlacements m.studio))
+                        , \m -> Expect.equal 4 (List.length m.inventory)
+                        , \m -> Expect.equal (4 + 3 + 4 + 4 - 4) (remainingCount m)
+                        ]
+                        model
             ]
         , thumbnailTests
         , mouseTests
@@ -310,8 +377,8 @@ mouseTests =
             List.concatMap Tuple.second helpRows
     in
     describe "Mouse and ground"
-        [ test "uses DragPartsOrPan with one-finger orbit on touch" <|
-            \_ -> Expect.equal (Core.DragPartsOrPan Core.OneFingerOrbits) model0.studio.dragMode
+        [ test "uses DragPartsOrPan with one-finger pan on touch (the globe orbits)" <|
+            \_ -> Expect.equal (Core.DragPartsOrPan Core.OneFingerPans) model0.studio.dragMode
         , test "left-drag on empty canvas pans: the target moves, the angle does not" <|
             \_ ->
                 let
@@ -533,7 +600,7 @@ menuTests =
                     |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Keyboard shortcuts (?)") ]
                     |> Event.simulate Event.click
                     |> Event.expect ToggleHelp
-        , test "the open menu lists its five actions with their shortcuts" <|
+        , test "the open menu lists its actions with their shortcuts" <|
             \_ ->
                 let
                     ( model0, _ ) =
@@ -545,6 +612,7 @@ menuTests =
                 Query.fromHtml (view opened)
                     |> Expect.all
                         [ Query.findAll [ Selector.attribute (Attr.attribute "role" "menuitem") ] >> Query.count (Expect.equal 5)
+                        , Query.has [ Selector.text "Share link" ]
                         , Query.has [ Selector.text "Ctrl+Shift+Z" ]
                         ]
         , test "the kit cards show their count on the image and name it in the accessible label" <|
@@ -558,6 +626,70 @@ menuTests =
                         [ Query.has [ Selector.text "10/10" ]
                         , Query.has [ Selector.attribute (Attr.attribute "aria-label" "Add 3001 (Yellow), 10 of 10 left") ]
                         ]
+        ]
+
+
+{-| Sharing and toast notification lifecycle tests.
+-}
+sharingAndToastTests : Test
+sharingAndToastTests =
+    let
+        ( start, _ ) =
+            init testFlags
+    in
+    describe "Sharing and toast lifecycle"
+        [ test "ShareLink sets toast state and closes menu" <|
+            \_ ->
+                let
+                    ( menuOpenModel, _ ) =
+                        update ToggleMenu start
+
+                    ( sharedModel, _ ) =
+                        update ShareLink menuOpenModel
+                in
+                Expect.all
+                    [ \m -> Expect.equal False m.menuOpen
+                    , \m -> Expect.equal (Just "Link copied to clipboard!") (Maybe.map .message m.toast)
+                    ]
+                    sharedModel
+        , test "DismissToast with matching id clears toast; mismatching id preserves toast" <|
+            \_ ->
+                let
+                    ( sharedModel, _ ) =
+                        update ShareLink start
+
+                    toastId =
+                        sharedModel.toast |> Maybe.map .id |> Maybe.withDefault 0
+
+                    ( mismatchModel, _ ) =
+                        update (DismissToast (toastId + 999)) sharedModel
+
+                    ( matchModel, _ ) =
+                        update (DismissToast toastId) sharedModel
+                in
+                Expect.all
+                    [ \_ -> Expect.notEqual Nothing mismatchModel.toast
+                    , \_ -> Expect.equal Nothing matchModel.toast
+                    ]
+                    ()
+        , test "viewToast renders message with role='status'" <|
+            \_ ->
+                Query.fromHtml (viewToast "Link copied to clipboard!")
+                    |> Expect.all
+                        [ Query.has [ Selector.attribute (Attr.attribute "role" "status") ]
+                        , Query.has [ Selector.text "Link copied to clipboard!" ]
+                        ]
+        , test "shareHash returns parts=... when no placements exist" <|
+            \_ ->
+                let
+                    hash =
+                        shareHash start
+                in
+                Expect.all
+                    [ \h -> Expect.equal True (String.startsWith "parts=" h)
+                    , \h -> Expect.equal False (String.contains "model=" h)
+                    ]
+                    hash
         ]
 
 
@@ -580,3 +712,176 @@ pressKey key =
                 }
             )
         )
+
+
+{-| Touch layout: the shared camera globe, the phone-width kit/camera toggle and
+the names shown where tooltips never show.
+-}
+touchTests : Test
+touchTests =
+    let
+        ( start, _ ) =
+            init testFlags
+
+        at width model =
+            update (WindowResized width 844) model |> Tuple.first
+
+        toggled model =
+            update ToggleCameraPanel model |> Tuple.first
+
+        countLabelled label model =
+            Query.fromHtml (view model)
+                |> Query.findAll [ Selector.attribute (Attr.attribute "aria-label" label) ]
+
+        expectCount n label model =
+            countLabelled label model |> Query.count (Expect.equal n)
+
+        azimuth model =
+            model.studio.viewport.camera.azimuth
+    in
+    describe "Touch layout"
+        [ test "the Fit view item is gone from the menu, the globe's reset replaces it" <|
+            \_ ->
+                let
+                    opened =
+                        update ToggleMenu start |> Tuple.first
+                in
+                Query.fromHtml (view opened)
+                    |> Query.findAll [ Selector.text "Fit view" ]
+                    |> Query.count (Expect.equal 0)
+        , test "a wide window shows the kit and the camera globe side by side" <|
+            \_ ->
+                let
+                    wide =
+                        at 964 start
+                in
+                Expect.all
+                    [ \_ -> expectCount 1 "Kit" wide
+                    , \_ -> expectCount 1 "Camera" wide
+                    , \_ -> expectCount 0 "Camera controls" wide
+                    ]
+                    ()
+        , test "a phone shows the kit first, and the camera globe when the toggle is pressed" <|
+            \_ ->
+                let
+                    phone =
+                        at 390 start
+
+                    cameraView =
+                        toggled phone
+                in
+                Expect.all
+                    [ \_ -> expectCount 1 "Kit" phone
+                    , \_ -> expectCount 0 "Camera" phone
+                    , \_ -> expectCount 0 "Kit" cameraView
+                    , \_ -> expectCount 1 "Camera" cameraView
+                    ]
+                    ()
+        , test "the phone toggle is a labelled button that reports whether the camera is shown" <|
+            \_ ->
+                let
+                    pressedState model =
+                        Query.fromHtml (view model)
+                            |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Camera controls") ]
+                            |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "true") ]
+                in
+                Expect.all
+                    [ \_ ->
+                        Query.fromHtml (view (at 390 start))
+                            |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Camera controls") ]
+                            |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "false") ]
+                    , \_ -> pressedState (toggled (at 390 start))
+                    ]
+                    ()
+        , test "the globe drag orbits the camera" <|
+            \_ ->
+                let
+                    pressed =
+                        update (GlobePressed ( 0, 0 )) start |> Tuple.first
+
+                    moved =
+                        update (GlobeMoved ( 22, 0 )) pressed |> Tuple.first
+                in
+                Expect.greaterThan 1.0e-6 (abs (azimuth moved - azimuth start))
+        , test "a kit card tap records the card's name for touch screens" <|
+            \_ ->
+                let
+                    tapped =
+                        addFirst start |> Tuple.first
+                in
+                Expect.equal (Just "3001") tapped.lastTapped
+        , test "the touch label is only in the DOM once a card has been tapped" <|
+            \_ ->
+                Expect.all
+                    [ \_ -> Query.fromHtml (view start) |> Query.findAll [ Selector.class "touch-only" ] |> Query.count (Expect.equal 0)
+                    , \_ -> Query.fromHtml (view (addFirst start |> Tuple.first)) |> Query.findAll [ Selector.class "touch-only" ] |> Query.count (Expect.greaterThan 0)
+                    ]
+                    ()
+        ]
+
+
+{-| The Fine toggle in the action bar: it shows with or without a selection,
+reads its state with `aria-pressed`, and survives selection changes.
+-}
+fineTests : Test
+fineTests =
+    let
+        ( start, _ ) =
+            init testFlags
+
+        fineButtons model =
+            Query.fromHtml (view model)
+                |> Query.findAll [ Selector.attribute (Attr.attribute "aria-label" "Fine moves") ]
+
+        fineButton model =
+            Query.fromHtml (view model)
+                |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Fine moves") ]
+    in
+    describe "Fine toggle"
+        [ test "sits in the action bar once a brick is selected, off" <|
+            \_ ->
+                let
+                    selected =
+                        addFirst start |> Tuple.first
+                in
+                Expect.all
+                    [ \_ -> fineButtons selected |> Query.count (Expect.equal 1)
+                    , \_ -> fineButton selected |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "false") ]
+                    ]
+                    ()
+        , test "stays on the bar with no selection once switched on, and only it shows" <|
+            \_ ->
+                let
+                    on =
+                        update ToggleFine start |> Tuple.first
+                in
+                Expect.all
+                    [ \_ -> fineButton on |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "true") ]
+                    , \_ -> Query.fromHtml (view on) |> Query.findAll [ Selector.attribute (Attr.attribute "aria-label" "Turn left") ] |> Query.count (Expect.equal 0)
+                    , \_ -> Expect.equal True (Core.fineMove on.studio)
+                    ]
+                    ()
+        , test "a second press switches it off" <|
+            \_ ->
+                let
+                    off =
+                        update ToggleFine start |> Tuple.first |> (\m -> update ToggleFine m) |> Tuple.first
+                in
+                Expect.equal False (Core.fineMove off.studio)
+        , test "it persists when the selection is cleared" <|
+            \_ ->
+                let
+                    cleared =
+                        addFirst start
+                            |> Tuple.first
+                            |> (\m -> update ToggleFine m)
+                            |> Tuple.first
+                            |> (\m -> update (StudioMsg Core.ClearSelection) m)
+                            |> Tuple.first
+                in
+                Expect.all
+                    [ \_ -> Expect.equal False (Core.hasSelection cleared.studio)
+                    , \_ -> Expect.equal True (Core.fineMove cleared.studio)
+                    ]
+                    ()
+        ]

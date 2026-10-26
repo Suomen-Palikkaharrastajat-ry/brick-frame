@@ -35,6 +35,9 @@ featherSized size name =
                 "pause" ->
                     FeatherIcons.pause
 
+                "crosshair" ->
+                    FeatherIcons.crosshair
+
                 "maximize" ->
                     FeatherIcons.maximize
 

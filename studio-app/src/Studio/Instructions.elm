@@ -18,6 +18,7 @@ printable sheet view, and standalone HTML instructions export.
 
 -}
 
+import Browser.Dom
 import Browser.Events
 import Dict
 import EmbeddedParts
@@ -32,13 +33,14 @@ import LDraw.Steps as Steps exposing (CalloutItem, Step)
 import Ports
 import Render.Camera as Camera exposing (Camera)
 import Render.Style as Style
+import Studio.CameraControls as CameraControls
 import Studio.Colours as Colours
 import Task
 import Time
 import UI.Button as Button
+import UI.CameraGlobe as CameraGlobe
 import UI.ShortcutHelp as ShortcutHelp
 import UI.Theme as Theme
-import UI.ViewPad as ViewPad
 import Viewport
 import Viewport.Framing as Framing exposing (ViewPreset(..))
 import Viewport.Hash as Hash
@@ -77,6 +79,7 @@ type alias Model =
     , autoFrame : Bool
     , viewMode : InstructionsViewMode
     , helpOpen : Bool
+    , globeDrag : Maybe CameraGlobe.Drag
     , window : ( Int, Int )
     }
 
@@ -97,6 +100,12 @@ type Msg
     | AutoStepBy Int
     | ExportHtml
     | ToggleHelp
+    | GlobePressed ( Float, Float )
+    | GlobeMoved ( Float, Float )
+    | GlobeReleased
+    | ZoomTo Float
+    | ZoomDone
+    | ResetView
     | WindowSized Int Int
     | Leave
     | NoOp
@@ -172,6 +181,7 @@ init config =
             , autoFrame = True
             , viewMode = Mode3D
             , helpOpen = False
+            , globeDrag = Nothing
             , window = config.window
             }
     in
@@ -397,6 +407,47 @@ update msg model =
         ToggleHelp ->
             ( { model | helpOpen = not model.helpOpen }, Cmd.none )
 
+        GlobePressed point ->
+            ( { model | globeDrag = Just (CameraGlobe.startDrag model.viewport.camera point) }, Cmd.none )
+
+        GlobeMoved point ->
+            case model.globeDrag of
+                Just drag ->
+                    let
+                        ( ( azimuthDelta, elevationDelta ), next ) =
+                            CameraGlobe.moveDrag drag point
+                    in
+                    update (ViewportMsg (Viewport.RotateCameraBy azimuthDelta elevationDelta))
+                        { model | globeDrag = Just next }
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        GlobeReleased ->
+            let
+                released =
+                    { model | globeDrag = Nothing }
+            in
+            case model.globeDrag |> Maybe.andThen (CameraGlobe.releaseDrag model.viewport.camera) of
+                Just ( azimuthDelta, elevationDelta ) ->
+                    update (ViewportMsg (Viewport.RotateCameraBy azimuthDelta elevationDelta)) released
+
+                Nothing ->
+                    ( released, Cmd.none )
+
+        ZoomTo level ->
+            update (ViewportMsg (Viewport.Wheel (CameraGlobe.wheelDeltaForZoom model.viewport.camera level))) model
+
+        ZoomDone ->
+            ( model, Task.attempt (\_ -> NoOp) (Browser.Dom.blur CameraGlobe.zoomSliderId) )
+
+        ResetView ->
+            let
+                ( fitted, fitCmd ) =
+                    update (ViewportMsg Viewport.FitView) model
+            in
+            ( fitted, Cmd.batch [ fitCmd, Task.attempt (\_ -> NoOp) (Browser.Dom.blur CameraGlobe.resetButtonId) ] )
+
         WindowSized width height ->
             let
                 ( vp, cmd, events ) =
@@ -614,7 +665,7 @@ overlay model =
                         Nothing ->
                             text ""
                     , viewNavigation model
-                    , viewPad model
+                    , viewCamera model
                     ]
 
                 else
@@ -1025,18 +1076,26 @@ viewNavigation model =
         ]
 
 
-viewPad : Model -> Html Msg
-viewPad model =
-    ViewPad.view
-        { walking = model.viewport.camera.navigation == Camera.Walk
+viewCamera : Model -> Html Msg
+viewCamera model =
+    CameraControls.floating cameraActions
+        { camera = model.viewport.camera
         , helpOpen = model.helpOpen
-        , play = Nothing
-        , onFit = ViewportMsg Viewport.FitView
-        , onToggleWalk = ViewportMsg Viewport.ToggleWalkMode
-        , onToggleHelp = ToggleHelp
-        , onStartRotate = \azimuth elevation -> ViewportMsg (Viewport.StartHoldRotate azimuth elevation)
-        , onEndRotate = ViewportMsg Viewport.EndHoldRotate
         }
+
+
+cameraActions : CameraControls.Actions Msg
+cameraActions =
+    { onPress = GlobePressed
+    , onMove = GlobeMoved
+    , onRelease = GlobeReleased
+    , onZoom = ZoomTo
+    , onZoomDone = ZoomDone
+    , onReset = ResetView
+    , onWalk = ViewportMsg Viewport.ToggleWalkMode
+    , onHelp = ToggleHelp
+    , noOp = NoOp
+    }
 
 
 viewSheet : Model -> Html Msg

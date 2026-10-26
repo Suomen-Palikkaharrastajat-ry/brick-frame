@@ -194,3 +194,38 @@ button:not(:disabled):active {
 .scroll-none::-webkit-scrollbar {
   display: none;
 }
+
+/* Icon buttons: a 36 px square on a mouse layout. Kept in CSS rather than inline
+   so the coarse-pointer `.touch-target` rule below can grow them to 44 px. */
+.ui-icon-button {
+  min-width: 36px;
+  height: 36px;
+}
+
+/* ── Touch ──────────────────────────────────────────────────────────────────
+   Touch screens: controls carrying `touch-target` grow to a finger-sized
+   square (44 px) when the primary pointer is coarse. Mouse layouts keep their
+   compact sizes. */
+@media (pointer: coarse) {
+  .touch-target {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* UI chrome is not text: no long-press callout, no selection, no tap flash.
+   Buttons also skip the browser's double-tap zoom delay. Text inputs keep
+   their selection. */
+button,
+[role="group"],
+[role="toolbar"],
+[role="menu"] {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  touch-action: manipulation;
+}
