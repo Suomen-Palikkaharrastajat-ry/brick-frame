@@ -1214,7 +1214,7 @@ step msg model =
                         , menuOpen = False
                         , studio = Core.setPreview model.tidy model.studio
                     }
-                , Cmd.none
+                , requestTidyTitles model
                 )
 
         CancelTidy ->
@@ -1751,7 +1751,7 @@ tidyPanel model =
             , Attr.style "padding-left" "1.125rem"
             ]
             (List.map
-                (\fix -> li [ Attr.style "margin" "0.125rem 0" ] [ text (Health.describe partTitle model.studio.document fix) ])
+                (\fix -> li [ Attr.style "margin" "0.125rem 0" ] [ text (Health.describe (tidyPartTitle model) model.studio.document fix) ])
                 model.tidy
             )
         , div
@@ -1794,11 +1794,12 @@ tidyButton primary msg label =
         [ text label ]
 
 
-{-| A part's readable name for Tidy up's sentences: its dock description ("2 x 4
-brick") when the dock lists it, else its number.
+{-| A part's readable name for Tidy up's sentences: its curated Free catalog
+description ("2 x 4 brick") when it has one, else the .dat title the thumbnail
+pipeline sent, lower-cased so it reads inside a sentence, else its part number.
 -}
-partTitle : String -> String
-partTitle file =
+tidyPartTitle : Model -> String -> Int -> String
+tidyPartTitle model file color =
     case
         List.concatMap FreeCatalog.entriesFor FreeCatalog.tabs
             |> List.filter (\entry -> String.toLower entry.file == String.toLower file)
@@ -1808,7 +1809,39 @@ partTitle file =
             entry.description
 
         Nothing ->
-            "part " ++ String.replace ".dat" "" file
+            case Dict.get (PartCard.thumbnailKey file color) model.thumbnails of
+                Just thumb ->
+                    if String.isEmpty (String.trim thumb.title) then
+                        "part " ++ partNumber file
+
+                    else
+                        String.toLower thumb.title
+
+                Nothing ->
+                    "part " ++ partNumber file
+
+
+{-| Asks the thumbnail pipeline for the parts a Tidy up move names, so that the
+move list can use their .dat titles. A part that already has a thumbnail is
+skipped, and the pipeline's title arrives as `ThumbnailLoaded`.
+-}
+requestTidyTitles : Model -> Cmd Msg
+requestTidyTitles model =
+    let
+        moved =
+            List.filterMap
+                (\fix ->
+                    Document.getPlacement fix.placement model.studio.document
+                        |> Maybe.map (\placed -> ( placed.part, placed.color ))
+                )
+                model.tidy
+    in
+    case thumbnailRequests moved model.thumbnails of
+        [] ->
+            Cmd.none
+
+        requests ->
+            Ports.requestThumbnails requests
 
 
 {-| Toast notification overlay.

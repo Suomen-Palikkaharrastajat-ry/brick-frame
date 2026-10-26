@@ -378,7 +378,10 @@ In `Studio.Core`:
 - `setPreview : List Fix -> Model -> Model` shows a preview. Each moving part is
   outlined in the collision red, and a translucent ghost of each is drawn at its
   planned matrix: `Render.Instanced.renderWithGhost` over the instanced scene, with
-  every ghost placement ghosted (alpha 0.25). `[]` clears the preview.
+  every ghost placement ghosted (alpha 0.25). Ghosts go through
+  `Instanced.retarget`, the same document-to-render conversion the live scene
+  uses (the Y-down flip), and only the moved placements are ghosted: the scene's
+  proxy boxes are left out. `[]` clears the preview.
 - `applyFixes : List Fix -> Model -> (Model, Cmd Msg, List Event)` sets every
   fixed part to its planned matrix as one history entry (`Edit.SetMatrix`). A fix
   for a glued placement is dropped, and the preview is cleared.
@@ -389,7 +392,9 @@ After each document change (not mid-drag, and again when a part's geometry
 arrives) Brick Play plans the fixes. When there are any, a pill shows above the
 action bar, beside the gear pill: "2 loose bricks · Tidy up", or "1 loose brick ·
 Tidy up". A healthy build shows nothing. Tapping the pill opens the preview, a
-dialog (`role="dialog"`, `aria-modal`) that lists the moves with their dock names
+dialog (`role="dialog"`, `aria-modal`) that lists the moves with their names (the
+Free catalog's description, else the part's .dat title, lower-cased, else its
+number; opening the preview asks the thumbnail pipeline for the titles it lacks)
 and has Apply and Cancel. Each moving part is outlined and its ghost drawn at the
 new place.
 

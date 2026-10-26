@@ -7,6 +7,7 @@ module Render.Instanced exposing
     , Frustum, frustumFromMatrix, sphereInFrustum, projectedRadiusPx
     , triangleBudgetExceeded
     , renderWithGhost
+    , renderMatrix, retarget
     )
 
 {-| Instanced rendering of large LDraw models.
@@ -65,6 +66,7 @@ recorded per placement and the cull face is switched accordingly.
 @docs render, visiblePlacements, detailFor
 @docs Frustum, frustumFromMatrix, sphereInFrustum, projectedRadiusPx
 @docs triangleBudgetExceeded
+@docs renderMatrix, retarget
 
 -}
 
@@ -510,23 +512,45 @@ toPlacement parts source raw =
     Dict.get raw.part parts
         |> Maybe.map
             (\mesh ->
-                let
-                    matrix =
-                        Mat4.mul yUpFlip raw.matrix
-                in
-                { source = source
-                , part = raw.part
-                , matrix = matrix
-
                 -- Extraction already resolved inheritance, so the code is
                 -- concrete here and the parent argument goes unused; this is a
                 -- plain lookup that still normalises Studio's colour offsets.
-                , color = Colors.toVec4 (Colors.resolveColor raw.color raw.color)
-                , center = Mat4.transform matrix mesh.localCenter
-                , radius = mesh.localRadius * maxScale matrix
-                , flipped = determinant3 matrix < 0
-                }
+                placementFor mesh source raw.part (Colors.toVec4 (Colors.resolveColor raw.color raw.color)) raw.matrix
             )
+
+
+{-| The render-space matrix of a placement, given its document-space (LDraw,
+Y-down) matrix. Every placement the scene draws goes through this conversion.
+-}
+renderMatrix : Mat4 -> Mat4
+renderMatrix docMatrix =
+    Mat4.mul yUpFlip docMatrix
+
+
+{-| The placement moved to a new document-space matrix, with its culling data
+recomputed from the part's mesh. Its source, part and colour are kept. `Nothing`
+when the part has no mesh in `parts`.
+-}
+retarget : Dict PartKey PartMesh -> Mat4 -> Placement -> Maybe Placement
+retarget parts docMatrix placement =
+    Dict.get placement.part parts
+        |> Maybe.map (\mesh -> placementFor mesh placement.source placement.part placement.color docMatrix)
+
+
+placementFor : PartMesh -> Int -> PartKey -> Vec4 -> Mat4 -> Placement
+placementFor mesh source part color docMatrix =
+    let
+        matrix =
+            renderMatrix docMatrix
+    in
+    { source = source
+    , part = part
+    , matrix = matrix
+    , color = color
+    , center = Mat4.transform matrix mesh.localCenter
+    , radius = mesh.localRadius * maxScale matrix
+    , flipped = determinant3 matrix < 0
+    }
 
 
 

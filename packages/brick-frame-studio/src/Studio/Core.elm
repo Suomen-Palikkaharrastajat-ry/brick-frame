@@ -31,6 +31,7 @@ module Studio.Core exposing
     , isGlued
     , lowerSelected
     , partBox
+    , previewScene
     , raiseSelected
     , redo
     , renderQuality
@@ -2778,18 +2779,6 @@ previewEntities dimensions model camera style =
             []
 
         ( fixes, Just scene ) ->
-            let
-                targets =
-                    Dict.fromList (List.map (\fix -> ( fix.placement, fix.to )) fixes)
-
-                ghosts =
-                    List.filterMap
-                        (\placement ->
-                            Dict.get placement.source targets
-                                |> Maybe.map (\matrix -> { placement | matrix = matrix })
-                        )
-                        scene.placements
-            in
             Instanced.renderWithGhost
                 { camera = camera
                 , style = style
@@ -2798,4 +2787,26 @@ previewEntities dimensions model camera style =
                 , coarsen = False
                 , activeSources = Just Set.empty
                 }
-                { scene | placements = ghosts }
+                (previewScene fixes scene)
+
+
+{-| The scene a Tidy up preview ghosts: only the placements that a fix moves,
+each at its planned matrix (`Instanced.retarget`, so the same render-space
+conversion as the live scene), and no proxy chunks, since those stand for the
+whole scene and would draw the rest of it a second time.
+-}
+previewScene : List Health.Fix -> Instanced.InstancedScene -> Instanced.InstancedScene
+previewScene fixes scene =
+    let
+        targets =
+            Dict.fromList (List.map (\fix -> ( fix.placement, fix.to )) fixes)
+
+        ghosts =
+            List.filterMap
+                (\placement ->
+                    Dict.get placement.source targets
+                        |> Maybe.andThen (\matrix -> Instanced.retarget scene.parts matrix placement)
+                )
+                scene.placements
+    in
+    { scene | placements = ghosts, proxyChunks = [], chunkIndex = Dict.empty }

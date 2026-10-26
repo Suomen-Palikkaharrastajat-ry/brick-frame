@@ -216,15 +216,15 @@ plan cache doc glued issues =
 
 {-| A sentence for a fix, such as "Move 1 x 1 brick half a stud" or "Lift
 2 x 4 brick out of another brick". `titleOf` gives a part's readable name from
-its file name, and `doc` is the document the fix was planned on.
+its file name and colour, and `doc` is the document the fix was planned on.
 -}
-describe : (String -> String) -> Document -> Fix -> String
+describe : (String -> Int -> String) -> Document -> Fix -> String
 describe titleOf doc fix =
     let
         name =
             case Document.getPlacement fix.placement doc of
                 Just placement ->
-                    titleOf placement.part
+                    titleOf placement.part placement.color
 
                 Nothing ->
                     "part"

@@ -25,8 +25,40 @@ suite =
     describe "Brick Play Tidy up"
         [ pillTests
         , previewTests
+        , titleTests
         , glueTests
         , exampleTests
+        ]
+
+
+{-| The move list names a part by its curated name when it has one, else by the
+.dat title the thumbnail pipeline sent (lower-cased), else by its number.
+-}
+titleTests : Test
+titleTests =
+    describe "the move list names parts"
+        [ test "a part outside the Free catalog is named by its .dat title" <|
+            \_ ->
+                freshModel
+                    |> withLines [ brick "60592.dat" 0 -48 0 ]
+                    |> update (ThumbnailLoaded { file = "60592.dat", color = 14, url = "", title = "Window 1 x 2 x 2" })
+                    |> Tuple.first
+                    |> update OpenTidy
+                    |> Tuple.first
+                    |> view
+                    |> Query.fromHtml
+                    |> Query.find [ Selector.tag "li" ]
+                    |> Query.has [ Selector.text "Move window 1 x 2 x 2 half a stud" ]
+        , test "a part with no title yet is named by its number" <|
+            \_ ->
+                freshModel
+                    |> withLines [ brick "60592.dat" 0 -48 0 ]
+                    |> update OpenTidy
+                    |> Tuple.first
+                    |> view
+                    |> Query.fromHtml
+                    |> Query.find [ Selector.tag "li" ]
+                    |> Query.has [ Selector.text "Move part 60592 half a stud" ]
         ]
 
 

@@ -13,6 +13,7 @@ import LDraw.Resolve exposing (PartCache, PartStatus(..))
 import LDraw.Writer as Writer
 import Math.Matrix4 as Mat4 exposing (Mat4)
 import Math.Vector3 as Vec3
+import Render.Instanced as Instanced
 import Set
 import Studio.Core as Core
 import Studio.Edit as Edit exposing (Command(..))
@@ -29,6 +30,76 @@ suite =
         , glueTests
         , planTests
         , coreTests
+        , ghostTests
+        ]
+
+
+{-| The Tidy up preview's ghosts: each moved part is drawn where the fix puts it,
+through the same document-to-render conversion as the live scene, and nothing
+else is drawn again.
+-}
+ghostTests : Test
+ghostTests =
+    describe "preview ghosts (Core.previewScene)"
+        [ test "a ghost is drawn where the planned matrix puts the part, not mirrored" <|
+            \_ ->
+                let
+                    fromDoc =
+                        Mat4.makeTranslate3 0 -72 0
+
+                    toDoc =
+                        Mat4.makeTranslate3 5 -72 0
+
+                    fix =
+                        { placement = 0, from = fromDoc, to = toDoc, reason = SnapToStud }
+
+                    scene =
+                        Instanced.buildFrom jumperCache [ ( 0, { part = "3794a.dat", color = 14, matrix = fromDoc } ) ]
+
+                    expected =
+                        Instanced.build jumperCache [ { part = "3794a.dat", color = 14, matrix = toDoc } ]
+
+                    ghosts =
+                        Core.previewScene [ fix ] scene
+                in
+                Expect.all
+                    [ \_ ->
+                        Expect.equal
+                            (List.map (.matrix >> Mat4.toRecord) expected.placements)
+                            (List.map (.matrix >> Mat4.toRecord) ghosts.placements)
+                    , \_ ->
+                        case ghosts.placements of
+                            [ ghost ] ->
+                                Expect.equal 72 (Vec3.getY (Mat4.transform ghost.matrix (Vec3.vec3 0 0 0)))
+
+                            other ->
+                                Expect.fail ("expected one ghost, got " ++ String.fromInt (List.length other))
+                    ]
+                    ()
+        , test "only the moved parts are ghosted, and no proxy layer repeats the scene" <|
+            \_ ->
+                let
+                    fromDoc =
+                        Mat4.makeTranslate3 0 -72 0
+
+                    fix =
+                        { placement = 0, from = fromDoc, to = Mat4.makeTranslate3 5 -72 0, reason = SnapToStud }
+
+                    scene =
+                        Instanced.buildFrom jumperCache
+                            [ ( 0, { part = "3794a.dat", color = 14, matrix = fromDoc } )
+                            , ( 1, { part = "3794a.dat", color = 14, matrix = Mat4.makeTranslate3 40 -72 0 } )
+                            ]
+
+                    ghosts =
+                        Core.previewScene [ fix ] scene
+                in
+                Expect.all
+                    [ \_ -> Expect.equal [ 0 ] (List.map .source ghosts.placements)
+                    , \_ -> Expect.equal [] ghosts.proxyChunks
+                    , \_ -> Expect.equal True (Dict.isEmpty ghosts.chunkIndex)
+                    ]
+                    ()
         ]
 
 
@@ -229,7 +300,7 @@ planTests =
                         Health.plan noParts doc Set.empty (Health.check noParts doc Set.empty)
                 in
                 Expect.equal [ "Move 1 x 1 brick half a stud" ]
-                    (List.map (Health.describe (\_ -> "1 x 1 brick") doc) fixes)
+                    (List.map (Health.describe (\_ _ -> "1 x 1 brick") doc) fixes)
         , test "describe names a lift out of another brick" <|
             \_ ->
                 let
@@ -240,7 +311,7 @@ planTests =
                         Health.plan noParts doc Set.empty (Health.check noParts doc Set.empty)
                 in
                 Expect.equal [ "Lift 2 x 4 brick out of another brick" ]
-                    (List.map (Health.describe (\_ -> "2 x 4 brick") doc) fixes)
+                    (List.map (Health.describe (\_ _ -> "2 x 4 brick") doc) fixes)
         ]
 
 
