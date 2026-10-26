@@ -71,6 +71,15 @@ featherSized size name =
                 "menu" ->
                     FeatherIcons.menu
 
+                "sun" ->
+                    FeatherIcons.sun
+
+                "camera" ->
+                    FeatherIcons.camera
+
+                "aperture" ->
+                    FeatherIcons.aperture
+
                 _ ->
                     FeatherIcons.play
     in

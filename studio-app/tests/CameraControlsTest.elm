@@ -8,6 +8,7 @@ toggle.
 import Expect
 import Html.Attributes as HtmlAttr
 import Render.Camera as Camera
+import Render.Style as Style
 import Studio.CameraControls as CameraControls
 import Studio.Layout exposing (Panel(..))
 import Studio.Workspace as Workspace exposing (Msg(..))
@@ -76,12 +77,18 @@ suite =
                     , onReset = ()
                     , onWalk = ()
                     , onHelp = ()
+                    , onRaytrace = ()
+                    , onSnapshot = ()
                     , noOp = ()
                     }
-                    { camera = Camera.init, helpOpen = False }
+                    { camera = Camera.init, helpOpen = False, renderQuality = Style.Draft }
                     |> Query.fromHtml
                     |> Expect.all
                         [ Query.has [ Selector.attribute (HtmlAttr.attribute "aria-label" "Camera") ]
+                        , Query.find [ Selector.attribute (HtmlAttr.attribute "aria-label" "Raytrace mode") ]
+                            >> Query.has [ Selector.attribute (HtmlAttr.attribute "aria-pressed" "false") ]
+                        , Query.find [ Selector.attribute (HtmlAttr.attribute "aria-label" "Render snapshot") ]
+                            >> Query.has [ Selector.class "touch-target" ]
                         , Query.find [ Selector.attribute (HtmlAttr.attribute "aria-label" "Street level view") ]
                             >> Query.has [ Selector.attribute (HtmlAttr.attribute "aria-pressed" "false"), Selector.class "touch-target" ]
                         , Query.find [ Selector.attribute (HtmlAttr.attribute "aria-label" "Keyboard shortcuts") ]

@@ -243,17 +243,25 @@ buildComponentMeshRenders cache components gears =
                         let
                             geom =
                                 Geometry.flatten lines cache component.color component.worldMatrix
+
+                            drivingGearId =
+                                componentDrivingGear cache component gears
+
+                            ( rotationCenter, axis ) =
+                                case Maybe.andThen (\gid -> gearAxisInfoById gid gears) drivingGearId of
+                                    Just info ->
+                                        ( info.center, info.axis )
+
+                                    Nothing ->
+                                        ( toYUpPoint component.worldPosition, inferComponentAxis cache component )
                         in
                         Just
                             { mesh = WebGL.triangles geom.triangles
                             , edges = edgeMesh geom.lines
                             , center = toYUpPoint component.worldPosition
-                            , rotationCenter = toYUpPoint component.worldPosition
-                            , axis =
-                                alignToGear (componentDrivingGear cache component gears)
-                                    gears
-                                    (inferComponentAxis cache component)
-                            , drivingGearId = componentDrivingGear cache component gears
+                            , rotationCenter = rotationCenter
+                            , axis = axis
+                            , drivingGearId = drivingGearId
                             }
 
                     _ ->
@@ -364,7 +372,7 @@ componentDrivingGear cache component gears =
 
         candidates =
             gears
-                |> List.filterMap
+                |> List.concatMap
                     (\gear ->
                         let
                             gearCenter =
@@ -388,15 +396,33 @@ componentDrivingGear cache component gears =
 
                             axisDot =
                                 abs (Vec3.dot compAxis gearAxis)
-
-                            lineDist =
-                                pointToLineDistance compCenter gearCenter gearAxis
                         in
-                        if axisDot >= 0.94 && lineDist <= 2.5 then
-                            Just ( lineDist, gear.id )
+                        if axisDot < 0.94 then
+                            []
 
                         else
-                            Nothing
+                            gearHoleOffsets gear.spec.partFile
+                                |> List.filterMap
+                                    (\( hx, hy ) ->
+                                        let
+                                            holeWorld =
+                                                Mat4.transform gear.worldMatrix (Vec3.vec3 hx hy 0)
+
+                                            holeCenter =
+                                                toYUpPoint holeWorld
+
+                                            lineDist =
+                                                pointToLineDistance compCenter holeCenter gearAxis
+
+                                            axialOffset =
+                                                abs (Vec3.dot (Vec3.sub compCenter holeCenter) gearAxis)
+                                        in
+                                        if lineDist <= 2.5 && axialOffset <= 40 then
+                                            Just ( ( lineDist, axialOffset ), gear.id )
+
+                                        else
+                                            Nothing
+                                    )
                     )
     in
     candidates
@@ -447,7 +473,7 @@ topLevelCoaxialGear cache drivenAxles line gears =
 
                 gearMatch =
                     gears
-                        |> List.filterMap
+                        |> List.concatMap
                             (\gear ->
                                 let
                                     gearCenter =
@@ -469,14 +495,25 @@ topLevelCoaxialGear cache drivenAxles line gears =
                                         else
                                             Vec3.scale (1 / gearAxisLen) gearAxisRaw
                                 in
-                                bestLineMatchForPoints samplePoints gearCenter gearAxis
-                                    |> Maybe.andThen
-                                        (\( lineDist, axialOffset ) ->
-                                            if lineDist <= 2.5 && axialOffset <= 120 then
-                                                Just ( lineDist, axialOffset, gear.id )
+                                gearHoleOffsets gear.spec.partFile
+                                    |> List.filterMap
+                                        (\( hx, hy ) ->
+                                            let
+                                                holeWorld =
+                                                    Mat4.transform gear.worldMatrix (Vec3.vec3 hx hy 0)
 
-                                            else
-                                                Nothing
+                                                holeCenter =
+                                                    toYUpPoint holeWorld
+                                            in
+                                            bestLineMatchForPoints samplePoints holeCenter gearAxis
+                                                |> Maybe.andThen
+                                                    (\( lineDist, axialOffset ) ->
+                                                        if lineDist <= 2.5 && axialOffset <= 120 then
+                                                            Just ( lineDist, axialOffset, gear.id )
+
+                                                        else
+                                                            Nothing
+                                                    )
                                         )
                             )
                         |> List.sortBy (\( lineDist, axialOffset, _ ) -> ( lineDist, axialOffset ))
@@ -492,6 +529,60 @@ topLevelCoaxialGear cache drivenAxles line gears =
 
         _ ->
             Nothing
+
+
+gearHoleOffsets : String -> List ( Float, Float )
+gearHoleOffsets partFile =
+    let
+        clean =
+            partFile
+                |> String.replace "\\" "/"
+                |> String.replace "parts/" ""
+                |> String.replace ".dat" ""
+                |> String.toLower
+    in
+    case clean of
+        "3648" ->
+            ( 0, 0 ) :: pinHoles24T
+
+        "3648a" ->
+            ( 0, 0 ) :: pinHoles24T
+
+        "3648b" ->
+            ( 0, 0 ) :: pinHoles24T
+
+        "3649" ->
+            ( 0, 0 ) :: (axleHoles40T ++ pinHoles40T)
+
+        _ ->
+            [ ( 0, 0 ) ]
+
+
+pinHoles24T : List ( Float, Float )
+pinHoles24T =
+    [ ( 10, 10 ), ( -10, 10 ), ( -10, -10 ), ( 10, -10 ) ]
+
+
+axleHoles40T : List ( Float, Float )
+axleHoles40T =
+    [ ( 0, 20 ), ( 0, -20 ), ( 20, 0 ), ( -20, 0 ) ]
+
+
+pinHoles40T : List ( Float, Float )
+pinHoles40T =
+    [ ( 10, 10 )
+    , ( -10, 10 )
+    , ( -10, -10 )
+    , ( 10, -10 )
+    , ( 10, 30 )
+    , ( -10, 30 )
+    , ( 10, -30 )
+    , ( -10, -30 )
+    , ( 30, 10 )
+    , ( -30, 10 )
+    , ( 30, -10 )
+    , ( -30, -10 )
+    ]
 
 
 bestLineMatchForPoints : List Vec3.Vec3 -> Vec3.Vec3 -> Vec3.Vec3 -> Maybe ( Float, Float )

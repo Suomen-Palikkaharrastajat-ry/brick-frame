@@ -30,6 +30,7 @@ module Studio.Core exposing
     , partBox
     , raiseSelected
     , redo
+    , renderQuality
     , resetDocument
     , rotateSelection
     , selectAll
@@ -42,6 +43,7 @@ module Studio.Core exposing
     , setGizmoStyle
     , setGridStep
     , setHelpVisible
+    , setRenderQuality
     , setRotateStep
     , setSnapDistance
     , setTool
@@ -500,6 +502,20 @@ and every key goes to the viewport so the host can close the dialog.
 setHelpVisible : Bool -> Model -> Model
 setHelpVisible visible model =
     { model | helpVisible = visible }
+
+
+{-| Change the rendering quality preset (e.g. Draft or Realistic).
+-}
+setRenderQuality : Style.Quality -> Model -> Model
+setRenderQuality quality model =
+    { model | viewport = Viewport.setRenderQuality quality model.viewport }
+
+
+{-| The current rendering quality preset of the studio viewport.
+-}
+renderQuality : Model -> Style.Quality
+renderQuality model =
+    Viewport.renderQuality model.viewport
 
 
 {-| Turn tooth alignment of newly meshed gears on or off. When on, a committed

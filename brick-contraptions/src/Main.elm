@@ -71,6 +71,7 @@ import LDraw.Writer as Writer
 import Ports
 import Process
 import Render.Camera as Camera
+import Render.Style as Style
 import Set
 import Simulation
 import Studio.Core as Core
@@ -78,6 +79,7 @@ import Studio.GearFeedback as GearFeedback
 import Studio.Shortcuts as StudioShortcuts exposing (TurnDirection(..))
 import Studio.UrlPayload as UrlPayload
 import Task
+import UI.Button as Button
 import UI.CameraGlobe as CameraGlobe
 import UI.Focus as Focus
 import UI.HamburgerMenu as HamburgerMenu
@@ -115,6 +117,7 @@ type alias Model =
     , projectParts : List PartItem
     , currentTime : Float
     , motorRpm : Float
+    , renderQuality : Style.Quality
     , simulation : Simulation.Model
     , animated : Animated
     , windowWidth : Int
@@ -139,6 +142,8 @@ type alias Thumbnail =
 type Msg
     = StudioMsg Core.Msg
     | TogglePlay
+    | ToggleRaytrace
+    | CaptureSnapshot
     | GlobePressed ( Float, Float )
     | GlobeMoved ( Float, Float )
     | GlobeReleased
@@ -239,6 +244,7 @@ init flags =
             , projectParts = projectParts
             , currentTime = 0.0
             , motorRpm = motorRpm
+            , renderQuality = Style.Draft
             , simulation =
                 Simulation.init
                     { gearSpecs = Data.gearParts
@@ -686,6 +692,33 @@ step msg model =
         ToggleFine ->
             ( { model | studio = Core.setFineMove (not (Core.fineMove model.studio)) model.studio }
             , Cmd.none
+            )
+
+        ToggleRaytrace ->
+            let
+                nextQuality =
+                    case model.renderQuality of
+                        Style.Draft ->
+                            Style.Realistic
+
+                        Style.Realistic ->
+                            Style.Draft
+            in
+            ( { model
+                | renderQuality = nextQuality
+                , studio = Core.setRenderQuality nextQuality model.studio
+              }
+            , Cmd.none
+            )
+
+        CaptureSnapshot ->
+            ( model
+            , Ports.captureRender
+                { width = 1920
+                , height = 1080
+                , transparent = False
+                , filename = "brick-contraptions-render.png"
+                }
             )
 
         Clear ->
@@ -1208,7 +1241,31 @@ globeControl model =
         , onZoom = ZoomTo
         , onZoomDone = ZoomDone
         , onReset = ResetView
-        , extras = []
+        , extras =
+            [ div
+                [ keepFocusOnCanvas
+                , Attr.style "display" "contents"
+                ]
+                [ Button.icon
+                    { icon = Icon.feather "sun"
+                    , label = "Raytrace mode"
+                    , shortcut = Nothing
+                    , pressed = Just (model.renderQuality == Style.Realistic)
+                    , enabled = True
+                    , showLabel = False
+                    }
+                    ToggleRaytrace
+                , Button.icon
+                    { icon = Icon.feather "camera"
+                    , label = "Render snapshot"
+                    , shortcut = Nothing
+                    , pressed = Nothing
+                    , enabled = True
+                    , showLabel = False
+                    }
+                    CaptureSnapshot
+                ]
+            ]
         }
 
 

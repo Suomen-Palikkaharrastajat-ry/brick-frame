@@ -52,12 +52,14 @@ import LDraw.Writer as Writer
 import Ports
 import Process
 import Render.Camera as Camera
+import Render.Style as Style
 import Set
 import Studio.Colours as Colours
 import Studio.Core as Core
 import Studio.Shortcuts as StudioShortcuts exposing (TurnDirection(..))
 import Studio.UrlPayload as UrlPayload exposing (PartKitItem)
 import Task
+import UI.Button as Button
 import UI.CameraGlobe as CameraGlobe
 import UI.Focus as Focus
 import UI.HamburgerMenu as HamburgerMenu
@@ -94,6 +96,7 @@ type alias Model =
     , inventory : List PartKitItem
     , helpOpen : Bool
     , menuOpen : Bool
+    , renderQuality : Style.Quality
     , windowWidth : Int
     , windowHeight : Int
     , thumbnails : Dict String Thumbnail
@@ -128,6 +131,8 @@ type Msg
     | ToggleFine
     | Clear
     | FitView
+    | ToggleRaytrace
+    | CaptureSnapshot
     | GlobePressed ( Float, Float )
     | GlobeMoved ( Float, Float )
     | GlobeReleased
@@ -196,6 +201,7 @@ init flags =
             , inventory = inventory
             , helpOpen = False
             , menuOpen = False
+            , renderQuality = Style.Draft
             , windowWidth = 1280
             , windowHeight = 800
             , thumbnails = Dict.empty
@@ -452,6 +458,33 @@ update msg model =
         ToggleFine ->
             ( { model | studio = Core.setFineMove (not (Core.fineMove model.studio)) model.studio }
             , Cmd.none
+            )
+
+        ToggleRaytrace ->
+            let
+                nextQuality =
+                    case model.renderQuality of
+                        Style.Draft ->
+                            Style.Realistic
+
+                        Style.Realistic ->
+                            Style.Draft
+            in
+            ( { model
+                | renderQuality = nextQuality
+                , studio = Core.setRenderQuality nextQuality model.studio
+              }
+            , Cmd.none
+            )
+
+        CaptureSnapshot ->
+            ( model
+            , Ports.captureRender
+                { width = 1920
+                , height = 1080
+                , transparent = False
+                , filename = "brick-play-render.png"
+                }
             )
 
         Clear ->
@@ -1075,7 +1108,31 @@ globeControl model =
         , onZoom = ZoomTo
         , onZoomDone = ZoomDone
         , onReset = ResetView
-        , extras = []
+        , extras =
+            [ div
+                [ keepFocusOnCanvas
+                , Attr.style "display" "contents"
+                ]
+                [ Button.icon
+                    { icon = Icon.feather "sun"
+                    , label = "Raytrace mode"
+                    , shortcut = Nothing
+                    , pressed = Just (model.renderQuality == Style.Realistic)
+                    , enabled = True
+                    , showLabel = False
+                    }
+                    ToggleRaytrace
+                , Button.icon
+                    { icon = Icon.feather "camera"
+                    , label = "Render snapshot"
+                    , shortcut = Nothing
+                    , pressed = Nothing
+                    , enabled = True
+                    , showLabel = False
+                    }
+                    CaptureSnapshot
+                ]
+            ]
         }
 
 

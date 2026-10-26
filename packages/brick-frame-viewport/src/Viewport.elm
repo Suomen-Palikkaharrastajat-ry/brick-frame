@@ -24,6 +24,7 @@ module Viewport exposing
     , pickSurfaceExcluding
     , pivotOn
     , pressedWithShift
+    , renderQuality
     , setActivePath
     , setActiveSources
     , setCanvasOrigin
@@ -2962,6 +2963,17 @@ type alias ViewConfig =
 setRenderQuality : Style.Quality -> Model -> Model
 setRenderQuality quality model =
     { model | renderStyle = Style.fromQuality quality }
+
+
+{-| The current rendering quality preset of the viewport.
+-}
+renderQuality : Model -> Style.Quality
+renderQuality model =
+    if model.renderStyle == Style.realisticStyle then
+        Style.Realistic
+
+    else
+        Style.Draft
 
 
 {-| The instanced scene with the placements of `hidden` drawn as nothing (see

@@ -972,7 +972,14 @@ componentEntitiesWhere include camera styleInput aspect model =
     in
     model.componentMeshes
         |> List.filter include
-        |> List.filter (\c -> Pick.isSphereVisible camera aspect c.center 10.0)
+        |> List.filter
+            (\c ->
+                let
+                    orbitRadius =
+                        Vec3.distance c.center c.rotationCenter
+                in
+                Pick.isSphereVisible camera aspect c.rotationCenter (orbitRadius + 10.0)
+            )
         |> List.concatMap
             (\component ->
                 let

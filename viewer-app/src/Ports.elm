@@ -1,5 +1,6 @@
 port module Ports exposing
-    ( fileContentReceived
+    ( captureRender
+    , fileContentReceived
     , fileLoadError
     , geometryFlattenFailed
     , geometryFlattened
@@ -63,3 +64,8 @@ port viewportResized : ({ width : Int, height : Int } -> msg) -> Sub msg
 {-| Update browser URL hash from Elm app state.
 -}
 port setUrlHash : String -> Cmd msg
+
+
+{-| Request an offscreen high-resolution render capture as a PNG download.
+-}
+port captureRender : { width : Int, height : Int, transparent : Bool, filename : String } -> Cmd msg

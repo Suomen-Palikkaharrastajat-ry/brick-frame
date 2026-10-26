@@ -72,6 +72,7 @@ type alias Model =
     { viewport : Viewport.Model
     , simulation : Simulation.Model
     , helpOpen : Bool
+    , renderQuality : Style.Quality
     , globeDrag : Maybe CameraGlobe.Drag
     }
 
@@ -80,6 +81,8 @@ type Msg
     = ViewportMsg Viewport.Msg
     | SimulationMsg Simulation.Msg
     | ToggleHelp
+    | ToggleRaytrace
+    | CaptureSnapshot
     | GlobePressed ( Float, Float )
     | GlobeMoved ( Float, Float )
     | GlobeReleased
@@ -128,6 +131,7 @@ init config =
                     , requestedMotorIndex = Nothing
                     }
             , helpOpen = False
+            , renderQuality = Style.Draft
             , globeDrag = Nothing
             }
     in
@@ -197,6 +201,33 @@ updateInner msg model =
 
         ToggleHelp ->
             ( { model | helpOpen = not model.helpOpen }, Cmd.none )
+
+        ToggleRaytrace ->
+            let
+                nextQuality =
+                    case model.renderQuality of
+                        Style.Draft ->
+                            Style.Realistic
+
+                        Style.Realistic ->
+                            Style.Draft
+            in
+            ( { model
+                | renderQuality = nextQuality
+                , viewport = Viewport.setRenderQuality nextQuality model.viewport
+              }
+            , Cmd.none
+            )
+
+        CaptureSnapshot ->
+            ( model
+            , Ports.captureRender
+                { width = 1920
+                , height = 1080
+                , transparent = False
+                , filename = "palikkakehys-render.png"
+                }
+            )
 
         GlobePressed point ->
             ( { model | globeDrag = Just (CameraGlobe.startDrag model.viewport.camera point) }, Cmd.none )
@@ -660,6 +691,7 @@ viewCamera model =
     CameraControls.floating cameraActions
         { camera = model.viewport.camera
         , helpOpen = model.helpOpen
+        , renderQuality = model.renderQuality
         }
 
 
@@ -673,5 +705,7 @@ cameraActions =
     , onReset = ResetView
     , onWalk = ViewportMsg Viewport.ToggleWalkMode
     , onHelp = ToggleHelp
+    , onRaytrace = ToggleRaytrace
+    , onSnapshot = CaptureSnapshot
     , noOp = NoOp
     }

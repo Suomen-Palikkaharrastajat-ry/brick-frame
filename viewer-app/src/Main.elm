@@ -94,6 +94,7 @@ type alias Model =
     , uiMode : UiMode
     , viewerControlsEnabled : Bool
     , showShortcutHelp : Bool
+    , renderQuality : Style.Quality
     , studioUrl : String
     , currentModelUrl : Maybe String
     , globeDrag : Maybe CameraGlobe.Drag
@@ -147,6 +148,7 @@ init flags =
       , uiMode = parseUiMode flags.uiMode
       , viewerControlsEnabled = flags.controlsEnabled
       , showShortcutHelp = False
+      , renderQuality = Style.Draft
       , studioUrl = String.trim flags.studioUrl
       , currentModelUrl = currentModelUrl
       , globeDrag = Nothing
@@ -198,6 +200,8 @@ type Msg
     | RequestFileUpload
     | ToggleControlsPanel
     | ToggleShortcutHelp
+    | ToggleRaytrace
+    | CaptureSnapshot
     | GlobePressed ( Float, Float )
     | GlobeMoved ( Float, Float )
     | GlobeReleased
@@ -327,6 +331,33 @@ updateInner msg model =
 
         ToggleShortcutHelp ->
             ( { model | showShortcutHelp = not model.showShortcutHelp }, Cmd.none )
+
+        ToggleRaytrace ->
+            let
+                nextQuality =
+                    case model.renderQuality of
+                        Style.Draft ->
+                            Style.Realistic
+
+                        Style.Realistic ->
+                            Style.Draft
+            in
+            ( { model
+                | renderQuality = nextQuality
+                , viewport = Viewport.setRenderQuality nextQuality model.viewport
+              }
+            , Cmd.none
+            )
+
+        CaptureSnapshot ->
+            ( model
+            , Ports.captureRender
+                { width = 1920
+                , height = 1080
+                , transparent = False
+                , filename = "palikkakehys-render.png"
+                }
+            )
 
         GlobePressed point ->
             ( { model | globeDrag = Just (CameraGlobe.startDrag model.viewport.camera point) }, Cmd.none )
@@ -653,7 +684,25 @@ extraButtons model =
         [ Focus.keepFocusOnCanvas NoOp
         , Attr.style "display" "contents"
         ]
-        (Button.icon
+        ([ Button.icon
+            { icon = Icon.feather "sun"
+            , label = "Raytrace mode"
+            , shortcut = Nothing
+            , pressed = Just (model.renderQuality == Style.Realistic)
+            , enabled = True
+            , showLabel = False
+            }
+            ToggleRaytrace
+         , Button.icon
+            { icon = Icon.feather "camera"
+            , label = "Render snapshot"
+            , shortcut = Nothing
+            , pressed = Nothing
+            , enabled = True
+            , showLabel = False
+            }
+            CaptureSnapshot
+         , Button.icon
             { icon = Icon.feather "user"
             , label = "Street level view"
             , shortcut = Just "G"
@@ -662,7 +711,8 @@ extraButtons model =
             , showLabel = False
             }
             (ViewportMsg Viewport.ToggleWalkMode)
-            :: playButton model
+         ]
+            ++ playButton model
             ++ [ Button.icon
                     { icon = Icon.feather "help-circle"
                     , label = "Keyboard shortcuts"

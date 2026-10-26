@@ -1,5 +1,6 @@
 port module Ports exposing
-    ( copyToClipboard
+    ( captureRender
+    , copyToClipboard
     , geometryFlattenFailed
     , geometryFlattened
     , requestGeometryFlatten
@@ -49,3 +50,8 @@ port setUrlHash : String -> Cmd msg
 {-| Copy text to the system clipboard.
 -}
 port copyToClipboard : String -> Cmd msg
+
+
+{-| Request an offscreen high-resolution render capture as a PNG download.
+-}
+port captureRender : { width : Int, height : Int, transparent : Bool, filename : String } -> Cmd msg

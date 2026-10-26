@@ -15,6 +15,7 @@ import Render.Camera as Camera
 import Render.Style as Style
 import Set
 import Simulation exposing (Event(..), Msg(..))
+import Simulation.Meshes as Meshes
 import Test exposing (Test, describe, test)
 import Time
 import WebGL
@@ -25,6 +26,8 @@ specs =
     [ { partFile = "3647.dat", teeth = 8, pitchRadius = 10 }
     , { partFile = "4019.dat", teeth = 16, pitchRadius = 20 }
     , { partFile = "3648.dat", teeth = 24, pitchRadius = 30 }
+    , { partFile = "3648b.dat", teeth = 24, pitchRadius = 30 }
+    , { partFile = "3649.dat", teeth = 40, pitchRadius = 50 }
     ]
 
 
@@ -74,11 +77,25 @@ axleAlongZ x y =
         }
 
 
+{-| A pin along Z at (x, y, 0): its local X turned to Z.
+-}
+pinAlongZ : Float -> Float -> LDrawLine
+pinAlongZ x y =
+    SubFileRef
+        { color = 0
+        , transform = Mat4.mul (Mat4.makeTranslate3 x y 0) (Mat4.makeRotate (pi / 2) (Vec3.vec3 0 1 0))
+        , file = "2780.dat"
+        }
+
+
 drivenCache : Resolve.PartCache
 drivenCache =
     Dict.fromList
         [ ( "3648.dat", Loaded [] )
+        , ( "3648b.dat", Loaded [] )
+        , ( "3649.dat", Loaded [] )
         , ( "3705.dat", Loaded [] )
+        , ( "2780.dat", Loaded [] )
         ]
 
 
@@ -467,6 +484,84 @@ suite =
                         |> Tuple.first
                         |> drivenPartsFor [ 0, 1 ]
                         |> Expect.equal []
+            , test "a pin placed at (10, 10, 0) on a 24T gear is detected as a driven part" <|
+                \_ ->
+                    let
+                        gear =
+                            SubFileRef { color = 4, transform = Mat4.identity, file = "3648b.dat" }
+
+                        pin =
+                            pinAlongZ 10 10
+
+                        m =
+                            Simulation.init config
+                                |> Simulation.analyse { lines = [ gear, pin ], cache = drivenCache }
+                                |> Tuple.first
+                    in
+                    drivenPartsFor [ 0 ] m
+                        |> List.map (\dp -> ( dp.drivingGearId, dp.file ))
+                        |> Expect.equal [ ( 0, "2780.dat" ) ]
+            , test "an off-center pin and axle on a 40T gear are detected as driven parts" <|
+                \_ ->
+                    let
+                        gear =
+                            SubFileRef { color = 4, transform = Mat4.identity, file = "3649.dat" }
+
+                        axleOffCenter =
+                            axleAlongZ 0 20
+
+                        pinOffCenter =
+                            pinAlongZ 10 30
+
+                        m =
+                            Simulation.init config
+                                |> Simulation.analyse { lines = [ gear, axleOffCenter, pinOffCenter ], cache = drivenCache }
+                                |> Tuple.first
+                    in
+                    drivenPartsFor [ 0 ] m
+                        |> List.map (\dp -> ( dp.drivingGearId, dp.file ))
+                        |> Expect.equal [ ( 0, "3705.dat" ), ( 0, "2780.dat" ) ]
+            , test "at t > 0, drivenEntitiesFor produces the rendered pin entity orbiting the gear axis" <|
+                \_ ->
+                    let
+                        gear =
+                            SubFileRef { color = 4, transform = Mat4.identity, file = "3648b.dat" }
+
+                        pin =
+                            pinAlongZ 10 10
+
+                        m =
+                            Simulation.init config
+                                |> Simulation.analyse { lines = [ gear, pin ], cache = drivenCache }
+                                |> Tuple.first
+                                |> Simulation.setTime 0.5
+                    in
+                    case m.componentMeshes of
+                        [ pinMesh ] ->
+                            let
+                                angle =
+                                    Dict.get 0 m.gearAngles |> Maybe.withDefault 0.0
+
+                                rotMat =
+                                    Meshes.rotationAround angle pinMesh.axis pinMesh.rotationCenter
+
+                                orbitedPos =
+                                    Mat4.transform rotMat pinMesh.center
+                            in
+                            { count = List.length (drivenEntities [ 0 ] m)
+                            , rotCenter = pinMesh.rotationCenter
+                            , radius = Vec3.distance pinMesh.center pinMesh.rotationCenter
+                            , hasMoved = Vec3.distance orbitedPos pinMesh.center > 1.0
+                            }
+                                |> Expect.all
+                                    [ \r -> Expect.equal 2 r.count
+                                    , \r -> Expect.within (Expect.Absolute 0.0001) 0 (Vec3.length r.rotCenter)
+                                    , \r -> Expect.within (Expect.Absolute 0.01) (sqrt 200) r.radius
+                                    , \r -> Expect.equal True r.hasMoved
+                                    ]
+
+                        _ ->
+                            Expect.fail "expected one component mesh for the pin"
             ]
         , describe "motor"
             [ test "SetMotorGear changes the driving gear" <|

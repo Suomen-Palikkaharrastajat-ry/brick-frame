@@ -5461,6 +5461,7 @@ viewCameraSheet model =
         [ CameraControls.view cameraActions
             { camera = model.viewport.camera
             , helpOpen = model.helpOpen
+            , renderQuality = model.renderQuality
             }
         ]
 
@@ -6487,6 +6488,7 @@ viewCamera model =
     CameraControls.floating cameraActions
         { camera = model.viewport.camera
         , helpOpen = model.helpOpen
+        , renderQuality = model.renderQuality
         }
 
 
@@ -6500,6 +6502,8 @@ cameraActions =
     , onReset = ResetView
     , onWalk = ViewportMsg Viewport.ToggleWalkMode
     , onHelp = ToggleHelp
+    , onRaytrace = ToggleRenderQuality
+    , onSnapshot = CaptureSnapshot
     , noOp = NoOp
     }
 
