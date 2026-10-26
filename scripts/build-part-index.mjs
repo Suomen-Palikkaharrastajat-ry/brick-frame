@@ -36,12 +36,15 @@ export function parsePartHeader(file, text) {
   if (!first || !first.startsWith('0 ')) return null
 
   // The library pads descriptions with runs of spaces to line up columns.
-  const description = first.slice(2).trim().replace(/\s+/g, ' ')
-  if (description === '') return null
+  const padded = first.slice(2).trim().replace(/\s+/g, ' ')
 
   // `~` marks sub-parts and moved/obsolete files, `_` internal helpers, `=`
   // aliases of another part. None of them belong in a palette.
-  if (/^[~_=]/.test(description)) return null
+  if (/^[~_=]/.test(padded)) return null
+
+  // `|` marks a logo or sub-part title that is still a real part: keep the name.
+  const description = padded.replace(/^\|\s*/, '')
+  if (description === '') return null
 
   let category = null
   let keywords = null

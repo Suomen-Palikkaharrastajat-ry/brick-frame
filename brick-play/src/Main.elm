@@ -2198,6 +2198,9 @@ narrowRow model =
             , Attr.style "justify-content" "center"
             , Attr.style "flex" "1 1 auto"
             , Attr.style "min-width" "0"
+            , Attr.style "overflow-x" "auto"
+            , Attr.style "overflow-y" "hidden"
+            , Attr.class "scroll-thin"
             , Attr.style "pointer-events" "auto"
             ]
             [ if model.cameraShown then

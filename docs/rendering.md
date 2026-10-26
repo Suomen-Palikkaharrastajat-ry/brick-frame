@@ -343,6 +343,11 @@ same figure as before.
   the first interaction switches `cameraMode` to `CameraManual` and auto-fit
   never runs again, so a model lost off-screen needed a page reload. Fitting also
   returns to `Orbit`.
+- **Canvas resize:** an auto-fit camera is re-framed when the canvas changes size
+  (`Viewport.WindowResize` → `refitForCanvas`), so a portrait phone is framed by its
+  narrower horizontal half-angle. The first load can run before the real size
+  arrives (the model starts at 800×600), which is why the fit is redone here. A
+  manual camera keeps its view and only gets a zoom range for the new size.
 - **Street level:** the person button in the control pad, or `G`, toggles walk
   mode (`ToggleWalkMode` → `Viewport.toggleWalkMode`). Needs loaded model bounds to
   know where the ground is, so it is a no-op on an empty viewer.

@@ -441,17 +441,70 @@ export async function renderIsometricThumbnail(file, color, ldrawBase, rgb) {
   return canvas ? canvasToDataUrl(canvas) : null
 }
 
+// Redirects a library file to another part: `0 ~Moved to 3648b`.
+const MOVED_TO = /^~Moved to\s+(\S+)$/i
+
+// Most redirect hops followed before giving up on a title.
+export const MAX_TITLE_HOPS = 3
+
 /**
- * The part's title: the first line of its .dat file (`0 Brick  2 x  4`), with
- * runs of spaces collapsed (`Brick 2 x 4`). `null` when it cannot be read.
+ * Strip the LDraw library markers from the front of a title: `~` (moved or
+ * obsolete), `=` (alias), `_` (internal) and `|` (logo or sub-part). Runs of
+ * spaces collapse to one, so `| Brick 2 x 4` reads `Brick 2 x 4`.
  */
-export async function partTitle(file, ldrawBase) {
-  const text = await fetchDatText(file, ldrawBase)
+export function cleanPartTitle(raw) {
+  return String(raw ?? '')
+    .replace(/^[~=_|\s]+/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * The raw title of a .dat text: its first non-blank line, which must be a meta
+ * line (`0 …`), with the `0` and runs of spaces removed. `null` when there is
+ * none.
+ */
+export function rawTitleOf(text) {
   if (!text) return null
   const first = text.split(/\r?\n/).find((line) => line.trim() !== '')
   if (!first || !/^\s*0\s/.test(first)) return null
   const title = first.trim().replace(/^0\s+/, '').replace(/\s+/g, ' ').trim()
   return title === '' ? null : title
+}
+
+/**
+ * The readable title of a part, following `~Moved to X` redirects.
+ *
+ * `load(file)` resolves a .dat name to its text, or `null`, so the logic can be
+ * tested with a stub. A redirect is followed to X.dat for at most
+ * `MAX_TITLE_HOPS` hops; a chain that is still a redirect after that, or a part
+ * that cannot be read, gives `null` (a host then shows the part number).
+ */
+export async function resolvePartTitle(file, load, maxHops = MAX_TITLE_HOPS) {
+  let current = file
+  for (let hop = 0; hop <= maxHops; hop++) {
+    const raw = rawTitleOf(await load(current))
+    if (raw === null) return null
+    const moved = raw.match(MOVED_TO)
+    if (!moved) {
+      const title = cleanPartTitle(raw)
+      return title === '' ? null : title
+    }
+    current = moved[1].toLowerCase().endsWith('.dat') ? moved[1] : `${moved[1]}.dat`
+  }
+  return null
+}
+
+/**
+ * The part's title: the first line of its .dat file (`0 Brick  2 x  4`), with
+ * runs of spaces collapsed (`Brick 2 x 4`), LDraw markers stripped and moved
+ * parts followed to their new file. `null` when it cannot be read.
+ *
+ * `options.load` replaces the library fetch (for tests).
+ */
+export async function partTitle(file, ldrawBase, options = {}) {
+  const load = options.load ?? ((name) => fetchDatText(name, ldrawBase))
+  return resolvePartTitle(file, load, options.maxHops ?? MAX_TITLE_HOPS)
 }
 
 /**

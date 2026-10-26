@@ -642,13 +642,26 @@ updateInner msg model =
             updateInner innerMsg { model | canvasOrigin = ( left, top ) }
 
         WindowResize w h ->
-            ( { model
-                | width = w
-                , height = h
+            let
+                resizedModel =
+                    { model
+                        | width = w
+                        , height = h
 
-                -- Orbit and pan sensitivity are relative to canvas height.
-                , camera = Camera.setViewportHeight (toFloat h) model.camera
-              }
+                        -- Orbit and pan sensitivity are relative to canvas height.
+                        , camera = Camera.setViewportHeight (toFloat h) model.camera
+                    }
+
+                -- Only a real size change re-frames: a host can send the same
+                -- size again, and a camera it has just restored must survive.
+                changed =
+                    w /= model.width || h /= model.height
+            in
+            ( if changed then
+                refitForCanvas resizedModel
+
+              else
+                resizedModel
             , Cmd.none
             , []
             )
@@ -2081,6 +2094,32 @@ frameEditedScene model =
                             Framing.applyZoomRange model.width model.height bounds.radius model.camera
                 in
                 { model | camera = camera, modelBounds = Just bounds }
+
+        Nothing ->
+            model
+
+
+{-| Re-fit the camera to the stored bounds after the canvas changes size.
+
+Auto-fit is recomputed for the new aspect ratio, so a portrait canvas is framed
+by its narrower horizontal half-angle. A manual camera keeps its view and gets
+only a zoom range that matches the new size. Does nothing before a model has
+been measured.
+
+-}
+refitForCanvas : Model -> Model
+refitForCanvas model =
+    case model.modelBounds of
+        Just bounds ->
+            { model
+                | camera =
+                    case model.cameraMode of
+                        CameraAutoFit ->
+                            Framing.cameraForBounds model.width model.height bounds.center bounds.radius model.camera
+
+                        CameraManual ->
+                            Framing.applyZoomRange model.width model.height bounds.radius model.camera
+            }
 
         Nothing ->
             model

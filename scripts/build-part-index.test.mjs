@@ -35,6 +35,12 @@ test('skips sub-parts, moved parts, aliases and files without a description', ()
   assert.equal(parsePartHeader('5.dat', ''), null)
 })
 
+test('strips the logo marker | from a description and keeps the part', () => {
+  const entry = parsePartHeader('t1006.dat', '0 | Brickstuff Pico LED\n0 !CATEGORY Electric\n')
+  assert.deepEqual(entry, ['t1006.dat', 'Brickstuff Pico LED', 'Electric'])
+  assert.equal(parsePartHeader('t0.dat', '0 |\n'), null)
+})
+
 test('copes with CRLF files and leading blank lines', () => {
   const entry = parsePartHeader('x.dat', '\r\n0 Technic Gear 8 Tooth\r\n0 Name: x.dat\r\n0 !CATEGORY Technic\r\n')
   assert.deepEqual(entry, ['x.dat', 'Technic Gear 8 Tooth', 'Technic'])
