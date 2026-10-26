@@ -1,4 +1,4 @@
-module Contraption.Machine exposing
+module Technic.Machine exposing
     ( MachineState
     , analyseMachine
     , isAccomplished
@@ -20,7 +20,7 @@ import LDraw.Document as Document exposing (Document)
 import LDraw.Resolve exposing (PartCache)
 
 
-{-| Analyzed state of the Technic contraption.
+{-| Analyzed state of the Technic machine.
 -}
 type alias MachineState =
     { gears : List GearInstance
@@ -77,7 +77,7 @@ analyseMachine document partCache =
             }
 
 
-{-| Evaluates whether the contraption goal is accomplished:
+{-| Evaluates whether the machine goal is accomplished:
 "Technic play is accomplished when all gears are rotating and part of the same machine".
 -}
 isAccomplished : MachineState -> Bool

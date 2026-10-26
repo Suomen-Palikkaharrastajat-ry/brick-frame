@@ -1,4 +1,4 @@
-module Contraption.Animation exposing
+module Technic.Animation exposing
     ( Animated
     , isAnimating
     , none

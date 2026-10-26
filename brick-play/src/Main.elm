@@ -38,12 +38,12 @@ that tab is selected first. Each card is a rendered picture of the part
 (`UI.PartCard.compactView`, fed by the shared thumbnail pipeline through `Ports`).
 
 Technic mode is derived, not set: it is on when the document holds a gear that
-`Contraption.Machine` recognises, or when the URL kit lists a gear. In Technic
+`Technic.Machine` recognises, or when the URL kit lists a gear. In Technic
 mode the play button shows and Space plays and pauses the machine; the gear mesh
 status pill, automatic tooth alignment and the accomplishment banner come on, and
 drags keep their height. Outside it, Space is unbound and the play button is
 hidden. Technic parts (gears, axles, beams, pins) go on the shared axle line in
-either mode (`Contraption.Placement`), and other parts rest on the ground. Any
+either mode (`Technic.Placement`), and other parts rest on the ground. Any
 edit stops a running machine and rewinds it to 0.
 
 The top-right menu (`UI.HamburgerMenu`) holds undo, redo, delete and clear,
@@ -56,10 +56,6 @@ import Array
 import Browser
 import Browser.Dom
 import Browser.Events
-import Contraption.Animation as Animation exposing (Animated)
-import Contraption.Catalog as Catalog exposing (Category(..), PartItem)
-import Contraption.Machine as Machine exposing (MachineState)
-import Contraption.Placement as Placement
 import Data
 import Dict exposing (Dict)
 import EmbeddedParts
@@ -84,6 +80,10 @@ import Studio.GearFeedback as GearFeedback
 import Studio.Shortcuts as StudioShortcuts exposing (TurnDirection(..))
 import Studio.UrlPayload as UrlPayload exposing (PartKitItem)
 import Task
+import Technic.Animation as Animation exposing (Animated)
+import Technic.Catalog as Catalog exposing (Category(..), PartItem)
+import Technic.Machine as Machine exposing (MachineState)
+import Technic.Placement as Placement
 import UI.Button as Button
 import UI.CameraGlobe as CameraGlobe
 import UI.Focus as Focus
@@ -297,7 +297,7 @@ init flags =
 
 
 {-| Technic mode, derived from the model: on when the document holds a gear that
-`Contraption.Machine` recognises, or when the URL kit lists a gear part. Technic
+`Technic.Machine` recognises, or when the URL kit lists a gear part. Technic
 mode is also what offers the catalog dock (see `catalogDock`).
 -}
 technicMode : Model -> Bool
@@ -967,7 +967,7 @@ step msg model =
 
 
 {-| Put a dock part into the studio: a Technic part on the shared axle line, next
-to the selection (`Contraption.Placement`), anything else on a free ground spot
+to the selection (`Technic.Placement`), anything else on a free ground spot
 clear of every piece already placed.
 -}
 placePart : String -> Int -> String -> Model -> ( Model, Cmd Msg )

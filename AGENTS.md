@@ -50,7 +50,7 @@ studio-app/src/                  # Full-featured LDraw studio (editor) host — 
 
 brick-play/src/                  # Brick Play: free-building studio; Technic mode (gears, machine simulation) switches on by itself
   Main.elm              # Model, Msg, dock (Technic catalog in Technic mode, else counted kit), Technic mode, wraps StudioMsg (Studio.Core)
-  Contraption/
+  Technic/
     Machine.elm         # Technic machine analysis & accomplishment condition
     Catalog.elm         # Curated Technic parts catalog (gears, beams, axles, pins) and the URL kit's Project tab
     Animation.elm       # Which gears and driven parts turn while playing, and their static copies to hide
@@ -82,7 +82,7 @@ In-depth documentation for agents and contributors:
 - **Key gear parts:** `3647.dat` (8T), `4019.dat` (16T), `3648.dat` (24T), `3649.dat` (40T)
 - **Color inheritance:** Color `16` and Studio `-1` inherit from parent; Color `24` is edge color (render black).
 - **Gear physics:** Pure function of time — angle = ratio × motorSpeed × t (enables free scrubbing).
-- **Cross-app export / deep linking:** Studio models can be exported to Brick Play either as a limited part kit (`#parts=...`) or as an assembled mechanism with its kit (`#model=...&parts=...`; Technic mode switches on by itself), handled by `Studio.UrlPayload`. Old `/contraptions` links redirect to `/play` with their hash.
+- **Cross-app export / deep linking:** Studio models can be exported to Brick Play either as a limited part kit (`#parts=...`) or as an assembled mechanism with its kit (`#model=...&parts=...`; Technic mode switches on by itself), handled by `Studio.UrlPayload`.
 - **Msg architecture:** Each app's `Main.elm` owns its `Msg`; the stateful `Viewport` and `Simulation` components are the exception (own `Model`/`Msg`/`update`, no ports, effects returned as events). The studio nests page Msgs. Everything else is pure functions.
 
 ## Current Runtime Notes
@@ -100,7 +100,7 @@ In-depth documentation for agents and contributors:
 - **Fit view:** the fit (maximize icon) button in the viewer control pad, labelled 'Fit model to view (F)', re-frames the model; in Brick Play the reset-view button on the camera globe does the same. `F` fits in every host. It is the only way back to auto-fit after a manual camera move.
 - **Minimal Play chrome:** no title badge; a single top-right hamburger (`UI.HamburgerMenu`) holds undo, redo, delete, clear, fit view and shortcuts (Escape closes it first). Dock cards are compact pictures (`UI.PartCard.compactView`) with names in tooltips; the dock is `compactPanelHeight` (130 px), matching the camera globe panel.
 - **Play editing UI:** no axis gizmo (`Core.setGizmoStyle NoGizmo`); a floating action bar above the dock (Turn left / right, Tip, Raise, Lower, Delete) mirrors the keyboard; the dock shows visual part cards (`UI.PartCard`, images from the shared thumbnail pipeline).
-- **Technic mode (Brick Play):** derived, never a flag. On when the document holds a gear that `Contraption.Machine` recognises, or when a `parts=` kit lists a gear (`Main.technicMode`). Only then: the play button shows, Space plays and pauses (`TogglePlay`), the gear mesh status pill (`Machine.gearFeedback`) and automatic tooth alignment (`Core.setGearAlignment`) are on, the accomplishment banner shows, drags do not settle to the ground (`Core.setDragSettles`), and gears and their driven parts animate while the machine plays. Technic parts go on the axle line in either mode (`Contraption.Placement`). In Technic mode the dock is the catalog with its tabs, all unlimited; a `parts=` kit adds a Project tab in front, selected first, listing the kit's parts (also unlimited), and the share link keeps that kit as `parts=`. Outside Technic mode a `parts=` kit is the counted kit (no tabs). Any edit stops the machine.
+- **Technic mode (Brick Play):** derived, never a flag. On when the document holds a gear that `Technic.Machine` recognises, or when a `parts=` kit lists a gear (`Main.technicMode`). Only then: the play button shows, Space plays and pauses (`TogglePlay`), the gear mesh status pill (`Machine.gearFeedback`) and automatic tooth alignment (`Core.setGearAlignment`) are on, the accomplishment banner shows, drags do not settle to the ground (`Core.setDragSettles`), and gears and their driven parts animate while the machine plays. Technic parts go on the axle line in either mode (`Technic.Placement`). In Technic mode the dock is the catalog with its tabs, all unlimited; a `parts=` kit adds a Project tab in front, selected first, listing the kit's parts (also unlimited), and the share link keeps that kit as `parts=`. Outside Technic mode a `parts=` kit is the counted kit (no tabs). Any edit stops the machine.
 - **Two navigation modes:** `Camera.navigation` is `Orbit` or `Walk`. Walk is first-person at street level (`G`, or the person button) — drags pivot about the eye, WASD walks, wheel dollies. Free-fly, no collision. Both modes keep `position = target + eyeOffset`, so culling/picking/LOD are mode-agnostic; keep it that way.
 - **View-relative part drag + orbit around the selection** (Play, studio workspace): a body drag slides on a working plane fixed at press time through the grab point (`Studio.DragPlane`: horizontal when `abs elevation >= 20°`, else camera-facing), so the grabbed point stays under the cursor and screen-left is camera-left. Only an explicit click/tap selection of a part re-pivots the camera, with `Viewport.pivotOn` — a ~280 ms **translation** glide that keeps azimuth, elevation and distance (no rotation/zoom, so W/A/S/D keep their screen directions; never mid-drag, not in Walk; Fit View resets). Adds, keyboard/action-bar moves, drops, undo/redo and Ctrl+A never move the camera. New Play pieces go to `Core.freeSpotFor` (ring search, no overlap); `Core.addPartAt` / `Core.setDragSettles False` let a host keep its own heights.
 - **Camera sensitivity is viewport-relative**, not fixed constants — see docs/rendering.md § Camera. Zoom limits come from the model's bounding sphere (`Viewport.Framing.applyZoomRange`), so never reintroduce a hard-coded distance clamp. The same goes for the far plane: it reads `sceneRadius`, because orbit distance alone gives 400 LDU of view when the eye is inside a city.
@@ -129,7 +129,7 @@ make generate         # Run Haskell generator (writes packages/brick-frame-data/
 | `make dev` | Start Vite dev server for viewer with hot reload (port 5173) |
 | `make studio-dev` | Start the studio dev server (serves `/ldraw` from viewer public dir, port 5174) |
 | `make play-dev` | Start the brick-play dev server (port 5175) |
-| `make build` | Production build of all apps (`viewer` at root, `build/studio/`, `build/play/`, `build/contraptions/` (a redirect to Play)) |
+| `make build` | Production build of all apps (`viewer` at root, `build/studio/`, `build/play/`) |
 | `make studio-build` | Build the studio only → `build/studio/` |
 | `make play-build` | Build brick-play only → `build/play/` |
 | `make preview` / `make serve` | Serve unified production build of all apps locally on port 4173 |

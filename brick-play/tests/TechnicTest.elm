@@ -4,10 +4,6 @@ module TechnicTest exposing (suite)
 on, the Technic catalog dock, Technic placement and the machine's accomplishment.
 -}
 
-import Contraption.Animation as Animation
-import Contraption.Catalog as Catalog exposing (Category(..))
-import Contraption.Machine as Machine exposing (MachineState)
-import Contraption.Placement as Placement
 import Data
 import Dict
 import EmbeddedParts
@@ -28,6 +24,10 @@ import Studio.DragPlane as DragPlane
 import Studio.Edit as Edit exposing (NewPart)
 import Studio.GearFeedback as GearFeedback
 import Studio.Shortcuts exposing (TurnDirection(..))
+import Technic.Animation as Animation
+import Technic.Catalog as Catalog exposing (Category(..))
+import Technic.Machine as Machine exposing (MachineState)
+import Technic.Placement as Placement
 import Test exposing (Test, describe, test)
 import Test.Html.Event as Event
 import Test.Html.Query as Query
@@ -1265,7 +1265,7 @@ menuTests =
                 Query.fromHtml (view accomplishedModel)
                     |> Expect.all
                         [ Query.has [ Selector.attribute (Attr.attribute "role" "status"), Selector.text "All 2 gears are rotating together!" ]
-                        , Query.hasNot [ Selector.text "Contraption Accomplished" ]
+                        , Query.hasNot [ Selector.text "Technic Accomplished" ]
                         ]
         , test "a machine that is not accomplished shows no banner" <|
             \_ ->
@@ -1652,7 +1652,7 @@ technicTests =
                             |> Expect.equal [ Placement.axleLineY ]
                     ]
                     ()
-        , test "the Contraptions examples from the docs load in Technic mode, with their kit and gears" <|
+        , test "the Technic examples from the docs load in Technic mode, with their kit and gears" <|
             \_ ->
                 List.map
                     (\hash ->
@@ -1681,7 +1681,7 @@ technicTests =
                     , \_ -> List.map (\m -> count24 (Tuple.first (update (AddCatalogPart kit24) m))) starts |> Expect.equal [ 2, 2 ]
                     ]
                     ()
-        , test "the Contraptions 3-gear train example is accomplished as it loads" <|
+        , test "the 3-gear train example is accomplished as it loads" <|
             \_ ->
                 Tuple.first (init { testFlags | initialHash = gearTrainHash })
                     |> .machine
@@ -1697,7 +1697,7 @@ technicTests =
         ]
 
 
-{-| The Brick Contraptions examples in docs/examples.md (Production links), which
+{-| The Technic examples in docs/examples.md (Production links), which
 open in Brick Play in Technic mode.
 -}
 twinGearboxHash : String

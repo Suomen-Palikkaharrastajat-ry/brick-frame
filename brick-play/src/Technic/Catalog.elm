@@ -1,4 +1,4 @@
-module Contraption.Catalog exposing
+module Technic.Catalog exposing
     ( Category(..)
     , PartItem
     , categoryLabel

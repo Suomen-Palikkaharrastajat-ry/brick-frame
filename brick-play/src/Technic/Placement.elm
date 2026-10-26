@@ -1,4 +1,4 @@
-module Contraption.Placement exposing
+module Technic.Placement exposing
     ( Target(..)
     , axleLineY
     , onAxleLine
@@ -35,13 +35,13 @@ around the selection (`Studio.Core.freeSpotForPlacement`).
 
 -}
 
-import Contraption.Catalog as Catalog exposing (Category(..))
 import Data
 import Math.Matrix4 as Mat4 exposing (Mat4)
 import Math.Vector3 as Vec3 exposing (Vec3, vec3)
 import Set
 import Studio.Core as Core
 import Studio.DragPlane as DragPlane exposing (Box)
+import Technic.Catalog as Catalog exposing (Category(..))
 
 
 {-| How a dock part is added: at exactly this placement (`Core.addPartAt`), or

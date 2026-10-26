@@ -165,7 +165,7 @@ and the next ones beside the selected piece. `Core.setDragSettles False` makes
 horizontal-plane body drags keep the press-time height instead of settling on
 the support (camera-facing drags, the wheel and raise/lower are unchanged).
 
-In Technic mode Brick Play (`Contraption.Placement`) adds every catalog Technic part —
+In Technic mode Brick Play (`Technic.Placement`) adds every catalog Technic part —
 gears, axles, beams, pins, bushes — with its origin on one **axle line** at
 Y = −60 LDU (60 above the ground, so a 40T's teeth clear it): each of these parts
 has its origin on its own axis or hole row, so gears of any size share one axis
@@ -237,9 +237,9 @@ mode (below) adds the gear chrome to the same view.
   `Meshes with 24T ✓`. It turns yellow once the two mesh.
 - **Playing (Technic mode).** Space plays and pauses the machine in the same
   view as editing. Gears and their driven parts animate, and their static copies are
-  hidden (`Contraption.Animation`). Any edit stops the machine and rewinds it to 0.
+  hidden (`Technic.Animation`). Any edit stops the machine and rewinds it to 0.
   Without gears Space is unbound, and the play button is hidden.
-- **Placement.** Technic parts go on the axle line (`Contraption.Placement`); other
+- **Placement.** Technic parts go on the axle line (`Technic.Placement`); other
   parts use `Core.freeSpotFor`. See "Host placement" above.
 
 ## Gear alignment

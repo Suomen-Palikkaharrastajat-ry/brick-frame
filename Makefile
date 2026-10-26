@@ -141,11 +141,6 @@ studio-build: build/.studio-stamp ## Production build of the studio → build/st
 .PHONY: play-build
 play-build: build/.play-stamp ## Production build of brick-play → build/play/
 
-.PHONY: redirect-build
-redirect-build: ## Copy the old Brick Contraptions address → build/contraptions/, which forwards to Brick Play
-	mkdir -p build/contraptions
-	cp redirects/contraptions/index.html build/contraptions/index.html
-
 .PHONY: elm-build
 elm-build: build/.elm-stamp ## Production build of Elm SPA → build/
 
@@ -198,7 +193,7 @@ elm-review-fix: ## Run elm-review with auto-fix
 dev: elm-dev ## Generate data + start Vite dev server
 
 .PHONY: build
-build: elm-build wc-build studio-build play-build redirect-build ## Generate data + production build of all apps → build/
+build: elm-build wc-build studio-build play-build ## Generate data + production build of all apps → build/
 
 .PHONY: preview
 preview: build ## Serve production build of all apps locally on port 4173 (http://localhost:4173)
@@ -208,7 +203,7 @@ preview: build ## Serve production build of all apps locally on port 4173 (http:
 serve: preview ## Alias for preview
 
 .PHONY: dist-ci
-dist-ci: build/.elm-stamp-ci build/.wc-stamp-ci build/.studio-stamp-ci build/.play-stamp-ci redirect-build ## CI build: generator (Nix binary) + viewer + web components + studio + play + the Contraptions redirect → build/
+dist-ci: build/.elm-stamp-ci build/.wc-stamp-ci build/.studio-stamp-ci build/.play-stamp-ci ## CI build: generator (Nix binary) + viewer + web components + studio + play → build/
 
 .PHONY: watch
 watch: ## Watch Haskell sources and run Vite dev server (WATCH_PORT, default 5173)
