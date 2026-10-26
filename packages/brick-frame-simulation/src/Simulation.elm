@@ -19,6 +19,7 @@ module Simulation exposing
     , reset
     , rotatingGearIds
     , setTime
+    , snapshotTriangles
     , subscriptions
     , update
     )
@@ -59,6 +60,7 @@ import Render.EdgeShader as EdgeShader exposing (EdgeVertex)
 import Render.GuideShader as GuideShader
 import Render.Pick as Pick
 import Render.Shader as Shader
+import Render.Snapshot as Snapshot
 import Render.Style as Style
 import Set exposing (Set)
 import Simulation.Meshes as Meshes
@@ -842,6 +844,66 @@ entities camera style aspect model =
     gearEntities camera style aspect model
         ++ componentEntities camera style aspect model
         ++ componentArrows camera aspect model
+
+
+{-| The moving parts as the snapshot path tracer reads them, as flat triangles
+(see `Render.Snapshot`).
+
+Every gear and axle-like component is included, each turned to its current
+angle, the same poses `entities` draws. The static scene leaves these parts out,
+so a host adds this list to the viewport's own triangles.
+
+-}
+snapshotTriangles : Model -> List Float
+snapshotTriangles model =
+    gearSnapshotFloats model ++ componentSnapshotFloats model
+
+
+gearSnapshotFloats : Model -> List Float
+gearSnapshotFloats model =
+    case model.gearGraph of
+        Nothing ->
+            []
+
+        Just _ ->
+            Dict.toList model.gearMeshes
+                |> List.concatMap
+                    (\( gid, rendered ) ->
+                        let
+                            angle =
+                                Dict.get gid model.gearAngles
+                                    |> Maybe.withDefault 0.0
+                        in
+                        Snapshot.placedTriangles
+                            { matrix = Meshes.rotationAround angle rendered.axis rendered.center
+                            , instanceColor = Shader.noInstanceColor
+                            , ghost = False
+                            }
+                            rendered.surface
+                    )
+
+
+componentSnapshotFloats : Model -> List Float
+componentSnapshotFloats model =
+    model.componentMeshes
+        |> List.concatMap
+            (\component ->
+                let
+                    angle =
+                        case component.drivingGearId of
+                            Just gid ->
+                                Dict.get gid model.gearAngles |> Maybe.withDefault 0.0
+
+                            Nothing ->
+                                0.0
+                in
+                Snapshot.placedTriangles
+                    { matrix = Meshes.rotationAround angle component.axis component.rotationCenter
+                    , instanceColor = Shader.noInstanceColor
+                    , ghost = False
+                    }
+                    component.surface
+            )
 
 
 gearEntities : Camera -> Style.Style -> Float -> Model -> List WebGL.Entity

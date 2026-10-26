@@ -32,6 +32,7 @@ module Viewport exposing
     , setRenderQuality
     , setShiftPressGrabs
     , setSpacePan
+    , snapshotRequest
     , subscriptions
     , update
     , view
@@ -88,6 +89,7 @@ import Viewport.Framing as Framing exposing (ModelBounds, ViewPreset(..))
 import Viewport.Hash as Hash
 import Viewport.Navigation as Navigation
 import Viewport.Shortcuts as Shortcuts
+import Viewport.Snapshot as Snapshot
 import Viewport.Sync as Sync
 import Viewport.Wire as Wire
 import WebGL
@@ -2904,6 +2906,26 @@ cell is that small) are still drawn by that chunk.
 setHiddenSources : Set Int -> Model -> Model
 setHiddenSources sources model =
     { model | hiddenSources = sources }
+
+
+{-| The `captureRender` request for the offline path tracer: the viewport's
+visible triangles as drawn, followed by `extraTriangles` (flat, 14 floats per
+triangle, from e.g. `Simulation.snapshotTriangles`) for host-owned moving parts.
+-}
+snapshotRequest : { filename : String, extraTriangles : List Float } -> Model -> Encode.Value
+snapshotRequest config model =
+    Snapshot.encodeRequest
+        { filename = config.filename
+        , camera = model.camera
+        , triangles =
+            Snapshot.sceneTriangles
+                { scene = model.scene
+                , instanced = model.instancedScene
+                , hidden = model.hiddenSources
+                , activeSources = model.activeSources
+                }
+                ++ config.extraTriangles
+        }
 
 
 {-| Where the canvas's top-left corner sits in the window, in CSS pixels.

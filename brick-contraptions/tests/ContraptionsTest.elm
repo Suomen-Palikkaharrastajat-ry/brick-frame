@@ -32,6 +32,7 @@ import Test.Html.Event as Event
 import Test.Html.Query as Query
 import Test.Html.Selector as Selector
 import Time
+import UI.SnapshotModal as SnapshotModal
 import Url
 import Viewport
 
@@ -1149,6 +1150,22 @@ snapshotTests =
                     [ opened.snapshotModal /= Nothing
                     , afterEscape.snapshotModal == Nothing
                     , Core.hasSelection afterEscape.studio
+                    ]
+        , test "progress and a failure reach the open snapshot" <|
+            \_ ->
+                let
+                    ( opened, _ ) =
+                        update CaptureSnapshot selected
+
+                    ( progressed, _ ) =
+                        update (SnapshotProgress { fraction = 0.25, samples = 4 }) opened
+
+                    ( failed, _ ) =
+                        update (SnapshotFailed "Tracer ran out of memory") progressed
+                in
+                Expect.equal [ True, True ]
+                    [ Maybe.map .progress progressed.snapshotModal == Just { fraction = 0.25, samples = 4 }
+                    , Maybe.map .phase failed.snapshotModal == Just (SnapshotModal.Failed "Tracer ran out of memory")
                     ]
         ]
 

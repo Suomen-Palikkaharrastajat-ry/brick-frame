@@ -67,4 +67,36 @@ suite =
                 in
                 Expect.equal [ True, True ]
                     [ opened.snapshotModal /= Nothing, afterEscape.snapshotModal == Nothing ]
+        , test "progress and a failure reach the open modal" <|
+            \_ ->
+                let
+                    ( model, _ ) =
+                        init testFlags
+
+                    opened =
+                        { model | snapshotModal = Just (SnapshotModal.init { filename = "palikkakehys-render.png" }) }
+
+                    ( progressed, _ ) =
+                        update (SnapshotProgress { fraction = 0.5, samples = 12 }) opened
+
+                    ( failed, _ ) =
+                        update (SnapshotFailed "Tracer ran out of memory") progressed
+                in
+                Expect.equal [ True, True ]
+                    [ Maybe.map .progress progressed.snapshotModal == Just { fraction = 0.5, samples = 12 }
+                    , Maybe.map .phase failed.snapshotModal == Just (SnapshotModal.Failed "Tracer ran out of memory")
+                    ]
+        , test "Close removes the modal, even while it is still rendering" <|
+            \_ ->
+                let
+                    ( model, _ ) =
+                        init testFlags
+
+                    opened =
+                        { model | snapshotModal = Just (SnapshotModal.init { filename = "palikkakehys-render.png" }) }
+
+                    ( closed, _ ) =
+                        update SnapshotClose opened
+                in
+                Expect.equal Nothing closed.snapshotModal
         ]

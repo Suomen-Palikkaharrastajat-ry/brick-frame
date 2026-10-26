@@ -3,18 +3,24 @@ module UI.SnapshotModal exposing
     , Model
     , Phase(..)
     , PreviewData
+    , Progress
     , init
+    , isRendering
     , markSaved
+    , setFailed
+    , setProgress
     , setReady
     , view
     )
 
 {-| Full-screen modal for capturing, previewing, and saving a snapshot of the
-canvas as a PNG of up to 1920 × 1080.
+canvas as a 1920 × 1080 PNG.
 
-The modal takes over the whole UI with a blurred backdrop while the capture is
-being made, then shows the captured image with a Save button. The user can close
-it at any time, whether or not the image has been saved.
+The modal takes over the whole UI with a blurred backdrop while the offline
+path tracer works. It shows the sample count and a progress bar from the
+tracer's progress reports (`setProgress`). A failed render shows its error
+(`setFailed`). Once the image is ready it appears with a Save button. The user
+can close the modal at any time, whether or not the image has been saved.
 
 -}
 
@@ -26,6 +32,15 @@ import UI.Icon as Icon
 import UI.Theme as Theme
 
 
+{-| How far the path tracer has got: `fraction` from 0 to 1, and the number of
+samples taken so far.
+-}
+type alias Progress =
+    { fraction : Float
+    , samples : Int
+    }
+
+
 {-| Data for the preview phase once the captured image is ready.
 -}
 type alias PreviewData =
@@ -35,11 +50,12 @@ type alias PreviewData =
     }
 
 
-{-| The two phases of snapshot capture.
+{-| The phases of snapshot capture: rendering, then either a preview or a failure.
 -}
 type Phase
     = Rendering
     | Preview PreviewData
+    | Failed String
 
 
 {-| Snapshot modal state.
@@ -47,6 +63,7 @@ type Phase
 type alias Model =
     { filename : String
     , phase : Phase
+    , progress : Progress
     }
 
 
@@ -64,7 +81,50 @@ init : { filename : String } -> Model
 init config =
     { filename = config.filename
     , phase = Rendering
+    , progress = { fraction = 0, samples = 0 }
     }
+
+
+{-| Whether the modal is still waiting for the path tracer. Closing it then
+should cancel the render.
+-}
+isRendering : Model -> Bool
+isRendering model =
+    case model.phase of
+        Rendering ->
+            True
+
+        _ ->
+            False
+
+
+{-| Record the path tracer's progress. Ignored once the render has finished or failed.
+-}
+setProgress : Progress -> Model -> Model
+setProgress progress model =
+    case model.phase of
+        Rendering ->
+            { model
+                | progress =
+                    { fraction = clamp 0 1 progress.fraction
+                    , samples = max 0 progress.samples
+                    }
+            }
+
+        _ ->
+            model
+
+
+{-| Show the error of a failed render. Ignored once the render has finished.
+-}
+setFailed : String -> Model -> Model
+setFailed message model =
+    case model.phase of
+        Rendering ->
+            { model | phase = Failed message }
+
+        _ ->
+            model
 
 
 {-| Transition to the preview phase when JavaScript delivers the captured data URL.
@@ -90,7 +150,7 @@ markSaved model =
         Preview data ->
             { model | phase = Preview { data | hasSaved = True } }
 
-        Rendering ->
+        _ ->
             model
 
 
@@ -191,7 +251,7 @@ viewHeader =
                 , Attr.style "font-size" "12px"
                 , Attr.style "color" Theme.textMuted
                 ]
-                [ text "A PNG of the current view, up to 1920 × 1080" ]
+                [ text "A 1920 × 1080 PNG of the current view" ]
             ]
         , span
             [ Attr.style "font-size" "11px"
@@ -217,21 +277,28 @@ viewBody model =
         ]
         (case model.phase of
             Rendering ->
-                [ viewCapturing ]
+                [ viewRendering model.progress ]
 
             Preview data ->
                 [ viewPreview data ]
+
+            Failed message ->
+                [ viewFailed message ]
         )
 
 
-viewCapturing : Html msg
-viewCapturing =
+viewRendering : Progress -> Html msg
+viewRendering progress =
+    let
+        percent =
+            round (progress.fraction * 100)
+    in
     div
         [ Attr.style "display" "flex"
         , Attr.style "flex-direction" "column"
         , Attr.style "align-items" "center"
         , Attr.style "justify-content" "center"
-        , Attr.style "padding" "48px 16px"
+        , Attr.style "padding" "32px 16px"
         , Attr.style "gap" "16px"
         , Attr.style "text-align" "center"
         ]
@@ -246,7 +313,61 @@ viewCapturing =
             [ Attr.style "font-size" "15px"
             , Attr.style "font-weight" "600"
             ]
-            [ text "Capturing snapshot…" ]
+            [ text ("Path tracing… " ++ String.fromInt progress.samples ++ " samples") ]
+        , div
+            [ Attr.attribute "role" "progressbar"
+            , Attr.attribute "aria-label" "Path tracing progress"
+            , Attr.attribute "aria-valuemin" "0"
+            , Attr.attribute "aria-valuemax" "100"
+            , Attr.attribute "aria-valuenow" (String.fromInt percent)
+            , Attr.style "width" "100%"
+            , Attr.style "max-width" "420px"
+            , Attr.style "height" "8px"
+            , Attr.style "background" Theme.panelSubtleBackground
+            , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+            , Attr.style "border-radius" "9999px"
+            , Attr.style "overflow" "hidden"
+            ]
+            [ div
+                [ Attr.style "width" (String.fromInt percent ++ "%")
+                , Attr.style "height" "100%"
+                , Attr.style "background" Theme.brandYellow
+                , Attr.style "transition" "width 0.3s linear"
+                ]
+                []
+            ]
+        , p
+            [ Attr.style "margin" "0"
+            , Attr.style "font-size" "13px"
+            , Attr.style "color" Theme.textMuted
+            ]
+            [ text "Rendering a path-traced image; this takes about 30 seconds." ]
+        ]
+
+
+viewFailed : String -> Html msg
+viewFailed message =
+    div
+        [ Attr.style "display" "flex"
+        , Attr.style "flex-direction" "column"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "center"
+        , Attr.style "padding" "32px 16px"
+        , Attr.style "gap" "12px"
+        , Attr.style "text-align" "center"
+        ]
+        [ div
+            [ Attr.style "font-size" "15px"
+            , Attr.style "font-weight" "600"
+            , Attr.style "color" Theme.brandRed
+            ]
+            [ text "The snapshot could not be rendered." ]
+        , p
+            [ Attr.style "margin" "0"
+            , Attr.style "font-size" "13px"
+            , Attr.style "color" Theme.textMuted
+            ]
+            [ text message ]
         ]
 
 
@@ -331,6 +452,15 @@ viewFooter actions model =
                     , Attr.style "gap" "10px"
                     ]
                     [ saveButton actions data ]
+                , Button.secondary actions.onClose "Close"
+                ]
+
+            Failed _ ->
+                [ div
+                    [ Attr.style "font-size" "13px"
+                    , Attr.style "color" Theme.textMuted
+                    ]
+                    [ text "Nothing was saved." ]
                 , Button.secondary actions.onClose "Close"
                 ]
         )

@@ -47,6 +47,7 @@ import WebGL
 type alias GearRender =
     { mesh : WebGL.Mesh Vertex
     , lodMesh : WebGL.Mesh Vertex
+    , surface : List ( Vertex, Vertex, Vertex )
     , edges : WebGL.Mesh EdgeVertex
     , center : Vec3.Vec3
     , axis : Vec3.Vec3
@@ -68,6 +69,7 @@ type alias ComponentRender =
 -}
 type alias ComponentMeshRender =
     { mesh : WebGL.Mesh Vertex
+    , surface : List ( Vertex, Vertex, Vertex )
     , edges : WebGL.Mesh EdgeVertex
     , center : Vec3.Vec3
     , rotationCenter : Vec3.Vec3
@@ -124,6 +126,7 @@ buildGearMeshes lodCache cache instances =
                         Dict.insert
                             inst.id
                             { mesh = WebGL.triangles geom.triangles
+                            , surface = geom.triangles
                             , lodMesh = WebGL.triangles lodTriangles
                             , edges = edgeMesh geom.lines
                             , center = center
@@ -257,6 +260,7 @@ buildComponentMeshRenders cache components gears =
                         in
                         Just
                             { mesh = WebGL.triangles geom.triangles
+                            , surface = geom.triangles
                             , edges = edgeMesh geom.lines
                             , center = toYUpPoint component.worldPosition
                             , rotationCenter = rotationCenter
@@ -655,6 +659,7 @@ buildCoaxialMeshRenders cache gears parts =
                     in
                     Just
                         { mesh = WebGL.triangles geom.triangles
+                        , surface = geom.triangles
                         , edges = edgeMesh geom.lines
                         , center = center
                         , rotationCenter = rotationCenter

@@ -1,5 +1,6 @@
 port module Ports exposing
-    ( captureRender
+    ( cancelSnapshot
+    , captureRender
     , copyToClipboard
     , downloadFile
     , fileContentReceived
@@ -15,6 +16,8 @@ port module Ports exposing
     , saveRequested
     , saveSnapshot
     , setUrlHash
+    , snapshotFailed
+    , snapshotProgress
     , snapshotReady
     , thumbnailLoaded
     , viewportResized
@@ -28,6 +31,8 @@ hash and viewport size. The studio adds its own ports next to them as it needs
 them.
 
 -}
+
+import Json.Encode
 
 
 {-| Send to JS to open the file picker dialog.
@@ -75,9 +80,25 @@ port setUrlHash : String -> Cmd msg
 port downloadFile : { filename : String, mime : String, text : String } -> Cmd msg
 
 
-{-| Request an offscreen high-resolution render capture as a PNG download.
+{-| Ask the offline path tracer for a 1920 × 1080 render. The value is the
+request built by `Viewport.snapshotRequest`: the camera and every visible triangle.
 -}
-port captureRender : { width : Int, height : Int, transparent : Bool, filename : String } -> Cmd msg
+port captureRender : Json.Encode.Value -> Cmd msg
+
+
+{-| The snapshot modal was closed while the render was running: stop the path tracer.
+-}
+port cancelSnapshot : () -> Cmd msg
+
+
+{-| Path tracer progress: the fraction done and the samples taken so far.
+-}
+port snapshotProgress : ({ fraction : Float, samples : Int } -> msg) -> Sub msg
+
+
+{-| The path tracer failed; the string is a message for the user.
+-}
+port snapshotFailed : (String -> msg) -> Sub msg
 
 
 {-| Receive when high-resolution render capture is ready for preview.

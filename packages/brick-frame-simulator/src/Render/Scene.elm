@@ -50,6 +50,10 @@ type alias Scene =
     , lineMesh : WebGL.Mesh EdgeVertex
     , conditionalMesh : WebGL.Mesh ConditionalVertex
     , bfcCertified : Bool
+
+    -- The same triangles as on the GPU, kept for the snapshot path tracer.
+    -- `WebGL.triangles` holds this list already, so it costs no extra memory.
+    , surface : List ( Vertex, Vertex, Vertex )
     }
 
 
@@ -77,6 +81,7 @@ buildScene geom bfc =
     , lineMesh = WebGL.triangles (List.concatMap lineToQuad geom.lines)
     , conditionalMesh = WebGL.triangles (List.concatMap conditionalToQuad geom.conditionalLines)
     , bfcCertified = bfc
+    , surface = geom.triangles
     }
 
 

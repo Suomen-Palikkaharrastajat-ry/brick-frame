@@ -273,7 +273,7 @@ ldraw-index: ## Build the studio's part index (parts-index.json) from the synced
 
 .PHONY: ldraw-index-test
 ldraw-index-test: ## Test the part index builder
-	node --test scripts/*.test.mjs
+	node --test scripts/*.test.mjs packages/brick-frame-viewport/runtime/pathtracer/*.test.mjs
 
 # The index runs last so it lists the generated replacement parts too.
 .PHONY: ldraw-missing

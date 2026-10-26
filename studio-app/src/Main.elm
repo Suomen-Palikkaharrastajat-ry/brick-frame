@@ -15,6 +15,7 @@ import Browser
 import Html exposing (Html, div)
 import LDraw.Resolve exposing (PartCache)
 import Ports
+import Simulation
 import Studio.Instructions as Instructions
 import Studio.Preview as Preview
 import Studio.Workspace as Workspace
@@ -43,6 +44,8 @@ type Msg
     | PreviewMsg Preview.Msg
     | InstructionsMsg Instructions.Msg
     | SnapshotReady { dataUrl : String, filename : String }
+    | SnapshotProgress { fraction : Float, samples : Int }
+    | SnapshotFailed String
     | SnapshotSave { dataUrl : String, filename : String }
     | SnapshotClose
 
@@ -61,10 +64,26 @@ init flags =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     if closesSnapshot msg model then
-        ( { model | snapshotModal = Nothing }, Cmd.none )
+        ( { model | snapshotModal = Nothing }, cancelSnapshotCmd model.snapshotModal )
 
     else
         updateApp msg model
+
+
+{-| Stop the path tracer when the snapshot modal closes while it is still rendering.
+-}
+cancelSnapshotCmd : Maybe SnapshotModal.Model -> Cmd msg
+cancelSnapshotCmd modal =
+    case modal of
+        Just rendering ->
+            if SnapshotModal.isRendering rendering then
+                Ports.cancelSnapshot ()
+
+            else
+                Cmd.none
+
+        Nothing ->
+            Cmd.none
 
 
 {-| Escape closes an open snapshot modal before anything else sees the key, so
@@ -105,11 +124,10 @@ updateApp msg model =
                 , snapshotModal = Just (SnapshotModal.init { filename = "palikkakehys-render.png" })
               }
             , Ports.captureRender
-                { width = 1920
-                , height = 1080
-                , transparent = False
-                , filename = "palikkakehys-render.png"
-                }
+                (Viewport.snapshotRequest
+                    { filename = "palikkakehys-render.png", extraTriangles = [] }
+                    workspace.viewport
+                )
             )
 
         ( WorkspaceMsg workspaceMsg, Nothing, Nothing ) ->
@@ -167,11 +185,12 @@ updateApp msg model =
                 , snapshotModal = Just (SnapshotModal.init { filename = "palikkakehys-render.png" })
               }
             , Ports.captureRender
-                { width = 1920
-                , height = 1080
-                , transparent = False
-                , filename = "palikkakehys-render.png"
-                }
+                (Viewport.snapshotRequest
+                    { filename = "palikkakehys-render.png"
+                    , extraTriangles = Simulation.snapshotTriangles next.simulation
+                    }
+                    next.viewport
+                )
             )
 
         ( PreviewMsg previewMsg, Just preview, _ ) ->
@@ -212,11 +231,10 @@ updateApp msg model =
                 , snapshotModal = Just (SnapshotModal.init { filename = "palikkakehys-render.png" })
               }
             , Ports.captureRender
-                { width = 1920
-                , height = 1080
-                , transparent = False
-                , filename = "palikkakehys-render.png"
-                }
+                (Viewport.snapshotRequest
+                    { filename = "palikkakehys-render.png", extraTriangles = [] }
+                    next.viewport
+                )
             )
 
         ( InstructionsMsg instructionsMsg, _, Just instructions ) ->
@@ -234,6 +252,16 @@ updateApp msg model =
             , Cmd.none
             )
 
+        ( SnapshotProgress progress, _, _ ) ->
+            ( { model | snapshotModal = Maybe.map (SnapshotModal.setProgress progress) model.snapshotModal }
+            , Cmd.none
+            )
+
+        ( SnapshotFailed message, _, _ ) ->
+            ( { model | snapshotModal = Maybe.map (SnapshotModal.setFailed message) model.snapshotModal }
+            , Cmd.none
+            )
+
         ( SnapshotSave payload, _, _ ) ->
             ( { model | snapshotModal = Maybe.map SnapshotModal.markSaved model.snapshotModal }
             , Ports.saveSnapshot payload
@@ -241,7 +269,7 @@ updateApp msg model =
 
         ( SnapshotClose, _, _ ) ->
             ( { model | snapshotModal = Nothing }
-            , Cmd.none
+            , cancelSnapshotCmd model.snapshotModal
             )
 
 
@@ -331,6 +359,8 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
         [ Ports.snapshotReady SnapshotReady
+        , Ports.snapshotProgress SnapshotProgress
+        , Ports.snapshotFailed SnapshotFailed
         , case ( model.preview, model.instructions ) of
             ( Just preview, _ ) ->
                 Sub.map PreviewMsg (Preview.subscriptions preview)

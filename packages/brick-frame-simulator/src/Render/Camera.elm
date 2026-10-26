@@ -7,6 +7,7 @@ module Render.Camera exposing
     , fovYDegrees
     , init
     , lookAround
+    , lookTarget
     , moveBy
     , nearPlane
     , onMouseDown
@@ -220,6 +221,13 @@ eyeOffset cam =
 position : Camera -> Vec3
 position cam =
     Vec3.add cam.target (eyeOffset cam)
+
+
+{-| The point the camera looks at. `position` is the eye, offset from this.
+-}
+lookTarget : Camera -> Vec3
+lookTarget cam =
+    cam.target
 
 
 {-| View matrix: world → camera space.

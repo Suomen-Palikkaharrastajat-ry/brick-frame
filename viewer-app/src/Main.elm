@@ -204,6 +204,8 @@ type Msg
     | ToggleRealistic
     | CaptureSnapshot
     | SnapshotReady { dataUrl : String, filename : String }
+    | SnapshotProgress { fraction : Float, samples : Int }
+    | SnapshotFailed String
     | SnapshotSave { dataUrl : String, filename : String }
     | SnapshotClose
     | GlobePressed ( Float, Float )
@@ -266,10 +268,26 @@ cameraChangedIfNeededCmd before after =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     if closesSnapshot msg model then
-        ( { model | snapshotModal = Nothing }, Cmd.none )
+        ( { model | snapshotModal = Nothing }, cancelSnapshotCmd model.snapshotModal )
 
     else
         updateApp msg model
+
+
+{-| Stop the path tracer when the snapshot modal closes while it is still rendering.
+-}
+cancelSnapshotCmd : Maybe SnapshotModal.Model -> Cmd msg
+cancelSnapshotCmd modal =
+    case modal of
+        Just rendering ->
+            if SnapshotModal.isRendering rendering then
+                Ports.cancelSnapshot ()
+
+            else
+                Cmd.none
+
+        Nothing ->
+            Cmd.none
 
 
 {-| Escape closes an open snapshot modal before anything else sees the key, so
@@ -375,15 +393,26 @@ updateInner msg model =
         CaptureSnapshot ->
             ( { model | snapshotModal = Just (SnapshotModal.init { filename = "palikkakehys-render.png" }) }
             , Ports.captureRender
-                { width = 1920
-                , height = 1080
-                , transparent = False
-                , filename = "palikkakehys-render.png"
-                }
+                (Viewport.snapshotRequest
+                    { filename = "palikkakehys-render.png"
+                    , extraTriangles = Simulation.snapshotTriangles model.simulation
+                    }
+                    model.viewport
+                )
             )
 
         SnapshotReady payload ->
             ( { model | snapshotModal = Maybe.map (SnapshotModal.setReady payload) model.snapshotModal }
+            , Cmd.none
+            )
+
+        SnapshotProgress progress ->
+            ( { model | snapshotModal = Maybe.map (SnapshotModal.setProgress progress) model.snapshotModal }
+            , Cmd.none
+            )
+
+        SnapshotFailed message ->
+            ( { model | snapshotModal = Maybe.map (SnapshotModal.setFailed message) model.snapshotModal }
             , Cmd.none
             )
 
@@ -394,7 +423,7 @@ updateInner msg model =
 
         SnapshotClose ->
             ( { model | snapshotModal = Nothing }
-            , Cmd.none
+            , cancelSnapshotCmd model.snapshotModal
             )
 
         GlobePressed point ->
@@ -658,6 +687,8 @@ subscriptions model =
         , Ports.geometryFlattened (ViewportMsg << Viewport.GeometryFlattened)
         , Ports.geometryFlattenFailed (ViewportMsg << Viewport.GeometryFlattenFailed)
         , Ports.snapshotReady SnapshotReady
+        , Ports.snapshotProgress SnapshotProgress
+        , Ports.snapshotFailed SnapshotFailed
         ]
 
 
