@@ -592,6 +592,20 @@ chrome or metal `2`, rubber `3`, pearl `4`, transparent `1`, and plastic `0`
 (small files loaded without a document) carry only RGBA, so their material
 comes from the alpha alone.
 
+The studio environment (`runtime/pathtracer/scene.js`) is mostly flat, so
+metal needs structure to reflect. Besides the key and fill cones, it has two
+rectangular softboxes: a soft overhead box front-left, and a narrow tall strip
+behind the model. They are lights like the cones (next-event estimation plus
+MIS in `trace.js`), with radiance set so each adds about as much light as the
+fill. Bounced rays also see a darker band at the horizon (`environmentRadiance`).
+A primary ray reads only the plain sky gradient (`skyRadiance`), so the visible
+backdrop is clean, and the softboxes show only as reflections and as soft pools
+on the ground. Chrome shows a bright band on its top faces, and the front faces
+mostly reflect the ground. Plastic keeps a matte base with a faint clear-coat
+sheen, and rubber stays dull. `lights.test.mjs` checks the softbox sampling, the
+clean backdrop, and that chrome aimed at a softbox is far brighter than chrome
+aimed at the horizon band.
+
 ## Limitations
 
 - **Edge line width is always 1 px.** WebGL 1.0 does not support `lineWidth > 1`

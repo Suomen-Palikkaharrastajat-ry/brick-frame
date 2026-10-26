@@ -1,9 +1,11 @@
 /**
  * Path integrator. Per pixel sample it generates a jittered camera ray, then
  * follows up to MAX_BOUNCES bounces:
- * - next-event estimation on the key and fill lights (cone-sampled, shadow
- *   rays through the BVH), combined with BSDF sampling by the power
- *   heuristic (MIS). Escaping rays that hit a light cone add the other half.
+ * - next-event estimation on the studio lights (key and fill cones, and the
+ *   rectangular softboxes; shadow rays through the BVH), combined with BSDF
+ *   sampling by the power heuristic (MIS). Escaping rays that hit a light add
+ *   the other half. Lights are invisible to primary rays: the backdrop is the
+ *   plain sky, and only bounced rays see the softboxes and the horizon band.
  * - transparent plastic is a delta dielectric. Beer–Lambert tint uses the
  *   distance travelled inside (ray-tracked medium, refracted by IOR 1.49).
  * - Russian roulette from bounce RR_START; a firefly clamp on indirect
@@ -29,7 +31,7 @@ import {
   sampleDielectric,
   setFrame,
 } from './materials.js'
-import { skyRadiance } from './scene.js'
+import { environmentRadiance, lightPdf, sampleLight, skyRadiance } from './scene.js'
 
 export const MAX_BOUNCES = 6
 const RR_START = 3
@@ -97,19 +99,11 @@ export function primaryRay(scene, px, py, jx, jy, out) {
   return out
 }
 
-/** Random direction inside a light's cone, written into `out`. */
-function sampleCone(light, rng, out) {
+/** Random direction toward `light`, written into `out`. Returns its density per steradian. */
+function sampleLightDir(light, rng, out) {
   const u1 = rng.next()
   const u2 = rng.next()
-  const cosT = 1 - u1 * (1 - light.cosMax)
-  const sinT = Math.sqrt(Math.max(0, 1 - cosT * cosT))
-  const phi = 2 * Math.PI * u2
-  const cx = sinT * Math.cos(phi)
-  const cy = sinT * Math.sin(phi)
-  for (let i = 0; i < 3; i++) {
-    out[i] = light.t[i] * cx + light.b[i] * cy + light.dir[i] * cosT
-  }
-  return out
+  return sampleLight(light, u1, u2, out)
 }
 
 function setShadowRay(origin, dir) {
@@ -153,10 +147,11 @@ function groundLitFraction(scene, rng, p) {
   let den = 0
   const origin = [p[0], p[1] + SURFACE_EPS, p[2]]
   for (const light of scene.lights) {
-    sampleCone(light, rng, lightDir)
+    const pl = sampleLightDir(light, rng, lightDir)
     const cosL = lightDir[1]
     if (cosL <= 0) continue
-    const e = light.irradiance * cosL
+    // Estimate of the light's irradiance from one sample: L·cos / pdf, with L = E / solid angle.
+    const e = ((light.irradiance / light.solidAngle) * cosL) / pl
     den += e
     if (!occluded(scene.bvh, setShadowRay(origin, lightDir))) num += e
   }
@@ -207,15 +202,16 @@ export function tracePath(scene, rng, primary, out) {
         out[0] = out[1] = out[2] = out[3] = 0
         return out
       }
-      skyRadiance(ray.dy, skyRad)
+      // Primary rays see the plain backdrop; bounced rays see the reflection environment.
+      if (indirect) environmentRadiance(ray.dy, skyRad)
+      else skyRadiance(ray.dy, skyRad)
       addClamped(out, beta[0] * skyRad[0], beta[1] * skyRad[1], beta[2] * skyRad[2], indirect)
       if (indirect) {
-        // Sun-cone hits found by BSDF sampling: MIS against the cone NEE.
+        // Light hits found by BSDF sampling: MIS against the light's NEE.
         for (const light of scene.lights) {
-          const cosTo = ray.dx * light.dir[0] + ray.dy * light.dir[1] + ray.dz * light.dir[2]
-          if (cosTo < light.cosMax) continue
-          const pl = 1 / light.solidAngle
-          // BSDF-side MIS weight: the cone NEE already holds the complementary share.
+          const pl = lightPdf(light, ray.dx, ray.dy, ray.dz)
+          if (!(pl > 0)) continue
+          // BSDF-side MIS weight: the light's NEE already holds the complementary share.
           const w = specular ? 1 : (lastPdf * lastPdf) / (pl * pl + lastPdf * lastPdf)
           const le = (light.irradiance / light.solidAngle) * w
           addClamped(out, beta[0] * le, beta[1] * le, beta[2] * le, true)
@@ -318,15 +314,15 @@ export function tracePath(scene, rng, primary, out) {
     wo[1] = -ray.dy
     wo[2] = -ray.dz
     for (const light of scene.lights) {
-      sampleCone(light, rng, lightDir)
+      const pl = sampleLightDir(light, rng, lightDir)
       const cosL = frame.n[0] * lightDir[0] + frame.n[1] * lightDir[1] + frame.n[2] * lightDir[2]
       if (cosL <= 0) continue
       if (occluded(bvh, setShadowRay(offsetAlong(pos, surfNormal), lightDir))) continue
       evalSurface(mat, alb, frame, wo, lightDir, evalOut)
       if (!(evalOut.pdf > 0)) continue
-      const pl = 1 / light.solidAngle
       const w = (pl * pl) / (pl * pl + evalOut.pdf * evalOut.pdf)
-      const k = light.irradiance * cosL * w
+      // f · L · cos · w / pdf, with L = E / solid angle.
+      const k = ((light.irradiance / light.solidAngle) * cosL * w) / pl
       addClamped(out, beta[0] * evalOut.f[0] * k, beta[1] * evalOut.f[1] * k, beta[2] * evalOut.f[2] * k, indirect)
     }
 

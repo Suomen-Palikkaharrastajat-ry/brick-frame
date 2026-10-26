@@ -11,6 +11,16 @@
  * - Sky: a dim vertical gradient from a grey horizon to a slightly bluer
  *   zenith. Its cosine-weighted mean radiance (about 0.33) gives the sky
  *   irradiance π·0.33 used by the ground and the shadow catcher.
+ * - Softboxes: two rectangular emitters, a soft overhead box front-left and a
+ *   narrow tall strip behind. They are lights like the cones (next-event
+ *   estimation plus MIS), so they add a little diffuse light and pool on the
+ *   ground. Their radiance is high but they subtend little solid angle, so
+ *   their irradiance stays near the fill's. Metal reflects them as bright
+ *   bands and highlights.
+ * - Reflection environment: the sky, with a darker band at the horizon. Only
+ *   bounced rays see it. A primary ray reads the plain sky gradient through
+ *   `skyRadiance`, so the visible backdrop is clean and lights are never
+ *   visible to the camera directly.
  * Ground: a Lambert plane of linear albedo ~0.6 (a slightly warm light grey),
  * placed at min-Y − 0.01 so the model sits on it.
  */
@@ -35,6 +45,19 @@ const KEY_TO_SKY_RATIO = 3.5
 const KEY_IRRADIANCE = KEY_TO_SKY_RATIO * SKY_IRRADIANCE
 /** Modest fill, about 0.4 times the sky irradiance. */
 const FILL_IRRADIANCE = 0.45
+/** Dark band at the horizon in the reflection environment: depth (0..1) and width in sin(elevation). */
+const BAND_DEPTH = 0.9
+const BAND_WIDTH = 0.3
+/**
+ * Softboxes, placed in camera terms: `h` toward the camera (horizontal), `r`
+ * right, `u` up. `hint` is the axis of the long edge ('right' or 'up'), and
+ * `ha`, `hb` are the half-sizes in tangent units at unit distance. Radiance is
+ * `irradiance` over the solid angle, so a small, bright box adds little light.
+ */
+const SOFTBOXES = [
+  { h: 0.9, r: -0.5, u: 1, hint: 'right', ha: 0.5, hb: 0.3, irradiance: 0.35 },
+  { h: -1, r: 0, u: 0.36, hint: 'up', ha: 0.4, hb: 0.08, irradiance: 0.25 },
+]
 /** Linear albedo of the studio ground: a slightly warm light grey. */
 export const GROUND_ALBEDO = [0.6, 0.58, 0.55]
 /** The ground sits this far (LDU) below the model's lowest point. */
@@ -102,7 +125,81 @@ function makeLight(dir, coneDeg, irradiance) {
   const b = cross3(d, t)
   const cosMax = Math.cos((coneDeg * Math.PI) / 180)
   const solidAngle = 2 * Math.PI * (1 - cosMax)
-  return { dir: d, t, b, cosMax, solidAngle, irradiance }
+  return { kind: 'cone', dir: d, t, b, cosMax, solidAngle, irradiance }
+}
+
+/** Solid angle of a rectangle with half-sizes ha, hb seen from unit distance at its centre. */
+function rectSolidAngle(ha, hb) {
+  return 4 * Math.asin((ha * hb) / Math.sqrt((1 + ha * ha) * (1 + hb * hb)))
+}
+
+/**
+ * A rectangular softbox facing `dir`, its long axis along `hint`. Points on
+ * it are `dir + x·t + y·b` (at unit distance) with |x| ≤ ha and |y| ≤ hb.
+ */
+function makeRect(dir, hint, ha, hb, irradiance) {
+  const c = normalize3(dir)
+  const along = dot3(hint, c)
+  const t = normalize3([hint[0] - along * c[0], hint[1] - along * c[1], hint[2] - along * c[2]])
+  const b = cross3(c, t)
+  return {
+    kind: 'rect',
+    dir: c,
+    t,
+    b,
+    ha,
+    hb,
+    area: 4 * ha * hb,
+    solidAngle: rectSolidAngle(ha, hb),
+    irradiance,
+  }
+}
+
+/**
+ * Samples a direction toward `light` from uniform numbers (u1, u2). Writes
+ * the unit direction to `out` and returns its density per steradian.
+ * Rectangles sample the plane at unit distance uniformly, so the density
+ * is |p|³ / area with |p| = √(1 + x² + y²).
+ */
+export function sampleLight(light, u1, u2, out) {
+  if (light.kind === 'rect') {
+    const x = (2 * u1 - 1) * light.ha
+    const y = (2 * u2 - 1) * light.hb
+    const len = Math.sqrt(1 + x * x + y * y)
+    for (let i = 0; i < 3; i++) {
+      out[i] = (light.dir[i] + light.t[i] * x + light.b[i] * y) / len
+    }
+    return (len * len * len) / light.area
+  }
+  const cosT = 1 - u1 * (1 - light.cosMax)
+  const sinT = Math.sqrt(Math.max(0, 1 - cosT * cosT))
+  const phi = 2 * Math.PI * u2
+  const cx = sinT * Math.cos(phi)
+  const cy = sinT * Math.sin(phi)
+  for (let i = 0; i < 3; i++) {
+    out[i] = light.t[i] * cx + light.b[i] * cy + light.dir[i] * cosT
+  }
+  return 1 / light.solidAngle
+}
+
+/**
+ * Density per steradian with which `sampleLight` picks the unit direction
+ * (x, y, z), or 0 when that direction is outside the light.
+ */
+export function lightPdf(light, x, y, z) {
+  const d = light.dir
+  const dc = x * d[0] + y * d[1] + z * d[2]
+  if (light.kind === 'rect') {
+    if (!(dc > 0)) return 0
+    const t = light.t
+    const b = light.b
+    const u = (x * t[0] + y * t[1] + z * t[2]) / dc
+    const v = (x * b[0] + y * b[1] + z * b[2]) / dc
+    if (Math.abs(u) > light.ha || Math.abs(v) > light.hb) return 0
+    const len = Math.sqrt(1 + u * u + v * v)
+    return (len * len * len) / light.area
+  }
+  return dc >= light.cosMax ? 1 / light.solidAngle : 0
 }
 
 /**
@@ -128,7 +225,11 @@ export function studioLights(camera) {
     FILL_CONE_DEG,
     FILL_IRRADIANCE,
   )
-  return [key, fill]
+  const softboxes = SOFTBOXES.map((s) => {
+    const dir = [0, 1, 2].map((i) => s.h * toCamH[i] + s.r * right[i] + s.u * up[i])
+    return makeRect(dir, s.hint === 'up' ? up : right, s.ha, s.hb, s.irradiance)
+  })
+  return [key, fill, ...softboxes]
 }
 
 /**
@@ -142,6 +243,37 @@ export function skyRadiance(dirY, out) {
   }
   return out
 }
+
+/**
+ * Radiance that rays which have already bounced see for direction height
+ * `dirY`: the sky gradient with a darker band at the horizon. Primary rays
+ * never use it, so the visible backdrop stays `skyRadiance`.
+ */
+export function environmentRadiance(dirY, out) {
+  skyRadiance(dirY, out)
+  const k = 1 - BAND_DEPTH * Math.exp(-((dirY / BAND_WIDTH) ** 2))
+  out[0] *= k
+  out[1] *= k
+  out[2] *= k
+  return out
+}
+
+/** Scalar irradiance of the reflection environment on an upward surface (midpoint rule over elevation). */
+function environmentIrradiance() {
+  const steps = 512
+  const rgb = [0, 0, 0]
+  let sum = 0
+  for (let i = 0; i < steps; i++) {
+    const theta = ((i + 0.5) / steps) * (Math.PI / 2)
+    const cosT = Math.cos(theta)
+    environmentRadiance(cosT, rgb)
+    sum += ((rgb[0] + rgb[1] + rgb[2]) / 3) * cosT * Math.sin(theta)
+  }
+  return 2 * Math.PI * sum * ((Math.PI / 2) / steps)
+}
+
+/** Irradiance of the reflection environment, used by the shadow catcher's sky sample. */
+export const ENV_IRRADIANCE = environmentIrradiance()
 
 /**
  * Turns a contract request into everything the integrator reads. Throws if
@@ -184,7 +316,7 @@ export function prepareScene(request) {
     albedo,
     material,
     groundY: minY - GROUND_OFFSET,
-    skyIrradiance: SKY_IRRADIANCE,
+    skyIrradiance: ENV_IRRADIANCE,
     groundAlbedo: GROUND_ALBEDO,
   }
 }

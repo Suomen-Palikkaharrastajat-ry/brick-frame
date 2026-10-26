@@ -159,6 +159,29 @@ test('an opaque render paints the sky in the top rows', () => {
   assert.ok(out[0] > 0.2 && out[2] > 0.2, `sky should be visible, got ${out}`)
 })
 
+/**
+ * Irradiance a light gives an upward-facing surface. Cones are taken at their
+ * axis; a rectangle is integrated over its solid angle on a midpoint grid
+ * (dω = dx·dy / |p|³ on the plane at unit distance).
+ */
+function upIrradiance(light) {
+  if (light.kind !== 'rect') return light.irradiance * Math.max(0, light.dir[1])
+  const n = 200
+  const dx = (2 * light.ha) / n
+  const dy = (2 * light.hb) / n
+  let sum = 0
+  for (let i = 0; i < n; i++) {
+    const x = -light.ha + (i + 0.5) * dx
+    for (let j = 0; j < n; j++) {
+      const y = -light.hb + (j + 0.5) * dy
+      const len = Math.sqrt(1 + x * x + y * y)
+      const cosUp = (light.dir[1] + light.t[1] * x + light.b[1] * y) / len
+      if (cosUp > 0) sum += (cosUp / (len * len * len)) * dx * dy
+    }
+  }
+  return (light.irradiance / light.solidAngle) * sum
+}
+
 test('direct and sky light on the ground match the analytic Lambert estimate (MIS is unbiased)', () => {
   // A distant dummy triangle makes the scene ground-only.
   const scene = prepareScene({
@@ -179,7 +202,7 @@ test('direct and sky light on the ground match the analytic Lambert estimate (MI
     sum += (out[0] + out[1] + out[2]) / 3
   }
   // Lambert: albedo/pi · E·cos per light, plus albedo times the mean sky radiance (sky irradiance / pi).
-  const direct = scene.lights.reduce((acc, l) => acc + (l.irradiance * Math.max(0, l.dir[1])) / Math.PI, 0)
+  const direct = scene.lights.reduce((acc, l) => acc + upIrradiance(l) / Math.PI, 0)
   const albedoMean = (GROUND_ALBEDO[0] + GROUND_ALBEDO[1] + GROUND_ALBEDO[2]) / 3
   const expected = albedoMean * (direct + scene.skyIrradiance / Math.PI)
   const measured = sum / n
