@@ -30,11 +30,12 @@ zoom slider and reset button. On a narrow portrait window (a phone) the bottom
 area shows either the dock or the camera globe, switched by a toggle button, and
 the dock is shown first.
 
-The dock lists either the counted kit (a `parts=` kit from the URL, or the
-default 10 yellow bricks) or, in Technic mode without a kit from the URL, the
-curated Technic catalog with its category tabs, unlimited. Each card is a
-rendered picture of the part (`UI.PartCard.compactView`, fed by the shared
-thumbnail pipeline through `Ports`).
+The dock lists either the curated Technic catalog with its category tabs, in
+Technic mode, or else the counted kit (a `parts=` kit from the URL, or the
+default 10 yellow bricks). In Technic mode everything is unlimited: a URL kit
+adds a Project tab in front of the catalog tabs, listing the kit's parts, and
+that tab is selected first. Each card is a rendered picture of the part
+(`UI.PartCard.compactView`, fed by the shared thumbnail pipeline through `Ports`).
 
 Technic mode is derived, not set: it is on when the document holds a gear that
 `Contraption.Machine` recognises, or when the URL kit lists a gear. In Technic
@@ -263,7 +264,12 @@ init flags =
                     , requestedMotorIndex = Nothing
                     }
             , animated = Animation.none
-            , activeCategory = GearsCategory
+            , activeCategory =
+                if kitFromUrl then
+                    ProjectCategory
+
+                else
+                    GearsCategory
             , helpOpen = False
             , menuOpen = False
             , windowWidth = 1280
@@ -291,9 +297,8 @@ init flags =
 
 
 {-| Technic mode, derived from the model: on when the document holds a gear that
-`Contraption.Machine` recognises, or when the URL kit lists a gear part. The
-catalog's gears are not counted here, because the catalog is only offered in
-Technic mode (see `catalogDock`).
+`Contraption.Machine` recognises, or when the URL kit lists a gear part. Technic
+mode is also what offers the catalog dock (see `catalogDock`).
 -}
 technicMode : Model -> Bool
 technicMode model =
@@ -306,19 +311,31 @@ isGearFile file =
     List.any (\spec -> spec.partFile == file) Data.gearParts
 
 
-{-| The dock lists the Technic catalog, with its category tabs, when Technic mode
-is on and the URL gave no kit of its own. Otherwise it lists the counted kit.
+{-| The dock lists the Technic catalog, with its category tabs, exactly when
+Technic mode is on (unlimited). Otherwise it lists the counted kit.
 -}
 catalogDock : Model -> Bool
 catalogDock model =
-    technicMode model && not model.kitFromUrl
+    technicMode model
 
 
-{-| The catalog parts of the visible category, in catalog order.
+{-| The URL kit as catalog parts, for the Project tab: empty without a URL kit.
+-}
+projectParts : Model -> List PartItem
+projectParts model =
+    if model.kitFromUrl then
+        List.map Catalog.fromKitItem model.inventory
+
+    else
+        []
+
+
+{-| The catalog parts of the visible category, in tab order: the project parts
+for the Project tab, else the curated parts of the category.
 -}
 catalogItems : Model -> List PartItem
 catalogItems model =
-    Catalog.partsForCategory model.activeCategory
+    Catalog.partsForCategoryWithProject (projectParts model) model.activeCategory
 
 
 {-| The (file, colour) pairs the dock shows: the catalog parts of the visible
@@ -374,6 +391,20 @@ thumbnailRequests items thumbnails =
     List.foldl addRequest ( [], [] ) items
         |> Tuple.second
         |> List.reverse
+
+
+{-| The readable name of a dock catalog part: a project part is named as a placed
+part is (its title from the pipeline, else its part number), a curated part by
+its catalogue name.
+-}
+dockName : Model -> PartItem -> String
+dockName model item =
+    case item.category of
+        ProjectCategory ->
+            placedName model item.file item.color
+
+        _ ->
+            item.name
 
 
 {-| The readable name of a kit item: the part's .dat title once the pipeline has
@@ -470,8 +501,10 @@ shareHash model =
         modelStr =
             Writer.writeDocument doc
 
+        -- Technic mode without a URL kit shares the model alone: its catalog
+        -- is not part of a link. A URL kit is kept, unlimited, as its Project tab.
         partsStr =
-            if catalogDock model then
+            if technicMode model && not model.kitFromUrl then
                 ""
 
             else
@@ -718,7 +751,7 @@ step msg model =
                 placePart item.part item.color (kitItemName model item) model
 
         AddCatalogPart item ->
-            placePart item.file item.color item.name model
+            placePart item.file item.color (dockName model item) model
 
         SetCategory category ->
             ( { model | activeCategory = category }, Cmd.none )
@@ -1832,8 +1865,8 @@ actionButton msg icon label shortcut =
         ]
 
 
-{-| The dock: the Technic catalog with its tabs in Technic mode without a kit
-from the URL, else the counted kit.
+{-| The dock: the Technic catalog with its tabs in Technic mode, else the
+counted kit.
 -}
 viewDock : Model -> Html Msg
 viewDock model =
@@ -1941,14 +1974,23 @@ catalogDockView model =
             , Attr.style "overflow-x" "auto"
             , Attr.style "padding" "0.125rem"
             ]
-            (List.map (catalogCard model.thumbnails) (catalogItems model))
+            (List.map (catalogCard model) (catalogItems model))
         ]
 
 
-{-| The category tabs: a narrow column on the left of the catalog dock.
+{-| The category tabs: a narrow column on the left of the catalog dock. The
+Project tab comes first, and only when the URL gave a kit.
 -}
 categoryTabs : Model -> Html Msg
 categoryTabs model =
+    let
+        categories =
+            if model.kitFromUrl then
+                [ ProjectCategory, GearsCategory, BeamsCategory, AxlesCategory, PinsCategory ]
+
+            else
+                [ GearsCategory, BeamsCategory, AxlesCategory, PinsCategory ]
+    in
     div
         [ Attr.attribute "role" "tablist"
         , Attr.attribute "aria-orientation" "vertical"
@@ -1960,7 +2002,7 @@ categoryTabs model =
         , Attr.style "width" "4.5rem"
         , Attr.style "min-height" "0"
         ]
-        (List.map (categoryTab model.activeCategory) [ GearsCategory, BeamsCategory, AxlesCategory, PinsCategory ])
+        (List.map (categoryTab model.activeCategory) categories)
 
 
 categoryTab : Category -> Category -> Html Msg
@@ -1971,6 +2013,9 @@ categoryTab active cat =
 
         label =
             case cat of
+                ProjectCategory ->
+                    "Project"
+
                 PinsCategory ->
                     "Pins"
 
@@ -2021,12 +2066,16 @@ categoryTab active cat =
 {-| One catalog part as a compact picture card. Its name, part number and
 description are in the tooltip and the accessible name.
 -}
-catalogCard : Dict String Thumbnail -> PartItem -> Html Msg
-catalogCard thumbnails item =
+catalogCard : Model -> PartItem -> Html Msg
+catalogCard model item =
+    let
+        name =
+            dockName model item
+    in
     PartCard.compactView
-        { imageUrl = Maybe.map .url (Dict.get (PartCard.thumbnailKey item.file item.color) thumbnails)
-        , tooltip = item.name ++ " (" ++ item.file ++ ")" ++ descriptionSuffix item.description
-        , ariaLabel = "Add " ++ item.name ++ " (" ++ partNumber item.file ++ ")"
+        { imageUrl = Maybe.map .url (Dict.get (PartCard.thumbnailKey item.file item.color) model.thumbnails)
+        , tooltip = name ++ " (" ++ item.file ++ ")" ++ descriptionSuffix item.description
+        , ariaLabel = "Add " ++ name ++ " (" ++ partNumber item.file ++ ")"
         , badge = Nothing
         , onClick = Just (AddCatalogPart item)
         , attributes = [ keepFocusOnCanvas ]

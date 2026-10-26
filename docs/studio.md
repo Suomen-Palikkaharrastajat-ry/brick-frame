@@ -415,7 +415,7 @@ The **Export** menu in the header provides both file downloads and instant cross
 1. **File exports**: Download the active document as an LDraw model (`.ldr`), multi-part archive (`.mpd`), WebGL/glTF 3D scene (`.gltf`), AR model (`.usdz` for iOS Quick Look), or take a 1080p picture (`.png`) of the current view.
 2. **Send to App**: Transfer the project directly into companion Palikkakehys applications without server roundtrips:
    - **Brick Play**: Exports the document as a limited building kit inventory. Placements are grouped by part file and colour into a piece kit (`Studio.UrlPayload.extractKit`). In Brick Play, users build freely within the constraints of this kit, spawning bricks from inventory cards in the bottom dock until the available counts are exhausted.
-   - **Brick Play with model**: Exports the complete assembled model alongside its part kit. The model loads directly onto the canvas, where Technic mode (mechanism simulation, motor control, and accomplishment evaluation) switches on by itself, and the kit is counted in the dock.
+   - **Brick Play with model**: Exports the complete assembled model alongside its part kit. The model loads directly onto the canvas, where Technic mode (mechanism simulation, motor control, and accomplishment evaluation) switches on by itself, and the kit is counted in the dock outside Technic mode; in Technic mode it is a Project tab of the unlimited catalog.
 
 Each companion app entry opens the target app in a new browser tab and includes a **Copy Link** button that copies the shareable URL to the clipboard, displaying an ephemeral toast confirmation.
 

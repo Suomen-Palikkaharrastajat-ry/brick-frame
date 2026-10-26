@@ -18,7 +18,7 @@ import Gear.Placements as Placements
 import Html.Attributes as Attr
 import LDraw.Document as Document
 import LDraw.Resolve exposing (PartStatus(..))
-import Main exposing (Flags, Model, Msg(..), accomplishmentBanner, init, remainingForItem, shareHash, technicMode, thumbnailRequests, update, view, viewToast)
+import Main exposing (Flags, Model, Msg(..), accomplishmentBanner, init, shareHash, technicMode, thumbnailRequests, update, view, viewToast)
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (vec3)
 import Render.Camera as Camera
@@ -659,10 +659,19 @@ suite =
 dockThumbnailTests : Test
 dockThumbnailTests =
     let
-        -- What the dock lists: the catalog of its tab in Technic mode, else the kit.
+        -- What the dock lists: the catalog of its tab in Technic mode (the URL
+        -- kit as the Project tab), else the kit.
         dockPairs model =
-            if technicMode model && not model.kitFromUrl then
-                List.map (\item -> ( item.file, item.color )) (Catalog.partsForCategory model.activeCategory)
+            if technicMode model then
+                let
+                    projectParts =
+                        if model.kitFromUrl then
+                            List.map Catalog.fromKitItem model.inventory
+
+                        else
+                            []
+                in
+                List.map (\item -> ( item.file, item.color )) (Catalog.partsForCategoryWithProject projectParts model.activeCategory)
 
             else
                 List.map (\item -> ( item.part, item.color )) model.inventory
@@ -1589,31 +1598,36 @@ technicTests =
                     , \_ -> Query.fromHtml (view withGears) |> Query.has [ Selector.attribute (Attr.attribute "aria-label" "Parts") ]
                     ]
                     ()
-        , test "a URL kit is the counted dock, with no tabs, even with gears" <|
+        , test "a URL kit adds a Project tab first, selected, before the catalog tabs" <|
             \_ ->
                 let
                     kit =
                         Tuple.first (init { testFlags | initialHash = "#parts=3648.dat:7:1,6590.dat:7:2" })
                 in
                 Expect.all
-                    [ \_ -> tabs kit |> Query.count (Expect.equal 0)
-                    , \_ -> Query.fromHtml (view kit) |> Query.has [ Selector.attribute (Attr.attribute "aria-label" "Kit") ]
+                    [ \_ -> tabs kit |> Query.count (Expect.equal 5)
+                    , \_ -> tabs kit |> Query.first |> Query.has [ Selector.text "Project", Selector.attribute (Attr.attribute "aria-selected" "true") ]
+                    , \_ -> Query.fromHtml (view kit) |> Query.has [ Selector.attribute (Attr.attribute "aria-label" "Parts") ]
+                    , \_ -> Query.fromHtml (view kit) |> Query.hasNot [ Selector.attribute (Attr.attribute "aria-label" "Kit") ]
                     ]
                     ()
-        , test "a Technic kit part stops at the count the URL kit gives" <|
+        , test "a Technic kit part is unlimited: the Project tab adds it past its count" <|
             \_ ->
                 let
                     item =
-                        { part = "3649.dat", color = 7, count = 2 }
+                        Catalog.fromKitItem { part = "3649.dat", color = 7, count = 2 }
 
                     model =
                         Tuple.first (init { testFlags | initialHash = "#parts=3649.dat:7:2" })
-                            |> add item
-                            |> add item
-                            |> add item
+                            |> update (AddCatalogPart item)
+                            |> Tuple.first
+                            |> update (AddCatalogPart item)
+                            |> Tuple.first
+                            |> update (AddCatalogPart item)
+                            |> Tuple.first
                 in
-                Expect.equal [ 2, 0 ] [ List.length (Core.getPlacements model.studio), remainingForItem model item ]
-        , test "a Technic link keeps its kit; a catalog dock shares the model alone" <|
+                Expect.equal 3 (List.length (Core.getPlacements model.studio))
+        , test "a Technic link keeps its kit as parts=; a catalog dock shares the model alone" <|
             \_ ->
                 let
                     kitLink =
@@ -1621,7 +1635,7 @@ technicTests =
                 in
                 Expect.all
                     [ \_ -> Expect.equal False (String.contains "parts=" (shareHash withGears))
-                    , \_ -> Expect.equal True (String.contains "parts=" (shareHash kitLink))
+                    , \_ -> Expect.equal True (String.contains "parts=3648.dat%3A7%3A1" (shareHash kitLink))
                     ]
                     ()
         , test "a gear added from the catalog turns the alignment on and goes on the axle line" <|
@@ -1650,6 +1664,23 @@ technicTests =
                     )
                     [ twinGearboxHash, speedReducerHash, gearTrainHash ]
                     |> Expect.equal [ ( True, True, 1 ), ( True, True, 1 ), ( True, True, 2 ) ]
+        , test "the Twin 24T and 3-Gear Train examples list their 24T in the Project tab, and it adds a second 24T" <|
+            \_ ->
+                let
+                    kit24 =
+                        Catalog.fromKitItem { part = "3648.dat", color = 7, count = 1 }
+
+                    count24 model =
+                        List.length (List.filter (\p -> p.part == "3648.dat") (Core.getPlacements model.studio))
+
+                    starts =
+                        List.map (\hash -> Tuple.first (init { testFlags | initialHash = hash })) [ twinGearboxHash, gearTrainHash ]
+                in
+                Expect.all
+                    [ \_ -> Expect.all (List.map (\m _ -> Query.fromHtml (view m) |> Query.has [ Selector.attribute (Attr.attribute "aria-label" "Add 24T Gear (3648)") ]) starts) ()
+                    , \_ -> List.map (\m -> count24 (Tuple.first (update (AddCatalogPart kit24) m))) starts |> Expect.equal [ 2, 2 ]
+                    ]
+                    ()
         , test "the Contraptions 3-gear train example is accomplished as it loads" <|
             \_ ->
                 Tuple.first (init { testFlags | initialHash = gearTrainHash })

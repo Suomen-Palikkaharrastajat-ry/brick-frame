@@ -3,12 +3,18 @@ module Contraption.Catalog exposing
     , PartItem
     , categoryLabel
     , curatedParts
+    , fromKitItem
     , partsForCategory
+    , partsForCategoryWithProject
     )
 
 {-| Curated catalog of Technic parts, offered in Technic mode (see `Main`): its
-gears, beams, axles and pins, in tabs by category. Every entry is unlimited.
+gears, beams, axles and pins, in tabs by category. Every entry is unlimited. A
+URL kit adds a `ProjectCategory` tab in front of them, listing the kit's parts
+(`fromKitItem`), also unlimited.
 -}
+
+import Studio.UrlPayload exposing (PartKitItem)
 
 
 {-| Curated part item definition.
@@ -25,7 +31,8 @@ type alias PartItem =
 {-| Technic part category tabs.
 -}
 type Category
-    = GearsCategory
+    = ProjectCategory
+    | GearsCategory
     | BeamsCategory
     | AxlesCategory
     | PinsCategory
@@ -36,6 +43,9 @@ type Category
 categoryLabel : Category -> String
 categoryLabel category =
     case category of
+        ProjectCategory ->
+            "Project Parts"
+
         GearsCategory ->
             "Gears"
 
@@ -141,8 +151,34 @@ curatedParts =
     ]
 
 
-{-| Filter curated parts by category.
+{-| Filter curated parts by category. The project category has no curated parts.
 -}
 partsForCategory : Category -> List PartItem
 partsForCategory category =
     List.filter (\p -> p.category == category) curatedParts
+
+
+{-| A kit item as a catalog part in `ProjectCategory`. The kit's count is not
+carried: a project part is unlimited.
+-}
+fromKitItem : PartKitItem -> PartItem
+fromKitItem item =
+    { name = String.replace ".dat" "" item.part
+    , file = item.part
+    , color = item.color
+    , category = ProjectCategory
+    , description = "Project kit part"
+    }
+
+
+{-| The parts a dock tab lists: the project parts for `ProjectCategory`, else the
+curated parts of the category.
+-}
+partsForCategoryWithProject : List PartItem -> Category -> List PartItem
+partsForCategoryWithProject projectParts category =
+    case category of
+        ProjectCategory ->
+            projectParts
+
+        _ ->
+            partsForCategory category

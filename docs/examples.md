@@ -111,8 +111,6 @@ Twin stone piers set 80 LDU apart (clear span between $X = -30$ and $X = 30$). T
 
 ## Brick Play Technic Examples
 
-> **Kit counts.** A kit line counts every piece of that part, including the ones the starter model already places. The Twin 24T Gearbox and the 3-Gear Train each list one 24T gear while their starter models already place one, so the builder cannot add a second 24T until its count is raised to 2. The links keep their original hashes.
-
 Production Base URL: `https://kehys.palikkaharrastajat.fi/play`  
 Local Dev URL: `http://localhost:8181/`
 
