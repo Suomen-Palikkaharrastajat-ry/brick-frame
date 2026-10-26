@@ -88,9 +88,8 @@ jobs:
             viewer-app/elm-stuff
             studio-app/elm-stuff
             brick-play/elm-stuff
-            brick-contraptions/elm-stuff
             packages/brick-frame-studio/elm-stuff
-          key: elm-${{ runner.os }}-${{ hashFiles('viewer-app/elm.json', 'studio-app/elm.json', 'brick-play/elm.json', 'brick-contraptions/elm.json', 'packages/brick-frame-studio/elm.json') }}
+          key: elm-${{ runner.os }}-${{ hashFiles('viewer-app/elm.json', 'studio-app/elm.json', 'brick-play/elm.json', 'packages/brick-frame-studio/elm.json') }}
           restore-keys: elm-${{ runner.os }}-
 
       - name: Run tests
@@ -114,7 +113,6 @@ jobs:
             viewer-app/elm-stuff
             studio-app/elm-stuff
             brick-play/elm-stuff
-            brick-contraptions/elm-stuff
             packages/brick-frame-studio/elm-stuff
           key: ${{ steps.elm-cache-restore.outputs.cache-primary-key }}
 

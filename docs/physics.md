@@ -228,7 +228,7 @@ axis points against the gear's is given the flipped axis (`alignToGear` in
   `gearEntitiesFor` and hide the same placements from the host's static scene.
   The viewer keeps using `Simulation.entities`, which draws every axle and part.
 
-Brick Contraptions places gears and axles on its axle line (Y −60). A gear turned
+Brick Play in Technic mode places gears and axles on its axle line (Y −60). A gear turned
 to the axle's direction (along Z for a Z-axis axle, or along X for the default
 axle) is driven when its centre lies within 2.5 LDU of the axle's line, measured
 from the axle's origin (the middle of the axle).

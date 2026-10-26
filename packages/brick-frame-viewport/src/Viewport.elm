@@ -1366,7 +1366,7 @@ tapSlop =
 {-| Let a Shift + left press on empty canvas or on a part reach the host as
 `PressStarted`, instead of always panning. The host then decides: `captureDrag`
 to grab the part, or `panCurrentGesture` to pan. Off by default, so Shift +
-drag pans (studio, the viewer). Brick Play and Brick Contraptions turn it on
+drag pans (studio, the viewer). Brick Play turns it on
 (through `Studio.Core.setDragMode`). A Shift press that is not captured and does
 not travel is still a `Clicked` with the toggle flag set.
 -}
@@ -2896,7 +2896,7 @@ setActiveSources sources model =
 
 
 {-| Placement sources the instanced render leaves out, for a host that draws
-those placements itself — Brick Contraptions hides the gears it animates so the
+those placements itself — Brick Play's Technic mode hides the gears it animates so the
 static copies do not show through the turning ones. Rendering only: hidden
 placements stay pickable, collide and snap as before. `Set.empty` (the default)
 draws everything. Applies to the instanced scene (documents); placements far

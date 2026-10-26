@@ -33,7 +33,6 @@ flags =
     , favorites = Nothing
     , recentParts = Nothing
     , playBaseUrl = Nothing
-    , contraptionsBaseUrl = Nothing
     }
 
 

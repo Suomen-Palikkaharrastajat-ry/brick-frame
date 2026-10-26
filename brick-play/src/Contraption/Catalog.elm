@@ -3,15 +3,12 @@ module Contraption.Catalog exposing
     , PartItem
     , categoryLabel
     , curatedParts
-    , fromKitItem
     , partsForCategory
-    , partsForCategoryWithProject
     )
 
-{-| Curated catalog of Technic parts for Contraptions play.
+{-| Curated catalog of Technic parts, offered in Technic mode (see `Main`): its
+gears, beams, axles and pins, in tabs by category. Every entry is unlimited.
 -}
-
-import Studio.UrlPayload exposing (PartKitItem)
 
 
 {-| Curated part item definition.
@@ -28,8 +25,7 @@ type alias PartItem =
 {-| Technic part category tabs.
 -}
 type Category
-    = ProjectCategory
-    | GearsCategory
+    = GearsCategory
     | BeamsCategory
     | AxlesCategory
     | PinsCategory
@@ -40,9 +36,6 @@ type Category
 categoryLabel : Category -> String
 categoryLabel category =
     case category of
-        ProjectCategory ->
-            "Project Parts"
-
         GearsCategory ->
             "Gears"
 
@@ -153,27 +146,3 @@ curatedParts =
 partsForCategory : Category -> List PartItem
 partsForCategory category =
     List.filter (\p -> p.category == category) curatedParts
-
-
-{-| Convert a PartKitItem from URL payload to a PartItem in ProjectCategory.
--}
-fromKitItem : PartKitItem -> PartItem
-fromKitItem item =
-    { name = String.replace ".dat" "" item.part
-    , file = item.part
-    , color = item.color
-    , category = ProjectCategory
-    , description = "Project kit part (" ++ String.fromInt item.count ++ ")"
-    }
-
-
-{-| Filter parts by category, returning project parts when in ProjectCategory.
--}
-partsForCategoryWithProject : List PartItem -> Category -> List PartItem
-partsForCategoryWithProject projectParts category =
-    case category of
-        ProjectCategory ->
-            projectParts
-
-        _ ->
-            partsForCategory category

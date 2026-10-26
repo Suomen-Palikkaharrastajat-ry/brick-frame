@@ -1,6 +1,6 @@
 module UI.HamburgerMenu exposing (Config, Item, view)
 
-{-| The top-right menu of the minimal apps (Brick Play, Brick Contraptions): one
+{-| The top-right menu of the minimal apps (Brick Play): one
 hamburger button that opens a small dropdown of actions, each with its keyboard
 shortcut shown on the right.
 

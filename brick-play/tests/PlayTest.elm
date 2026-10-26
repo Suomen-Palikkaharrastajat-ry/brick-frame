@@ -376,7 +376,7 @@ mouseTests =
             m.studio.viewport.camera
 
         rows =
-            List.concatMap Tuple.second helpRows
+            List.concatMap Tuple.second (helpRows model0)
     in
     describe "Mouse and ground"
         [ test "uses DragPartsOrPan with one-finger pan on touch (the globe orbits)" <|
@@ -438,7 +438,7 @@ thumbnailTests =
                     ( model, _ ) =
                         init kitFlags
                 in
-                thumbnailRequests model.inventory model.thumbnails
+                thumbnailRequests (kitPairs model) model.thumbnails
                     |> List.map (\r -> ( r.file, r.color ))
                     |> Expect.equal [ ( "3001.dat", 14 ), ( "3004.dat", 4 ), ( "3001.dat", 1 ) ]
         , test "requests carry the part colour as rgb from the colour table" <|
@@ -447,7 +447,7 @@ thumbnailTests =
                     ( model, _ ) =
                         init testFlags
                 in
-                case thumbnailRequests model.inventory model.thumbnails of
+                case thumbnailRequests (kitPairs model) model.thumbnails of
                     [ request ] ->
                         Expect.all
                             [ \r -> Expect.equal 3 (List.length r.rgb)
@@ -468,7 +468,7 @@ thumbnailTests =
                 Expect.all
                     [ \m -> Expect.equal 1 (Dict.size m.thumbnails)
                     , \m ->
-                        thumbnailRequests m.inventory m.thumbnails
+                        thumbnailRequests (kitPairs m) m.thumbnails
                             |> List.map .file
                             |> Expect.equal [ "3001.dat", "3001.dat" ]
                     ]
@@ -496,6 +496,13 @@ thumbnailTests =
                 in
                 Expect.equal "3001" (kitItemName model { part = "3001.dat", color = 14, count = 4 })
         ]
+
+
+{-| The (file, colour) pairs of a model's kit, as the dock asks for pictures.
+-}
+kitPairs : Model -> List ( String, Int )
+kitPairs model =
+    List.map (\item -> ( item.part, item.color )) model.inventory
 
 
 testFlags : Flags

@@ -9,7 +9,7 @@ map to tell which placement a gear is. The same matching serves the axles and
 parts that turn with a gear.
 
 A placement matches when it is the same part file and its origin is within
-`originTolerance` (0.01 LDU) of the line's origin. Contraptions adds every
+`originTolerance` (0.01 LDU) of the line's origin. Technic mode adds every
 placement at exactly computed positions, so the tolerance only absorbs float
 noise.
 

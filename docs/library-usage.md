@@ -18,8 +18,7 @@ and talks to `Viewport`, `Simulation`, and `Studio.Core` through their messages 
 Four hosts are built on these shared packages:
 - `viewer-app/`: Read-only viewer and custom Web Components (`<bricks-viewer>`)
 - `studio-app/`: Full-featured browser editor with submodels, parts list, instructions, and simulation preview
-- `brick-play/`: Minimal free-building app with an inventory of 10 classic yellow bricks
-- `brick-contraptions/`: Technic machine builder celebrating completed gear loops
+- `brick-play/`: Minimal free-building app with an inventory of 10 classic yellow bricks; it switches on a Technic mode (gear machine builder and simulation) when the model or kit has gears
 
 The stateful packages (`Viewport`, `Simulation`, `Studio.Core`) are TEA components with their own `Msg` and `Model`. A host wraps
 them in constructors of its own (`ViewportMsg Viewport.Msg`, `SimulationMsg Simulation.Msg`, `StudioMsg Studio.Core.Msg`) and maps them with `Html.map`, `Cmd.map` and
@@ -311,7 +310,7 @@ The studio also calls it from `Studio.Layout`.
 
 ### Camera and visibility hooks
 
-For a host with its own editing and camera chrome (Brick Play, Brick Contraptions):
+For a host with its own editing and camera chrome (Brick Play):
 
 - `Viewport.pivotOn : Vec3 -> Viewport.Model -> Viewport.Model` glides the orbit
   pivot to a point over ~280 ms by translating the view (azimuth, elevation and
@@ -320,11 +319,11 @@ For a host with its own editing and camera chrome (Brick Play, Brick Contraption
   `docs/studio.md` (Follow the clicked part).
 - `Viewport.setHiddenSources : Set Int -> Viewport.Model -> Viewport.Model` hides
   the document placements whose source ids are given, from the instanced scene
-  only. Hidden placements stay pickable and collide as before. Brick Contraptions
-  uses it so a turning gear does not show its static copy.
+  only. Hidden placements stay pickable and collide as before. Brick Play's
+  Technic mode uses it so a turning gear does not show its static copy.
 - `Viewport.setSpacePan : Bool -> Viewport.Model -> Viewport.Model` lets Space +
   drag pan. It is off by default, because Space may mean something else to the host
-  (the studio workspace turns it on; Brick Play and Brick Contraptions leave it off).
+  (the studio workspace turns it on; Brick Play leaves it off).
 
 ---
 
@@ -374,7 +373,7 @@ the motor and the clock are the host's: read the fields of `Simulation.Model`.
 ### Drawing only some gears
 
 A host that keeps the rest of the model in its own static scene can animate just
-the turning parts (Brick Contraptions does this):
+the turning parts (Brick Play's Technic mode does this):
 
 - `Simulation.rotatingGearIds : Simulation.Model -> Set GearId` — the gears that turn
   with the motor and have a mesh to draw them with.
@@ -468,11 +467,11 @@ Host options. Set them on the model after `Core.init`:
   (default `False`). When on, a committed move or add that meshes a gear turns the
   gear's rigid group (the gears and axles on its axle line, connected along the
   line) so the teeth interlock. The turn is recorded in the same undo step as the
-  edit. A host that does not place gears on axles can leave it off. Brick
-  Contraptions turns it on at init (`brick-contraptions/src/Main.elm`); Brick Play
+  edit. A host that does not place gears on axles can leave it off. Brick Play
+  turns it on in Technic mode (`brick-play/src/Main.elm`, `settle`); otherwise it
   leaves it off. See `docs/studio.md` (Gear alignment).
 
-`brick-play` and `brick-contraptions` both embed `Studio.Core` directly to power their 3D interaction.
+`brick-play` embeds `Studio.Core` directly to power its 3D interaction.
 
 ### Cross-App Deep Linking with Studio.UrlPayload
 
@@ -491,9 +490,9 @@ playUrl : String
 playUrl =
     UrlPayload.buildPlayUrl "https://example.com/play/" document
 
-contraptionsUrl : String
-contraptionsUrl =
-    UrlPayload.buildContraptionsUrl "https://example.com/contraptions/" document
+playModelUrl : String
+playModelUrl =
+    UrlPayload.buildPlayModelUrl "https://example.com/play/" document
 
 -- Decode URL hash fragment on startup in companion app
 payload : UrlPayload.Payload
@@ -512,10 +511,10 @@ payload =
 | `encodeParts` | `List PartKitItem -> String` | Encode parts to compact comma-separated string (`part:color:count,...`) |
 | `decodeParts` | `String -> List PartKitItem` | Parse compact parts string into kit items |
 | `encodePlayHash` | `Document -> String` | Encode document kit into a Brick Play hash fragment (`parts=...`) |
-| `encodeContraptionsHash` | `Document -> String` | Encode document into a Brick Contraptions hash fragment (`model=...&parts=...`) |
+| `encodePlayModelHash` | `Document -> String` | Encode document model and kit into a Brick Play hash fragment (`model=...&parts=...`), which turns Technic mode on when the model has gears |
 | `decodeHash` | `String -> Payload` | Parse a URL hash fragment into its parts inventory and optional LDraw model text |
 | `buildPlayUrl` | `String -> Document -> String` | Generate a full Brick Play link given a base URL and document |
-| `buildContraptionsUrl` | `String -> Document -> String` | Generate a full Brick Contraptions link given a base URL and document |
+| `buildPlayModelUrl` | `String -> Document -> String` | Generate a full Brick Play link with the model and its kit, given a base URL and document |
 
 ---
 
@@ -526,8 +525,8 @@ the app's `Main`": they are stateful components with their own `Model`, `Msg` an
 `update`, so their input handling and interaction logic can be shared instead of copied. Everything
 else in the packages is pure functions. The viewer keeps one flat `Msg` for its
 own UI, with `ViewportMsg` and `SimulationMsg` wrappers; the studio gives each
-page its own nested `Msg` (`WorkspaceMsg`, `PreviewMsg`); `brick-play` and `brick-contraptions`
-wrap `StudioMsg Studio.Core.Msg`. Keyboard handling still
+page its own nested `Msg` (`WorkspaceMsg`, `PreviewMsg`); `brick-play`
+wraps `StudioMsg Studio.Core.Msg`. Keyboard handling still
 goes through `Viewport.Shortcuts.actionFor` and `Studio.Shortcuts`, which hold the guard that stops
 document-wide keydowns hijacking a host page's form fields.
 
@@ -570,7 +569,7 @@ document-wide keydowns hijacking a host page's form fields.
 | `Studio.Edit` | Document commands with inverses and history | `Command`, `History`, `apply`, `emptyHistory` |
 | `Studio.Gizmo` | Translation/rotation gizmo and handle hit testing | `Handle`, `DragHandle`, `renderGizmo` |
 | `Studio.Transform` | Transform matrix decomposition and Euler angles | `decompose`, `compose`, `snapRotation` |
-| `Studio.UrlPayload` | URL hash encoding and decoding for cross-app export | `extractKit`, `encodeParts`, `decodeParts`, `encodePlayHash`, `encodeContraptionsHash`, `decodeHash`, `buildPlayUrl`, `buildContraptionsUrl` |
+| `Studio.UrlPayload` | URL hash encoding and decoding for cross-app export | `extractKit`, `encodeParts`, `decodeParts`, `encodePlayHash`, `encodePlayModelHash`, `decodeHash`, `buildPlayUrl`, `buildPlayModelUrl` |
 
 ---
 

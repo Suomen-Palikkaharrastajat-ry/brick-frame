@@ -55,7 +55,6 @@ let
         ln -sfn "${npmTools}/lib/node_modules" viewer-app/node_modules
         ln -sfn "${npmTools}/lib/node_modules" studio-app/node_modules
         ln -sfn "${npmTools}/lib/node_modules" brick-play/node_modules
-        ln -sfn "${npmTools}/lib/node_modules" brick-contraptions/node_modules
       '';
     };
 
@@ -90,7 +89,6 @@ let
         ln -sfn "${npmTools}/lib/node_modules" viewer-app/node_modules
         ln -sfn "${npmTools}/lib/node_modules" studio-app/node_modules
         ln -sfn "${npmTools}/lib/node_modules" brick-play/node_modules
-        ln -sfn "${npmTools}/lib/node_modules" brick-contraptions/node_modules
 
         echo ""
         echo "── brick-frame dev environment ─────────────────────"

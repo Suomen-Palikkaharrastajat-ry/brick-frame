@@ -1,6 +1,7 @@
-module ContraptionsTest exposing (suite)
+module TechnicTest exposing (suite)
 
-{-| Unit tests for Brick Contraptions and machine accomplishment logic.
+{-| Unit tests for Technic mode in Brick Play: how it is derived, what it switches
+on, the Technic catalog dock, Technic placement and the machine's accomplishment.
 -}
 
 import Contraption.Animation as Animation
@@ -17,7 +18,7 @@ import Gear.Placements as Placements
 import Html.Attributes as Attr
 import LDraw.Document as Document
 import LDraw.Resolve exposing (PartStatus(..))
-import Main exposing (Flags, Model, Msg(..), accomplishmentBanner, init, shareHash, thumbnailRequests, update, view, viewToast)
+import Main exposing (Flags, Model, Msg(..), accomplishmentBanner, init, remainingForItem, shareHash, technicMode, thumbnailRequests, update, view, viewToast)
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (vec3)
 import Render.Camera as Camera
@@ -39,7 +40,7 @@ import Viewport
 
 suite : Test
 suite =
-    describe "Brick Contraptions"
+    describe "Brick Play Technic"
         [ menuTests
         , snapshotTests
         , sharingAndToastTests
@@ -154,7 +155,7 @@ suite =
                 \_ ->
                     let
                         ( model0, _ ) =
-                            init testFlags
+                            init (modelFlags pair8x24)
 
                         ( model1, _ ) =
                             update TogglePlay model0
@@ -172,7 +173,7 @@ suite =
                 \_ ->
                     let
                         ( model0, _ ) =
-                            init testFlags
+                            init (modelFlags pair8x24)
 
                         space =
                             { key = " "
@@ -329,7 +330,7 @@ suite =
                         , \m -> Expect.equal True (Machine.isAccomplished m.machine)
                         ]
                         model
-            , test "populates project parts category from hash parts" <|
+            , test "populates the counted kit from hash parts, and a gear in it turns Technic mode on" <|
                 \_ ->
                     let
                         flags =
@@ -339,9 +340,9 @@ suite =
                             init flags
                     in
                     Expect.all
-                        [ \m -> Expect.equal 2 (List.length m.projectParts)
-                        , \m -> Expect.equal ProjectCategory m.activeCategory
-                        , \m -> Expect.equal 2 (List.length (Catalog.partsForCategoryWithProject m.projectParts ProjectCategory))
+                        [ \m -> Expect.equal 2 (List.length m.inventory)
+                        , \m -> Expect.equal True (technicMode m)
+                        , \m -> Expect.equal True m.kitFromUrl
                         ]
                         model
             , test "init with twin 24T example loads beam, 2 axles, 1 gear and project kit" <|
@@ -361,8 +362,8 @@ suite =
                     in
                     Expect.all
                         [ \m -> Expect.equal 1 (List.length m.machine.gears)
-                        , \m -> Expect.equal 2 (List.length m.projectParts)
-                        , \m -> Expect.equal ProjectCategory m.activeCategory
+                        , \m -> Expect.equal 2 (List.length m.inventory)
+                        , \m -> Expect.equal True (technicMode m)
                         , \m -> Expect.equal False (Machine.isAccomplished m.machine)
                         ]
                         model
@@ -383,8 +384,8 @@ suite =
                     in
                     Expect.all
                         [ \m -> Expect.equal 1 (List.length m.machine.gears)
-                        , \m -> Expect.equal 2 (List.length m.projectParts)
-                        , \m -> Expect.equal ProjectCategory m.activeCategory
+                        , \m -> Expect.equal 2 (List.length m.inventory)
+                        , \m -> Expect.equal True (technicMode m)
                         , \m -> Expect.equal False (Machine.isAccomplished m.machine)
                         ]
                         model
@@ -405,8 +406,8 @@ suite =
                     in
                     Expect.all
                         [ \m -> Expect.equal 2 (List.length m.machine.gears)
-                        , \m -> Expect.equal 3 (List.length m.projectParts)
-                        , \m -> Expect.equal ProjectCategory m.activeCategory
+                        , \m -> Expect.equal 3 (List.length m.inventory)
+                        , \m -> Expect.equal True (technicMode m)
                         , \m -> Expect.equal True (Machine.isAccomplished m.machine)
                         ]
                         model
@@ -489,10 +490,10 @@ suite =
                             ( m.playing, m.currentTime, Animation.isAnimating { playing = m.playing, currentTime = m.currentTime } )
                     in
                     Expect.all
-                        [ \_ -> Expect.equal ( False, 0, False ) (rest (edited (AddPart gear8) paused))
-                        , \_ -> Expect.equal ( False, 0, False ) (rest (edited (AddPart gear8) played))
+                        [ \_ -> Expect.equal ( False, 0, False ) (rest (edited (AddCatalogPart gear8) paused))
+                        , \_ -> Expect.equal ( False, 0, False ) (rest (edited (AddCatalogPart gear8) played))
                         , \_ -> Expect.equal ( False, 0, False ) (rest (edited (pressKey { key = "a", ctrl = True, shift = False }) paused |> edited (pressKey { key = "d", ctrl = False, shift = False })))
-                        , \_ -> Expect.equal ( False, 0, False ) (rest (edited (AddPart gear8) paused |> edited TogglePlay |> edited (Tick 300) |> edited Undo))
+                        , \_ -> Expect.equal ( False, 0, False ) (rest (edited (AddCatalogPart gear8) paused |> edited TogglePlay |> edited (Tick 300) |> edited Undo))
                         ]
                         ()
             , test "selecting while playing does not stop the machine" <|
@@ -595,7 +596,7 @@ suite =
                                 |> Tuple.first
 
                         edited =
-                            update (AddPart gear8) playing |> Tuple.first
+                            update (AddCatalogPart gear8) playing |> Tuple.first
                     in
                     Expect.all
                         [ \_ -> Expect.equal False (Set.isEmpty playing.animated.sources)
@@ -651,31 +652,40 @@ suite =
         , dockPlacementTests
         , touchTests
         , bannerTests
+        , technicTests
         ]
 
 
-{-| The dock's part cards ask the thumbnail pipeline for the visible category's
-images and keep the answers by file and colour.
--}
 dockThumbnailTests : Test
 dockThumbnailTests =
     let
+        -- What the dock lists: the catalog of its tab in Technic mode, else the kit.
+        dockPairs model =
+            if technicMode model && not model.kitFromUrl then
+                List.map (\item -> ( item.file, item.color )) (Catalog.partsForCategory model.activeCategory)
+
+            else
+                List.map (\item -> ( item.part, item.color )) model.inventory
+
         requestedFiles model =
-            thumbnailRequests (Catalog.partsForCategoryWithProject model.projectParts model.activeCategory) model.thumbnails
+            thumbnailRequests (dockPairs model) model.thumbnails
                 |> List.map .file
 
         loaded file color model =
             update (ThumbnailLoaded { file = file, color = color, url = "data:image/png;base64,AA", title = "" }) model
                 |> Tuple.first
+
+        technicStart =
+            Tuple.first (init (modelFlags pair8x24))
     in
     describe "Dock thumbnails"
-        [ test "init asks for the gears, in catalog order" <|
+        [ test "init asks for the gears of the catalog, in catalog order, in Technic mode" <|
             \_ ->
                 Expect.equal [ "3647.dat", "4019.dat", "3648.dat", "3649.dat" ]
-                    (requestedFiles (Tuple.first (init testFlags)))
+                    (requestedFiles technicStart)
         , test "requests carry the colour's rgb from the colour table" <|
             \_ ->
-                case thumbnailRequests [ gear8 ] Dict.empty of
+                case thumbnailRequests [ ( "3647.dat", 7 ) ] Dict.empty of
                     [ request ] ->
                         Expect.all
                             [ \r -> Expect.equal 7 r.color
@@ -689,24 +699,19 @@ dockThumbnailTests =
         , test "a category change asks for that category's parts" <|
             \_ ->
                 let
-                    ( model, _ ) =
-                        init testFlags
-                            |> Tuple.first
+                    model =
+                        technicStart
                             |> update (SetCategory BeamsCategory)
+                            |> Tuple.first
                 in
                 Expect.equal (Catalog.partsForCategory BeamsCategory |> List.map .file) (requestedFiles model)
-        , test "the Project category from #parts= is requested on init" <|
+        , test "the kit from #parts= is requested on init, and no catalog is" <|
             \_ ->
                 let
                     ( model, _ ) =
                         init { testFlags | initialHash = "#parts=3647.dat:7:2,32316.dat:1:1" }
                 in
-                Expect.all
-                    [ \m -> Expect.equal ProjectCategory m.activeCategory
-                    , \m -> Expect.equal (List.map .file m.projectParts) (requestedFiles m)
-                    , \m -> Expect.equal False (List.isEmpty (requestedFiles m))
-                    ]
-                    model
+                Expect.equal [ "3647.dat", "32316.dat" ] (requestedFiles model)
         , test "thumbnailLoaded stores the image under file and colour" <|
             \_ ->
                 let
@@ -719,7 +724,7 @@ dockThumbnailTests =
             \_ ->
                 let
                     model =
-                        Tuple.first (init testFlags)
+                        technicStart
                             |> loaded "3647.dat" 7
                             |> loaded "3648.dat" 7
                 in
@@ -728,12 +733,12 @@ dockThumbnailTests =
             \_ ->
                 let
                     model =
-                        loaded "3647.dat" 4 (Tuple.first (init testFlags))
+                        loaded "3647.dat" 4 technicStart
                 in
                 Expect.equal True (List.member "3647.dat" (requestedFiles model))
         , test "duplicates in the list are asked for once" <|
             \_ ->
-                Expect.equal 1 (List.length (thumbnailRequests [ gear8, gear8 ] Dict.empty))
+                Expect.equal 1 (List.length (thumbnailRequests [ ( "3647.dat", 7 ), ( "3647.dat", 7 ) ] Dict.empty))
         ]
 
 
@@ -953,7 +958,7 @@ dockPlacementTests =
                 |> Maybe.withDefault gear8
 
         addFromDock file model =
-            update (AddPart (dockItem file)) model |> Tuple.first
+            update (AddCatalogPart (dockItem file)) model |> Tuple.first
 
         origins model =
             Core.getPlacements model.studio |> List.map (\p -> Mat4.transform p.matrix (vec3 0 0 0))
@@ -1101,7 +1106,7 @@ dockPlacementTests =
                     ]
                     ()
         , test "drags keep the part's height (drag settling is off)" <|
-            \_ -> Expect.equal False start.studio.dragSettles
+            \_ -> Expect.equal False gearPair.studio.dragSettles
         , test "rowSpot walks +X, then -X, along the start's row" <|
             \_ ->
                 let
@@ -1132,7 +1137,7 @@ snapshotTests =
             Tuple.first (init testFlags)
 
         selected =
-            update (AddPart gear8) start
+            update (AddCatalogPart gear8) start
                 |> Tuple.first
                 |> (\m -> Tuple.first (update (StudioMsg (Core.SelectOnly 0)) m))
     in
@@ -1181,7 +1186,7 @@ menuTests =
             Tuple.first (init testFlags)
 
         selected =
-            update (AddPart gear8) start
+            update (AddCatalogPart gear8) start
                 |> Tuple.first
                 |> (\m -> Tuple.first (update (StudioMsg (Core.SelectOnly 0)) m))
     in
@@ -1226,7 +1231,7 @@ menuTests =
             \_ ->
                 let
                     ( added, _ ) =
-                        update (AddPart gear8) start
+                        update (AddCatalogPart gear8) start
 
                     ( undone, _ ) =
                         update (MenuPicked Undo) added
@@ -1261,7 +1266,7 @@ menuTests =
             \_ ->
                 let
                     ( opened, _ ) =
-                        update ToggleMenu start
+                        update ToggleMenu (Tuple.first (init (modelFlags pair8x24)))
                 in
                 Query.fromHtml (view opened)
                     |> Expect.all
@@ -1323,24 +1328,17 @@ sharingAndToastTests =
                         [ Query.has [ Selector.attribute (Attr.attribute "role" "status") ]
                         , Query.has [ Selector.text "Link copied to clipboard!" ]
                         ]
-        , test "shareHash returns empty or parts=... when no placements exist" <|
+        , test "shareHash shares the default kit when there is no model" <|
             \_ ->
                 let
-                    emptyHash =
+                    hash =
                         shareHash start
-
-                    ( withPartsModel, _ ) =
-                        init { testFlags | initialHash = "#parts=3001:14:1" }
-
-                    partsHash =
-                        shareHash withPartsModel
                 in
                 Expect.all
-                    [ \_ -> Expect.equal "" emptyHash
-                    , \_ -> Expect.equal True (String.startsWith "parts=" partsHash)
-                    , \_ -> Expect.equal False (String.contains "model=" partsHash)
+                    [ \h -> Expect.equal True (String.startsWith "parts=" h)
+                    , \h -> Expect.equal False (String.contains "model=" h)
                     ]
-                    ()
+                    hash
         ]
 
 
@@ -1351,7 +1349,7 @@ touchTests : Test
 touchTests =
     let
         start =
-            Tuple.first (init testFlags)
+            Tuple.first (init (modelFlags pair8x24))
 
         at width model =
             update (WindowResized width 844) model |> Tuple.first
@@ -1417,12 +1415,12 @@ touchTests =
                 Expect.greaterThan 1.0e-6 (abs (azimuth moved - azimuth start))
         , test "a dock part tap records its name for touch screens" <|
             \_ ->
-                Expect.equal (Just gear8.name) (update (AddPart gear8) start |> Tuple.first |> .lastTapped)
+                Expect.equal (Just gear8.name) (update (AddCatalogPart gear8) start |> Tuple.first |> .lastTapped)
         , test "the touch label appears only once a part has been tapped" <|
             \_ ->
                 Expect.all
                     [ \_ -> Query.fromHtml (view start) |> Query.findAll [ Selector.class "touch-only" ] |> Query.count (Expect.equal 0)
-                    , \_ -> Query.fromHtml (view (update (AddPart gear8) start |> Tuple.first)) |> Query.findAll [ Selector.class "touch-only" ] |> Query.count (Expect.greaterThan 0)
+                    , \_ -> Query.fromHtml (view (update (AddCatalogPart gear8) start |> Tuple.first)) |> Query.findAll [ Selector.class "touch-only" ] |> Query.count (Expect.greaterThan 0)
                     ]
                     ()
         ]
@@ -1490,3 +1488,204 @@ fineTests =
                     ]
                     ()
         ]
+
+
+{-| Technic mode: how it is derived, what it switches on, the Space key and the
+play button, the dock, placement, and the examples from docs/examples.md.
+-}
+technicTests : Test
+technicTests =
+    let
+        start =
+            Tuple.first (init testFlags)
+
+        withGears =
+            Tuple.first (init (modelFlags pair8x24))
+
+        space =
+            pressKey { key = " ", ctrl = False, shift = False }
+
+        add item model =
+            update (AddPart item) model |> Tuple.first
+
+        playButtons model =
+            Query.fromHtml (view model)
+                |> Query.findAll [ Selector.attribute (Attr.title "Play / pause (Space)") ]
+
+        tabs model =
+            Query.fromHtml (view model)
+                |> Query.findAll [ Selector.attribute (Attr.attribute "role" "tab") ]
+    in
+    describe "Technic mode"
+        [ test "is off for an empty document and the default kit" <|
+            \_ ->
+                Expect.equal False (technicMode start)
+        , test "is on for a document with two meshing gears" <|
+            \_ ->
+                Expect.equal True (technicMode withGears)
+        , test "is off again once the document has no gear" <|
+            \_ ->
+                Expect.equal False (technicMode (update Clear withGears |> Tuple.first))
+        , test "is on for a URL kit that lists a gear, with no gear placed" <|
+            \_ ->
+                Expect.equal True (technicMode (Tuple.first (init { testFlags | initialHash = "#parts=3648.dat:7:1" })))
+        , test "is off for a URL kit with no gear" <|
+            \_ ->
+                Expect.equal False (technicMode (Tuple.first (init { testFlags | initialHash = "#parts=3001.dat:14:4" })))
+        , test "Space is unbound without gears: the machine does not play" <|
+            \_ ->
+                let
+                    model =
+                        update space start |> Tuple.first
+                in
+                Expect.equal ( False, 0 ) ( model.playing, model.currentTime )
+        , test "Space plays and pauses the machine with gears" <|
+            \_ ->
+                let
+                    played =
+                        update space withGears |> Tuple.first
+
+                    paused =
+                        update space played |> Tuple.first
+                in
+                Expect.equal [ True, False ] [ played.playing, paused.playing ]
+        , test "the play button is hidden without gears and shown with them" <|
+            \_ ->
+                Expect.all
+                    [ \_ -> playButtons start |> Query.count (Expect.equal 0)
+                    , \_ -> playButtons withGears |> Query.count (Expect.equal 1)
+                    ]
+                    ()
+        , test "a running machine stops and rewinds when the edit ends Technic mode" <|
+            \_ ->
+                let
+                    playing =
+                        withGears
+                            |> update TogglePlay
+                            |> Tuple.first
+                            |> update (Tick 500)
+                            |> Tuple.first
+
+                    cleared =
+                        update Clear playing |> Tuple.first
+                in
+                Expect.equal ( True, False, 0 ) ( playing.playing, cleared.playing, cleared.currentTime )
+        , test "gear alignment and drag settling follow Technic mode" <|
+            \_ ->
+                let
+                    cleared =
+                        update Clear withGears |> Tuple.first
+                in
+                Expect.equal
+                    [ ( True, False ), ( False, True ), ( False, True ) ]
+                    [ ( withGears.studio.gearAlignment, withGears.studio.dragSettles )
+                    , ( cleared.studio.gearAlignment, cleared.studio.dragSettles )
+                    , ( start.studio.gearAlignment, start.studio.dragSettles )
+                    ]
+        , test "the dock is the Technic catalog, with its tabs, when there is no URL kit" <|
+            \_ ->
+                Expect.all
+                    [ \_ -> tabs withGears |> Query.count (Expect.equal 4)
+                    , \_ -> Query.fromHtml (view withGears) |> Query.has [ Selector.attribute (Attr.attribute "aria-label" "Parts") ]
+                    ]
+                    ()
+        , test "a URL kit is the counted dock, with no tabs, even with gears" <|
+            \_ ->
+                let
+                    kit =
+                        Tuple.first (init { testFlags | initialHash = "#parts=3648.dat:7:1,6590.dat:7:2" })
+                in
+                Expect.all
+                    [ \_ -> tabs kit |> Query.count (Expect.equal 0)
+                    , \_ -> Query.fromHtml (view kit) |> Query.has [ Selector.attribute (Attr.attribute "aria-label" "Kit") ]
+                    ]
+                    ()
+        , test "a Technic kit part stops at the count the URL kit gives" <|
+            \_ ->
+                let
+                    item =
+                        { part = "3649.dat", color = 7, count = 2 }
+
+                    model =
+                        Tuple.first (init { testFlags | initialHash = "#parts=3649.dat:7:2" })
+                            |> add item
+                            |> add item
+                            |> add item
+                in
+                Expect.equal [ 2, 0 ] [ List.length (Core.getPlacements model.studio), remainingForItem model item ]
+        , test "a Technic link keeps its kit; a catalog dock shares the model alone" <|
+            \_ ->
+                let
+                    kitLink =
+                        Tuple.first (init { testFlags | initialHash = "#model=" ++ Url.percentEncode pair8x24 ++ "&parts=3648.dat%3A7%3A1" })
+                in
+                Expect.all
+                    [ \_ -> Expect.equal False (String.contains "parts=" (shareHash withGears))
+                    , \_ -> Expect.equal True (String.contains "parts=" (shareHash kitLink))
+                    ]
+                    ()
+        , test "a gear added from the catalog turns the alignment on and goes on the axle line" <|
+            \_ ->
+                let
+                    model =
+                        update (AddCatalogPart gear8) start |> Tuple.first
+                in
+                Expect.all
+                    [ \_ -> Expect.equal True model.studio.gearAlignment
+                    , \_ ->
+                        Core.getPlacements model.studio
+                            |> List.map (\p -> Vec3.getY (Mat4.transform p.matrix (vec3 0 0 0)))
+                            |> Expect.equal [ Placement.axleLineY ]
+                    ]
+                    ()
+        , test "the Contraptions examples from the docs load in Technic mode, with their kit and gears" <|
+            \_ ->
+                List.map
+                    (\hash ->
+                        let
+                            model =
+                                Tuple.first (init { testFlags | initialHash = hash })
+                        in
+                        ( technicMode model, model.kitFromUrl, List.length model.machine.gears )
+                    )
+                    [ twinGearboxHash, speedReducerHash, gearTrainHash ]
+                    |> Expect.equal [ ( True, True, 1 ), ( True, True, 1 ), ( True, True, 2 ) ]
+        , test "the Contraptions 3-gear train example is accomplished as it loads" <|
+            \_ ->
+                Tuple.first (init { testFlags | initialHash = gearTrainHash })
+                    |> .machine
+                    |> Machine.isAccomplished
+                    |> Expect.equal True
+        , test "the Brick Play cottage example from the docs loads with Technic mode off" <|
+            \_ ->
+                let
+                    model =
+                        Tuple.first (init { testFlags | initialHash = cottageHash })
+                in
+                Expect.equal ( False, True ) ( technicMode model, model.kitFromUrl )
+        ]
+
+
+{-| The Brick Contraptions examples in docs/examples.md (Production links), which
+open in Brick Play in Technic mode.
+-}
+twinGearboxHash : String
+twinGearboxHash =
+    "#model=1%201%200%20-60%20-20%200%200%20-1%200%201%200%201%200%200%2032524.dat%0A1%200%200%20-60%200%200%200%20-1%200%201%200%201%200%200%203705.dat%0A1%200%2060%20-60%200%200%200%20-1%200%201%200%201%200%200%203705.dat%0A1%207%200%20-60%200%201%200%200%200%201%200%200%200%201%203648.dat%0A1%207%200%20-60%2012%201%200%200%200%201%200%200%200%201%206590.dat&parts=3648.dat%3A7%3A1%2C6590.dat%3A7%3A2"
+
+
+speedReducerHash : String
+speedReducerHash =
+    "#model=1%201%200%20-60%20-20%200%200%20-1%200%201%200%201%200%200%2032524.dat%0A1%200%200%20-60%200%200%200%20-1%200%201%200%201%200%200%203705.dat%0A1%200%2060%20-60%200%200%200%20-1%200%201%200%201%200%200%203705.dat%0A1%207%200%20-60%200%201%200%200%200%201%200%200%200%201%203647.dat%0A1%207%200%20-60%2012%201%200%200%200%201%200%200%200%201%206590.dat&parts=3649.dat%3A7%3A1%2C6590.dat%3A7%3A2"
+
+
+gearTrainHash : String
+gearTrainHash =
+    "#model=1%201%200%20-60%20-20%200%200%20-1%200%201%200%201%200%200%2032524.dat%0A1%200%20-40%20-60%200%200%200%20-1%200%201%200%201%200%200%203705.dat%0A1%200%200%20-60%200%200%200%20-1%200%201%200%201%200%200%203705.dat%0A1%200%2060%20-60%200%200%200%20-1%200%201%200%201%200%200%203705.dat%0A1%207%20-40%20-60%200%201%200%200%200%201%200%200%200%201%203647.dat%0A1%207%200%20-60%200%201%200%200%200%201%200%200%200%201%203648.dat&parts=3648.dat%3A7%3A1%2C4019.dat%3A7%3A1%2C6590.dat%3A7%3A3"
+
+
+{-| The Brick Play cottage example in docs/examples.md (Production link).
+-}
+cottageHash : String
+cottageHash =
+    "#model=1%2019%200%20-24%200%201%200%200%200%201%200%200%200%201%203001.dat%0A1%2015%200%20-72%200%201%200%200%200%201%200%200%200%201%2060592.dat%0A1%2019%20-30%20-48%200%201%200%200%200%201%200%200%200%201%203005.dat%0A1%2019%2030%20-48%200%201%200%200%200%201%200%200%200%201%203005.dat&parts=3001.dat%3A19%3A3%2C3005.dat%3A19%3A6%2C3001.dat%3A14%3A2%2C3039.dat%3A4%3A4%2C60592.dat%3A15%3A1%2C3004.dat%3A19%3A4"

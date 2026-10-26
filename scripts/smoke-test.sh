@@ -8,4 +8,4 @@ curl -f --silent --output /dev/null "$SITE_URL/play/"
 curl -f --silent --output /dev/null "$SITE_URL/contraptions/"
 curl -f --silent --output /dev/null "$SITE_URL/bricks-viewer.iife.js"
 
-echo "Smoke test passed: $SITE_URL (+ web-components example, studio, play, contraptions)"
+echo "Smoke test passed: $SITE_URL (+ web-components example, studio, play, contraptions redirect)"

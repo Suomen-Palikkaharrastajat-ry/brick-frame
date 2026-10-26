@@ -7,8 +7,8 @@
  * buffer from the same view direction as the studio's part preview, so a card
  * shows the same part the preview does.
  *
- * Shared by the studio palette, the Brick Play kit dock and the Brick
- * Contraptions dock: a host calls `initThumbnails(app.ports, ldrawBase)` and
+ * Shared by the studio palette and the Brick Play dock (kit and Technic
+ * catalog): a host calls `initThumbnails(app.ports, ldrawBase)` and
  * declares the `requestThumbnails` / `thumbnailLoaded` ports (see below).
  */
 

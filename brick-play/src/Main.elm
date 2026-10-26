@@ -2,6 +2,7 @@ module Main exposing
     ( Flags
     , Model
     , Msg(..)
+    , accomplishmentBanner
     , helpRows
     , init
     , kitItemName
@@ -10,6 +11,7 @@ module Main exposing
     , remainingForItem
     , shareHash
     , subscriptions
+    , technicMode
     , thumbnailRequests
     , update
     , view
@@ -18,30 +20,50 @@ module Main exposing
 
 {-| Main application for Brick Play.
 
-Provides a minimal, elegant free-building studio with kit inventory
-tracking and stud snapping. There is no axis gizmo: a drag on a brick moves it
-relative to the view, a drag on empty space pans and a right-drag orbits, and
-while something is selected a floating action bar above the dock turns, tips,
-raises, lowers or deletes it (the same as the keyboard). The camera has its own
-control bottom-right, the shared camera globe (`UI.CameraGlobe`): drag it to
-orbit, tap it to fly there, and use its zoom slider and reset button. On a narrow
-portrait window (a phone) the bottom area shows either the kit or the camera
-globe, switched by a toggle button, and the kit is shown first.
+A free-building studio with kit inventory tracking and stud snapping. There is
+no axis gizmo: a drag on a part moves it relative to the view, a drag on empty
+space pans and a right-drag orbits, and while something is selected a floating
+action bar above the dock turns, tips, raises, lowers or deletes it (the same as
+the keyboard). The camera has its own control bottom-right, the shared camera
+globe (`UI.CameraGlobe`): drag it to orbit, tap it to fly there, and use its
+zoom slider and reset button. On a narrow portrait window (a phone) the bottom
+area shows either the dock or the camera globe, switched by a toggle button, and
+the dock is shown first.
 
-The dock shows each kit item as a rendered picture of the part in its colour
-(`UI.PartCard.compactView`, fed by the shared thumbnail pipeline through
-`Ports`); clicking a card adds one of that part, and its name, part number and
-count are in the tooltip and on the image corner. The top-right menu
-(`UI.HamburgerMenu`) holds undo, redo, delete and clear, beside a visible ?
-button that opens the shortcut list; Escape closes the menu first.
+The dock lists either the counted kit (a `parts=` kit from the URL, or the
+default 10 yellow bricks) or, in Technic mode without a kit from the URL, the
+curated Technic catalog with its category tabs, unlimited. Each card is a
+rendered picture of the part (`UI.PartCard.compactView`, fed by the shared
+thumbnail pipeline through `Ports`).
+
+Technic mode is derived, not set: it is on when the document holds a gear that
+`Contraption.Machine` recognises, or when the URL kit lists a gear. In Technic
+mode the play button shows and Space plays and pauses the machine; the gear mesh
+status pill, automatic tooth alignment and the accomplishment banner come on, and
+drags keep their height. Outside it, Space is unbound and the play button is
+hidden. Technic parts (gears, axles, beams, pins) go on the shared axle line in
+either mode (`Contraption.Placement`), and other parts rest on the ground. Any
+edit stops a running machine and rewinds it to 0.
+
+The top-right menu (`UI.HamburgerMenu`) holds undo, redo, delete and clear,
+beside a visible ? button that opens the shortcut list and the play button;
+Escape closes the menu first.
 
 -}
 
+import Array
 import Browser
 import Browser.Dom
 import Browser.Events
+import Contraption.Animation as Animation exposing (Animated)
+import Contraption.Catalog as Catalog exposing (Category(..), PartItem)
+import Contraption.Machine as Machine exposing (MachineState)
+import Contraption.Placement as Placement
+import Data
 import Dict exposing (Dict)
+import EmbeddedParts
 import FeatherIcons
+import Gear.Placements as Placements
 import Html exposing (Html, button, div, h1, header, span, text)
 import Html.Attributes as Attr
 import Html.Events exposing (onClick)
@@ -54,8 +76,10 @@ import Process
 import Render.Camera as Camera
 import Render.Style as Style
 import Set
+import Simulation
 import Studio.Colours as Colours
 import Studio.Core as Core
+import Studio.GearFeedback as GearFeedback
 import Studio.Shortcuts as StudioShortcuts exposing (TurnDirection(..))
 import Studio.UrlPayload as UrlPayload exposing (PartKitItem)
 import Task
@@ -90,11 +114,25 @@ defaultInventory =
     [ { part = "3001.dat", color = 14, count = 10 } ]
 
 
+{-| The height of the motor, in revolutions per minute, for the Technic machine.
+-}
+motorRpm : Float
+motorRpm =
+    30.0
+
+
 {-| Main application model.
 -}
 type alias Model =
     { studio : Core.Model
     , inventory : List PartKitItem
+    , kitFromUrl : Bool
+    , machine : MachineState
+    , playing : Bool
+    , currentTime : Float
+    , simulation : Simulation.Model
+    , animated : Animated
+    , activeCategory : Category
     , helpOpen : Bool
     , menuOpen : Bool
     , windowWidth : Int
@@ -109,8 +147,8 @@ type alias Model =
     }
 
 
-{-| A rendered kit part: its image as a data URL and the part's .dat title
-(`""` when unknown). Kept under `PartCard.thumbnailKey file color`.
+{-| A rendered dock image: its data URL and the part's .dat title (`""` when
+unknown). Kept under `PartCard.thumbnailKey file color`.
 -}
 type alias Thumbnail =
     { url : String
@@ -123,6 +161,8 @@ type alias Thumbnail =
 type Msg
     = StudioMsg Core.Msg
     | AddPart PartKitItem
+    | AddCatalogPart PartItem
+    | SetCategory Category
     | Undo
     | Redo
     | Delete
@@ -132,6 +172,8 @@ type Msg
     | ToggleFine
     | Clear
     | FitView
+    | TogglePlay
+    | Tick Float
     | ToggleRealistic
     | CaptureSnapshot
     | SnapshotReady { dataUrl : String, filename : String }
@@ -173,12 +215,15 @@ init flags =
                 Nothing ->
                     Document.empty
 
+        kitFromUrl =
+            not (List.isEmpty payload.parts)
+
         inventory =
-            if List.isEmpty payload.parts then
-                defaultInventory
+            if kitFromUrl then
+                payload.parts
 
             else
-                payload.parts
+                defaultInventory
 
         config =
             { ldrawBase = flags.ldrawBase
@@ -205,6 +250,20 @@ init flags =
         initialModel =
             { studio = initialStudio
             , inventory = inventory
+            , kitFromUrl = kitFromUrl
+            , machine = Machine.analyseMachine initialDoc initialStudio.viewport.partCache
+            , playing = False
+            , currentTime = 0.0
+            , simulation =
+                Simulation.init
+                    { gearSpecs = Data.gearParts
+                    , lodCache = EmbeddedParts.lodCache
+                    , maxRpm = motorRpm
+                    , initialRpm = motorRpm
+                    , requestedMotorIndex = Nothing
+                    }
+            , animated = Animation.none
+            , activeCategory = GearsCategory
             , helpOpen = False
             , menuOpen = False
             , windowWidth = 1280
@@ -218,53 +277,101 @@ init flags =
             , snapshotModal = Nothing
             }
 
-        requests =
-            thumbnailRequests inventory initialModel.thumbnails
-
         fetchViewportSize =
             Browser.Dom.getViewport
                 |> Task.perform (\info -> WindowResized (round info.viewport.width) (round info.viewport.height))
     in
-    ( initialModel
+    ( withTechnicSettings initialModel
     , Cmd.batch
         [ Cmd.map StudioMsg studioCmd
         , fetchViewportSize
-        , if List.isEmpty requests then
-            Cmd.none
-
-          else
-            Ports.requestThumbnails requests
+        , requestDockThumbnails initialModel
         ]
     )
 
 
-{-| The thumbnails to ask the pipeline for: one per distinct part and colour in
-the kit that has none yet. `rgb` comes from the colour table the 3D view uses,
-so the pictures match the bricks on the canvas.
+{-| Technic mode, derived from the model: on when the document holds a gear that
+`Contraption.Machine` recognises, or when the URL kit lists a gear part. The
+catalog's gears are not counted here, because the catalog is only offered in
+Technic mode (see `catalogDock`).
 -}
-thumbnailRequests : List PartKitItem -> Dict String Thumbnail -> List { file : String, color : Int, rgb : List Float }
-thumbnailRequests inventory thumbnails =
+technicMode : Model -> Bool
+technicMode model =
+    not (List.isEmpty model.machine.gears)
+        || (model.kitFromUrl && List.any (\item -> isGearFile item.part) model.inventory)
+
+
+isGearFile : String -> Bool
+isGearFile file =
+    List.any (\spec -> spec.partFile == file) Data.gearParts
+
+
+{-| The dock lists the Technic catalog, with its category tabs, when Technic mode
+is on and the URL gave no kit of its own. Otherwise it lists the counted kit.
+-}
+catalogDock : Model -> Bool
+catalogDock model =
+    technicMode model && not model.kitFromUrl
+
+
+{-| The catalog parts of the visible category, in catalog order.
+-}
+catalogItems : Model -> List PartItem
+catalogItems model =
+    Catalog.partsForCategory model.activeCategory
+
+
+{-| The (file, colour) pairs the dock shows: the catalog parts of the visible
+category in catalog mode, else the kit items.
+-}
+dockPairs : Model -> List ( String, Int )
+dockPairs model =
+    if catalogDock model then
+        List.map (\item -> ( item.file, item.color )) (catalogItems model)
+
+    else
+        List.map (\item -> ( item.part, item.color )) model.inventory
+
+
+{-| Ask for the images of the parts in the dock that have none yet.
+-}
+requestDockThumbnails : Model -> Cmd Msg
+requestDockThumbnails model =
+    case thumbnailRequests (dockPairs model) model.thumbnails of
+        [] ->
+            Cmd.none
+
+        requests ->
+            Ports.requestThumbnails requests
+
+
+{-| The thumbnails to ask the pipeline for: one per distinct (file, colour) in
+the list that has none yet. `rgb` comes from the colour table the 3D view uses,
+so the pictures match the parts on the canvas.
+-}
+thumbnailRequests : List ( String, Int ) -> Dict String Thumbnail -> List { file : String, color : Int, rgb : List Float }
+thumbnailRequests items thumbnails =
     let
-        step item ( seen, acc ) =
+        addRequest ( file, color ) ( seen, acc ) =
             let
                 key =
-                    PartCard.thumbnailKey item.part item.color
+                    PartCard.thumbnailKey file color
             in
             if List.member key seen || Dict.member key thumbnails then
                 ( seen, acc )
 
             else
                 ( key :: seen
-                , { file = item.part
-                  , color = item.color
+                , { file = file
+                  , color = color
                   , rgb =
-                        Colors.resolveColor item.color 16
+                        Colors.resolveColor color 16
                             |> (\c -> [ c.r, c.g, c.b ])
                   }
                     :: acc
                 )
     in
-    List.foldl step ( [], [] ) inventory
+    List.foldl addRequest ( [], [] ) items
         |> Tuple.second
         |> List.reverse
 
@@ -277,22 +384,22 @@ kitItemName model item =
     case Dict.get (PartCard.thumbnailKey item.part item.color) model.thumbnails of
         Just thumb ->
             if String.isEmpty (String.trim thumb.title) then
-                partNumber item
+                partNumber item.part
 
             else
                 thumb.title
 
         Nothing ->
-            partNumber item
+            partNumber item.part
 
 
-partNumber : PartKitItem -> String
-partNumber item =
-    String.replace ".dat" "" item.part
+partNumber : String -> String
+partNumber file =
+    String.replace ".dat" "" file
 
 
-{-| The name of the selection for the action bar: the brick's name when one
-brick is selected, else how many bricks are.
+{-| The name of the selection for the action bar: the part's name when one part
+is selected, else how many parts are.
 -}
 selectionName : Model -> String
 selectionName model =
@@ -300,22 +407,35 @@ selectionName model =
         [ id ] ->
             case List.filter (\p -> p.id == id) (Core.getPlacements model.studio) of
                 placed :: _ ->
-                    case Dict.get (PartCard.thumbnailKey placed.part placed.color) model.thumbnails of
-                        Just thumb ->
-                            if String.isEmpty (String.trim thumb.title) then
-                                String.replace ".dat" "" placed.part
-
-                            else
-                                thumb.title
-
-                        Nothing ->
-                            String.replace ".dat" "" placed.part
+                    placedName model placed.part placed.color
 
                 [] ->
                     ""
 
         ids ->
-            String.fromInt (List.length ids) ++ " bricks"
+            String.fromInt (List.length ids) ++ " parts"
+
+
+{-| A placed part's name: its Technic catalogue name when it has one, else the
+title the pipeline sent, else its part number.
+-}
+placedName : Model -> String -> Int -> String
+placedName model file color =
+    case List.filter (\item -> item.file == file) Catalog.curatedParts of
+        item :: _ ->
+            item.name
+
+        [] ->
+            case Dict.get (PartCard.thumbnailKey file color) model.thumbnails of
+                Just thumb ->
+                    if String.isEmpty (String.trim thumb.title) then
+                        partNumber file
+
+                    else
+                        thumb.title
+
+                Nothing ->
+                    partNumber file
 
 
 {-| Remaining count for a specific kit item.
@@ -331,14 +451,15 @@ remainingForItem model item =
     max 0 (item.count - placed)
 
 
-{-| Total remaining bricks across the entire kit inventory.
+{-| Total remaining parts across the entire kit inventory.
 -}
 remainingCount : Model -> Int
 remainingCount model =
     List.sum (List.map (remainingForItem model) model.inventory)
 
 
-{-| Encode current document and kit inventory into a shareable URL hash.
+{-| Encode current document and kit inventory into a shareable URL hash. The
+Technic catalog is not part of a link: its gears come with the model.
 -}
 shareHash : Model -> String
 shareHash model =
@@ -350,13 +471,30 @@ shareHash model =
             Writer.writeDocument doc
 
         partsStr =
-            UrlPayload.encodeParts model.inventory
-    in
-    if List.isEmpty (Document.mainPlacements doc) then
-        "parts=" ++ Url.percentEncode partsStr
+            if catalogDock model then
+                ""
 
-    else
-        "model=" ++ Url.percentEncode modelStr ++ "&parts=" ++ Url.percentEncode partsStr
+            else
+                UrlPayload.encodeParts model.inventory
+
+        hasModel =
+            not (List.isEmpty (Document.mainPlacements doc))
+
+        hasParts =
+            not (String.isEmpty (String.trim partsStr))
+    in
+    case ( hasModel, hasParts ) of
+        ( True, True ) ->
+            "model=" ++ Url.percentEncode modelStr ++ "&parts=" ++ Url.percentEncode partsStr
+
+        ( True, False ) ->
+            "model=" ++ Url.percentEncode modelStr
+
+        ( False, True ) ->
+            "parts=" ++ Url.percentEncode partsStr
+
+        ( False, False ) ->
+            ""
 
 
 {-| Update URL hash if the given core events contain a document change.
@@ -419,8 +557,127 @@ closesSnapshot msg model =
             False
 
 
+{-| Run a message, then bring the derived state up to date (`settle`). The dock
+asks for the pictures of its new parts when the parts it lists change.
+-}
 updateApp : Msg -> Model -> ( Model, Cmd Msg )
 updateApp msg model =
+    let
+        ( next, cmd ) =
+            step msg model
+
+        settled =
+            settle model next
+
+        dockCmd =
+            if dockPairs model /= dockPairs settled then
+                requestDockThumbnails settled
+
+            else
+                Cmd.none
+    in
+    ( settled, Cmd.batch [ cmd, dockCmd ] )
+
+
+{-| Brings the derived state in line with what a message just did. A changed
+document is analysed again for its gears, and the machine comes to rest. Then
+Technic mode sets the studio's gear alignment and drag settling, and a machine
+that is no longer Technic stops.
+-}
+settle : Model -> Model -> Model
+settle before after =
+    let
+        edited =
+            after.studio.document.submodels /= before.studio.document.submodels
+
+        analysed =
+            if edited then
+                { after | machine = Machine.analyseMachine after.studio.document after.studio.viewport.partCache }
+
+            else
+                after
+
+        rested =
+            if edited || (not (technicMode analysed) && (analysed.playing || analysed.currentTime /= 0)) then
+                stopForEdit analysed
+
+            else
+                analysed
+    in
+    withTechnicSettings rested
+
+
+{-| Technic mode turns on gear alignment (a meshing gear turns its axle line so
+the teeth interlock) and stops drags from settling to the ground, so gear and
+axle axes stay on the axle line. Plain Brick Play has neither.
+-}
+withTechnicSettings : Model -> Model
+withTechnicSettings model =
+    let
+        technic =
+            technicMode model
+    in
+    { model
+        | studio =
+            model.studio
+                |> Core.setGearAlignment technic
+                |> Core.setDragSettles (not technic)
+    }
+
+
+{-| An edit puts the machine back at rest: paused, at time 0, nothing animated,
+so every part is drawn by the static scene again.
+-}
+stopForEdit : Model -> Model
+stopForEdit model =
+    { model
+        | playing = False
+        , currentTime = 0
+        , simulation = Simulation.setTime 0 model.simulation
+        , animated = Animation.none
+    }
+
+
+{-| Play from rest analyses the current document for the turning gears and
+their meshes; resuming a pause keeps the analysis and the clock.
+-}
+startPlaying : Model -> Model
+startPlaying model =
+    if model.currentTime > 0 then
+        { model | playing = True }
+
+    else
+        let
+            ( simulation, _ ) =
+                Simulation.analyse
+                    { lines = Document.toLines model.studio.document
+                    , cache = model.studio.viewport.partCache
+                    }
+                    (Simulation.setTime 0 model.simulation)
+
+            gears =
+                simulation.gearGraph
+                    |> Maybe.map (.instances >> Array.toList)
+                    |> Maybe.withDefault []
+        in
+        { model
+            | playing = True
+            , simulation = Simulation.setTime 0 simulation
+            , animated =
+                let
+                    turning =
+                        Simulation.rotatingGearIds simulation
+                in
+                Animation.rotating turning
+                    (Placements.gearSources model.studio.document gears)
+                    (Placements.partSources model.studio.document (Simulation.drivenPartsFor turning simulation))
+        }
+
+
+{-| Handle one message, without the derived-state bookkeeping of `updateApp`.
+-}
+step : Msg -> Model -> ( Model, Cmd Msg )
+step msg model =
     case msg of
         StudioMsg studioMsg ->
             let
@@ -442,53 +699,38 @@ updateApp msg model =
                 )
                 (List.filterMap extractKey events)
 
+        TogglePlay ->
+            -- Outside Technic mode there is no machine, so Space is unbound.
+            if not (technicMode model) then
+                ( model, Cmd.none )
+
+            else if model.playing then
+                ( { model | playing = False }, Cmd.none )
+
+            else
+                ( startPlaying model, Cmd.none )
+
         AddPart item ->
-            addPartItem item { model | lastTapped = Just (kitItemName model item) }
+            if remainingForItem model item <= 0 then
+                ( model, Cmd.none )
+
+            else
+                placePart item.part item.color (kitItemName model item) model
+
+        AddCatalogPart item ->
+            placePart item.file item.color item.name model
+
+        SetCategory category ->
+            ( { model | activeCategory = category }, Cmd.none )
 
         Undo ->
-            let
-                ( nextStudio, studioCmd, events ) =
-                    Core.undo model.studio
-
-                nextModel =
-                    { model | studio = nextStudio }
-
-                portCmds =
-                    handleCoreEvents events
-            in
-            ( nextModel
-            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncDocHash nextModel events ]
-            )
+            runCore Core.undo model
 
         Redo ->
-            let
-                ( nextStudio, studioCmd, events ) =
-                    Core.redo model.studio
-
-                nextModel =
-                    { model | studio = nextStudio }
-
-                portCmds =
-                    handleCoreEvents events
-            in
-            ( nextModel
-            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncDocHash nextModel events ]
-            )
+            runCore Core.redo model
 
         Delete ->
-            let
-                ( nextStudio, studioCmd, events ) =
-                    Core.deleteSelection model.studio
-
-                nextModel =
-                    { model | studio = nextStudio }
-
-                portCmds =
-                    handleCoreEvents events
-            in
-            ( nextModel
-            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncDocHash nextModel events ]
-            )
+            runCore Core.deleteSelection model
 
         TurnSelection direction ->
             runCore (Core.turnSelected direction) model
@@ -498,6 +740,9 @@ updateApp msg model =
 
         LowerSelection ->
             runCore Core.lowerSelected model
+
+        Clear ->
+            runCore (Core.resetDocument Document.empty) model
 
         ToggleFine ->
             ( { model | studio = Core.setFineMove (not (Core.fineMove model.studio)) model.studio }
@@ -522,7 +767,9 @@ updateApp msg model =
             ( { model | snapshotModal = Just (SnapshotModal.init { filename = "brick-play-render.png" }) }
             , Ports.captureRender
                 (Viewport.snapshotRequest
-                    { filename = "brick-play-render.png", extraTriangles = [] }
+                    { filename = "brick-play-render.png"
+                    , extraTriangles = snapshotTriangles model
+                    }
                     model.studio.viewport
                 )
             )
@@ -552,27 +799,28 @@ updateApp msg model =
             , cancelSnapshotCmd model.snapshotModal
             )
 
-        Clear ->
-            let
-                ( nextStudio, studioCmd, events ) =
-                    Core.resetDocument Document.empty model.studio
-
-                nextModel =
-                    { model | studio = nextStudio }
-
-                portCmds =
-                    handleCoreEvents events
-            in
-            ( nextModel
-            , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncDocHash nextModel events ]
-            )
-
         FitView ->
             let
                 ( nextStudio, studioCmd ) =
                     Core.fitView model.studio
             in
             ( { model | studio = nextStudio }, Cmd.map StudioMsg studioCmd )
+
+        Tick delta ->
+            if model.playing then
+                let
+                    newTime =
+                        model.currentTime + delta / 1000.0
+                in
+                ( { model
+                    | currentTime = newTime
+                    , simulation = Simulation.setTime newTime model.simulation
+                  }
+                , Cmd.none
+                )
+
+            else
+                ( model, Cmd.none )
 
         GlobePressed point ->
             ( { model | globeDrag = Just (CameraGlobe.startDrag model.studio.viewport.camera point) }, Cmd.none )
@@ -685,9 +933,41 @@ updateApp msg model =
             )
 
 
-{-| The studio pauses its editing keys while a layer is open (the help dialog or
-the menu), so Escape reaches the app to close that layer first.
+{-| Put a dock part into the studio: a Technic part on the shared axle line, next
+to the selection (`Contraption.Placement`), anything else on a free ground spot
+clear of every piece already placed.
 -}
+placePart : String -> Int -> String -> Model -> ( Model, Cmd Msg )
+placePart file color name model =
+    let
+        ( nextStudio, studioCmd, events ) =
+            case Placement.targetFor file model.studio of
+                Placement.AtPlacement matrix ->
+                    Core.addPartAt file color matrix model.studio
+
+                Placement.OnGround spot ->
+                    Core.addPart file color spot model.studio
+
+        nextModel =
+            { model | studio = nextStudio, lastTapped = Just name }
+    in
+    ( nextModel
+    , Cmd.batch [ Cmd.map StudioMsg studioCmd, handleCoreEvents events, syncDocHash nextModel events ]
+    )
+
+
+{-| The gears and driven parts drawn turning in the snapshot: only in Technic
+mode, where the machine has a simulation to draw.
+-}
+snapshotTriangles : Model -> List Float
+snapshotTriangles model =
+    if technicMode model then
+        Simulation.snapshotTriangles model.simulation
+
+    else
+        []
+
+
 syncKeyPause : Model -> Model
 syncKeyPause model =
     { model | studio = Core.setHelpVisible (model.helpOpen || model.menuOpen) model.studio }
@@ -707,6 +987,16 @@ runCore edit model =
     ( nextModel
     , Cmd.batch [ Cmd.map StudioMsg studioCmd, handleCoreEvents events, syncDocHash nextModel events ]
     )
+
+
+extractKey : Core.Event -> Maybe ViewportShortcuts.KeyEvent
+extractKey event =
+    case event of
+        Core.KeyAccepted keyEvent ->
+            Just keyEvent
+
+        _ ->
+            Nothing
 
 
 {-| Run the shortcut a key press stands for, after the studio has had its turn.
@@ -749,16 +1039,6 @@ closesMenu keyEvent =
         == Just StudioShortcuts.CloseMenu
 
 
-extractKey : Core.Event -> Maybe ViewportShortcuts.KeyEvent
-extractKey event =
-    case event of
-        Core.KeyAccepted keyEvent ->
-            Just keyEvent
-
-        _ ->
-            Nothing
-
-
 {-| What `Escape` and `?` need to know to pick between their meanings.
 -}
 shortcutContext : Model -> { helpVisible : Bool, walking : Bool }
@@ -768,14 +1048,14 @@ shortcutContext model =
     }
 
 
-{-| Map a viewport shortcut to the message it stands for. Brick Play has no
-simulation, so Space is deliberately left unbound.
+{-| Map a viewport shortcut to the message it stands for. Space is
+`TogglePlay`, which does nothing outside Technic mode.
 -}
 msgForAction : ViewportShortcuts.Action -> Msg
 msgForAction action =
     case action of
         ViewportShortcuts.TogglePlayback ->
-            NoOp
+            TogglePlay
 
         ViewportShortcuts.FitView ->
             FitView
@@ -832,84 +1112,6 @@ keyboardZoomStep =
     200.0
 
 
-{-| The shortcut list for Brick Play: editing keys on the selected brick, then
-the camera.
--}
-helpRows : List ( String, List ( String, String ) )
-helpRows =
-    [ ( "Build"
-      , [ ( "Menu, top right", "Undo, redo, delete, clear, and this list" )
-        , ( "Drag a brick", "Move it as seen from the camera (snaps to studs)" )
-        , ( "Fine (action bar) or Shift", "1 LDU moves for drags and W A S D Q E nudges" )
-        , ( "Wheel while dragging", "Raise / lower (Shift: coarser, Alt: finer)" )
-        , ( "Right click mid-drag", "Cancel the drag" )
-        , ( "Action bar (above the dock)", "Turn left / right, tip, raise, lower or remove the selected brick; Fine toggles 1 LDU moves" )
-        , ( "W A S D  Q E", "Move the selected brick (Shift: fine steps)" )
-        , ( "← → ↑ ↓", "Turn the selected brick (Shift: 45°)" )
-        , ( "Delete", "Remove the selected brick" )
-        , ( "Ctrl + Z", "Undo" )
-        , ( "Ctrl + Shift + Z  Ctrl + Y", "Redo" )
-        , ( "Ctrl + A", "Select all" )
-        , ( "Ctrl + click  Shift + click", "Add to or remove from the selection" )
-        , ( "Esc", "Cancel a drag, or deselect" )
-        ]
-      )
-    , ( "Camera"
-      , [ ( "Drag the globe, bottom right", "Orbit the camera (also by touch)" )
-        , ( "Tap the globe", "Fly to that side of the model" )
-        , ( "Zoom slider", "Zoom in and out" )
-        , ( "Reset view, or F", "Fit the whole model in view" )
-        , ( "Drag empty space", "Pan" )
-        , ( "Right-drag", "Orbit" )
-        , ( "Middle drag", "Pan" )
-        , ( "One finger on empty space", "Pan (two fingers: pan and pinch-zoom)" )
-        , ( "Wheel  + -", "Zoom" )
-        , ( "1 2 3 4 5 6  `", "Views: front, back, left, right, top, bottom, 3/4" )
-        , ( "G", "Street-level walk, on / off" )
-        ]
-      )
-    , ( "Help"
-      , [ ( "?  /", "This list" ) ]
-      )
-    ]
-
-
-{-| Keep focus off toolbar and dock buttons after a mouse click, so the
-keyboard shortcuts keep working. A focused button would otherwise take the keys
-for itself.
--}
-keepFocusOnCanvas : Html.Attribute Msg
-keepFocusOnCanvas =
-    Focus.keepFocusOnCanvas NoOp
-
-
-addPartItem : PartKitItem -> Model -> ( Model, Cmd Msg )
-addPartItem item model =
-    let
-        remaining =
-            remainingForItem model item
-    in
-    if remaining <= 0 then
-        ( model, Cmd.none )
-
-    else
-        let
-            -- Next to the selection (or in the middle of the view for the first
-            -- piece), on the ground, clear of every piece already placed.
-            ( nextStudio, studioCmd, events ) =
-                Core.addPart item.part item.color (Core.freeSpotFor item.part model.studio) model.studio
-
-            nextModel =
-                { model | studio = nextStudio }
-
-            portCmds =
-                handleCoreEvents events
-        in
-        ( nextModel
-        , Cmd.batch [ Cmd.map StudioMsg studioCmd, portCmds, syncDocHash nextModel events ]
-        )
-
-
 handleCoreEvents : List Core.Event -> Cmd Msg
 handleCoreEvents events =
     let
@@ -924,7 +1126,8 @@ handleCoreEvents events =
     Cmd.batch (List.map toCmd events)
 
 
-{-| Global subscriptions for Brick Play.
+{-| Global subscriptions for Brick Play. The machine's clock runs only while it
+plays.
 -}
 subscriptions : Model -> Sub Msg
 subscriptions model =
@@ -937,6 +1140,11 @@ subscriptions model =
         , Ports.snapshotReady SnapshotReady
         , Ports.snapshotProgress SnapshotProgress
         , Ports.snapshotFailed SnapshotFailed
+        , if model.playing then
+            Browser.Events.onAnimationFrameDelta Tick
+
+          else
+            Sub.none
         ]
 
 
@@ -944,6 +1152,13 @@ subscriptions model =
 -}
 view : Model -> Html Msg
 view model =
+    let
+        accomplished =
+            technicMode model && Machine.isAccomplished model.machine
+
+        gearCount =
+            List.length model.machine.gears
+    in
     div
         [ Attr.style "position" "fixed"
         , Attr.style "inset" "0"
@@ -951,41 +1166,52 @@ view model =
         , Attr.style "background" "var(--color-brand)"
         , Attr.style "font-family" "var(--font-sans)"
         ]
-        [ -- Top right: the menu. The page heading is for screen readers only.
+        [ -- One row across the top: the accomplishment banner (Technic mode) sits in
+          -- the middle, the help, play and menu buttons on the right. The banner
+          -- shares the buttons' height and top edge, and shrinks before it reaches them.
           header
             [ Attr.style "position" "absolute"
             , Attr.style "top" "1rem"
+            , Attr.style "left" "1rem"
             , Attr.style "right" "1rem"
+            , Attr.style "height" "2.25rem"
+            , Attr.style "display" "grid"
+            , Attr.style "grid-template-columns" "1fr minmax(0, auto) 1fr"
+            , Attr.style "align-items" "center"
+            , Attr.style "gap" "0.75rem"
             , Attr.style "z-index" "20"
             , Attr.style "pointer-events" "none"
             , keepFocusOnCanvas
             ]
             [ h1 [ Attr.class "sr-only" ] [ text "Palikkakehys Play" ]
+            , div [] []
+            , if accomplished then
+                accomplishmentBanner gearCount
+
+              else
+                div [ Attr.style "display" "none" ] []
             , div
-                [ Attr.style "display" "flex"
+                [ Attr.style "justify-self" "end"
+                , Attr.style "display" "flex"
                 , Attr.style "align-items" "center"
                 , Attr.style "gap" "0.5rem"
                 , Attr.style "pointer-events" "auto"
                 ]
                 [ helpButton
+                , if technicMode model then
+                    playButton model.playing
+
+                  else
+                    text ""
                 , HamburgerMenu.view (menuConfig model)
                 ]
             ]
 
         -- 3D WebGL Canvas
-        , Html.map StudioMsg (Core.view { width = model.windowWidth, height = model.windowHeight } model.studio)
+        , Html.map StudioMsg (viewCanvas model)
 
-        -- Shortcut reference, open from the menu
-        , if model.helpOpen then
-            ShortcutHelp.view { rows = helpRows, onClose = ToggleHelp }
-
-          else
-            text ""
-
-        -- Bottom: the selection action bar floats above the inventory dock
-        , bottomArea model
-
-        -- Wide windows: the camera globe sits beside the dock, bottom-right
+        -- Camera control: on a wide window the camera globe sits bottom-right,
+        -- beside the dock. On a narrow window it shares the bottom row instead.
         , if isNarrow model then
             text ""
 
@@ -997,6 +1223,26 @@ view model =
                 , Attr.style "z-index" "10"
                 ]
                 [ globeControl model ]
+        , if model.helpOpen then
+            -- Above the header and bottom area (z-index 10 and 20), which would
+            -- otherwise cover the top and bottom of the dialog.
+            div
+                [ Attr.style "position" "absolute"
+                , Attr.style "top" "0"
+                , Attr.style "left" "0"
+                , Attr.style "right" "0"
+                , Attr.style "bottom" "0"
+                , Attr.style "z-index" "30"
+                , Attr.style "pointer-events" "none"
+                ]
+                [ ShortcutHelp.view { rows = helpRows model, onClose = ToggleHelp } ]
+
+          else
+            text ""
+
+        -- Bottom: the gear pill (Technic mode) and the selection action bar float
+        -- above the dock
+        , bottomArea model
         , case model.toast of
             Just t ->
                 viewToast t.message
@@ -1047,7 +1293,7 @@ viewToast message =
 
 
 {-| Below this window width (CSS px, a portrait phone) the bottom area shows
-either the kit or the camera globe, never both.
+either the dock or the camera globe, never both.
 -}
 narrowWidth : Int
 narrowWidth =
@@ -1059,9 +1305,9 @@ isNarrow model =
     model.windowWidth < narrowWidth
 
 
-{-| The bottom area: the action bar for the selection, then the kit. On a narrow
-window the kit row also carries the camera toggle, and shows the camera globe
-instead of the kit while the toggle is on.
+{-| The bottom area: the gear pill (Technic mode only), the action bar for the
+selection, then the dock. On a narrow window the dock row also carries the camera
+toggle, and shows the camera globe instead of the dock while the toggle is on.
 -}
 bottomArea : Model -> Html Msg
 bottomArea model =
@@ -1077,7 +1323,12 @@ bottomArea model =
          ]
             ++ dockPlacement model.windowWidth
         )
-        [ selectionBar model
+        [ if technicMode model then
+            gearRow model
+
+          else
+            text ""
+        , selectionBar model
         , touchLabel model
         , if isNarrow model then
             narrowRow model
@@ -1087,8 +1338,8 @@ bottomArea model =
         ]
 
 
-{-| The narrow bottom row: the kit (or the camera globe) and the toggle that
-switches between them, at a finger-sized width.
+{-| The narrow bottom row: the dock (or the camera globe) and the toggle between
+them, at a finger-sized width.
 -}
 narrowRow : Model -> Html Msg
 narrowRow model =
@@ -1116,7 +1367,7 @@ narrowRow model =
         ]
 
 
-{-| The toggle between the kit and the camera globe on a narrow window. Its icon
+{-| The toggle between the dock and the camera globe on a narrow window. Its icon
 shows what is on screen now; `aria-pressed` is on while the camera is shown.
 -}
 cameraToggle : Model -> Html Msg
@@ -1174,7 +1425,8 @@ cameraToggle model =
         ]
 
 
-{-| The shared camera globe, with the zoom slider and the reset button.
+{-| The shared camera globe, with the zoom slider, the reset button and the
+realistic-rendering and snapshot buttons.
 -}
 globeControl : Model -> Html Msg
 globeControl model =
@@ -1214,8 +1466,8 @@ globeControl model =
         }
 
 
-{-| On touch screens, where tooltips never show: the name of the kit card last
-tapped, above the kit. Hidden while the camera globe takes the bottom row.
+{-| On touch screens, where tooltips never show: the name of the dock part last
+tapped, above the dock. Hidden while the camera globe takes the bottom row.
 -}
 touchLabel : Model -> Html Msg
 touchLabel model =
@@ -1262,8 +1514,40 @@ dockPlacement windowWidth =
         ]
 
 
-{-| The top-right menu: undo, redo, delete, clear, fit view and the shortcut
-list. Each item does what its keyboard shortcut does.
+{-| The row holding the gear mesh status pill, truncated rather than pushing the
+action bar off a phone.
+-}
+gearRow : Model -> Html Msg
+gearRow model =
+    div
+        [ Attr.style "display" "flex"
+        , Attr.style "justify-content" "center"
+        , Attr.style "max-width" "100%"
+        , Attr.style "min-width" "0"
+        , Attr.style "overflow" "hidden"
+        , Attr.style "white-space" "nowrap"
+        ]
+        [ gearPill model ]
+
+
+{-| The gear feedback pill, keyed by its text so a changed status replaces it.
+-}
+gearPill : Model -> Html Msg
+gearPill model =
+    case GearFeedback.gearFeedback (Set.toList model.studio.selection) model.studio.document of
+        Just feedback ->
+            let
+                label =
+                    GearFeedback.feedbackText feedback
+            in
+            Keyed.node "span" [ Attr.style "display" "contents" ] [ ( label, GearFeedback.pill feedback ) ]
+
+        Nothing ->
+            text ""
+
+
+{-| The top-right menu: undo, redo, delete, clear and the shortcut list. Each
+item does what its keyboard shortcut does.
 -}
 menuConfig : Model -> HamburgerMenu.Config Msg
 menuConfig model =
@@ -1314,12 +1598,93 @@ menuId =
     "play-menu"
 
 
-{-| Buttons for the selected bricks, the touch- and mouse-friendly stand-in for
-an axis gizmo. Each does what its keyboard shortcut does. The name of the
-selection is shown on touch screens, where tooltips never show. The bar wraps
-onto two rows rather than overflowing a phone. The Fine toggle is always last,
-so it can be set before anything is selected; without a selection the bar
-shows only that toggle.
+{-| The accomplishment banner: a polite live status line, in the green of the
+LDraw palette's Green (the theme has no green token). It is one line, the height
+of the top buttons, and ellipsizes on a narrow window.
+-}
+accomplishmentBanner : Int -> Html Msg
+accomplishmentBanner gearCount =
+    let
+        green =
+            Colors.resolveColor 2 16
+
+        channel value =
+            String.fromInt (round (value * 255))
+    in
+    div
+        [ Attr.attribute "role" "status"
+        , Attr.attribute "aria-live" "polite"
+        , Attr.style "height" "2.25rem"
+        , Attr.style "box-sizing" "border-box"
+        , Attr.style "min-width" "0"
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "padding" "0 1.25rem"
+        , Attr.style "background" ("rgba(" ++ channel green.r ++ ", " ++ channel green.g ++ ", " ++ channel green.b ++ ", 0.95)")
+        , Attr.style "border" "2px solid var(--color-brand-yellow)"
+        , Attr.style "border-radius" "9999px"
+        , Attr.style "color" "var(--color-text-on-dark)"
+        , Attr.style "font-size" "0.875rem"
+        , Attr.style "font-weight" "700"
+        , Attr.style "white-space" "nowrap"
+        , Attr.style "overflow" "hidden"
+        , Attr.style "text-overflow" "ellipsis"
+        , Attr.style "box-shadow" "0 10px 25px rgba(0, 0, 0, 0.6)"
+        ]
+        [ -- Keyed: a text change replaces the element, so a browser that has
+          -- translated the old text cannot leave stale copies behind.
+          let
+            label =
+                "All " ++ String.fromInt gearCount ++ " gears are rotating together!"
+          in
+          Keyed.node "span" [] [ ( label, span [] [ text label ] ) ]
+        ]
+
+
+{-| The studio canvas. While the machine is animated the turning gears are
+drawn by the simulation (with the axles and parts riding on them) and their
+static placements are hidden.
+-}
+viewCanvas : Model -> Html Core.Msg
+viewCanvas model =
+    let
+        animated =
+            if technicMode model && Animation.isAnimating { playing = model.playing, currentTime = model.currentTime } then
+                model.animated
+
+            else
+                Animation.none
+
+        studio =
+            model.studio
+
+        shown =
+            if Set.isEmpty animated.sources then
+                studio
+
+            else
+                { studio | viewport = Viewport.setHiddenSources animated.sources studio.viewport }
+    in
+    Core.viewWithExtra
+        { width = model.windowWidth
+        , height = model.windowHeight
+        , extraEntities =
+            \camera aspect ->
+                if Set.isEmpty animated.gears then
+                    []
+
+                else
+                    Simulation.gearEntitiesFor animated.gears camera studio.viewport.renderStyle aspect model.simulation
+                        ++ Simulation.drivenEntitiesFor animated.gears camera studio.viewport.renderStyle aspect model.simulation
+        }
+        shown
+
+
+{-| Buttons for the selected parts, the touch- and mouse-friendly stand-in for an
+axis gizmo. Each does what its keyboard shortcut does. The name of the selection
+is shown on touch screens, where tooltips never show. The bar wraps onto two rows
+rather than overflowing a phone. The Fine toggle is always last, so it can be set
+before anything is selected; without a selection the bar shows only that toggle.
 -}
 selectionBar : Model -> Html Msg
 selectionBar model =
@@ -1357,7 +1722,7 @@ selectionBar model =
     in
     div
         [ Attr.attribute "role" "toolbar"
-        , Attr.attribute "aria-label" "Selected brick"
+        , Attr.attribute "aria-label" "Selected parts"
         , Attr.style "display" "flex"
         , Attr.style "flex-wrap" "wrap"
         , Attr.style "justify-content" "center"
@@ -1467,8 +1832,23 @@ actionButton msg icon label shortcut =
         ]
 
 
+{-| The dock: the Technic catalog with its tabs in Technic mode without a kit
+from the URL, else the counted kit.
+-}
 viewDock : Model -> Html Msg
 viewDock model =
+    if catalogDock model then
+        catalogDockView model
+
+    else
+        kitDockView model
+
+
+{-| The counted kit: one picture card per kit item, its remaining count on the
+image corner.
+-}
+kitDockView : Model -> Html Msg
+kitDockView model =
     div
         [ Attr.attribute "role" "group"
         , Attr.attribute "aria-label" "Kit"
@@ -1510,7 +1890,7 @@ viewKitCard model item =
         { imageUrl =
             Dict.get (PartCard.thumbnailKey item.part item.color) model.thumbnails
                 |> Maybe.map .url
-        , tooltip = name ++ " (" ++ partNumber item ++ ", " ++ colourName ++ ") — " ++ String.fromInt remaining ++ " of " ++ String.fromInt item.count ++ " available"
+        , tooltip = name ++ " (" ++ partNumber item.part ++ ", " ++ colourName ++ ") — " ++ String.fromInt remaining ++ " of " ++ String.fromInt item.count ++ " available"
         , ariaLabel = "Add " ++ name ++ " (" ++ colourName ++ "), " ++ String.fromInt remaining ++ " of " ++ String.fromInt item.count ++ " left"
         , badge =
             Just
@@ -1525,6 +1905,255 @@ viewKitCard model item =
                 Nothing
         , attributes = [ keepFocusOnCanvas ]
         }
+
+
+{-| The Technic catalog dock: the category tabs in a narrow column on the left,
+then the picture cards of the visible category. The cards are unlimited.
+-}
+catalogDockView : Model -> Html Msg
+catalogDockView model =
+    div
+        [ Attr.style "display" "flex"
+        , Attr.style "align-items" "stretch"
+        , Attr.style "gap" "0.5rem"
+        , Attr.style "box-sizing" "border-box"
+        , Attr.style "height" PartCard.compactPanelHeight
+        , Attr.style "min-width" "0"
+        , Attr.style "max-width" "100%"
+        , Attr.style "padding" "0.5rem"
+        , Attr.style "background" "rgba(5, 19, 29, 0.92)"
+        , Attr.style "backdrop-filter" "blur(12px)"
+        , Attr.style "border-radius" "1rem"
+        , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
+        , Attr.style "box-shadow" "0 20px 25px -5px rgba(0, 0, 0, 0.5)"
+        , Attr.style "pointer-events" "auto"
+        , keepFocusOnCanvas
+        ]
+        [ categoryTabs model
+        , div
+            [ Attr.attribute "role" "group"
+            , Attr.attribute "aria-label" "Parts"
+            , Attr.style "display" "flex"
+            , Attr.style "align-items" "center"
+            , Attr.style "gap" "0.5rem"
+            , Attr.style "flex" "1 1 auto"
+            , Attr.style "min-width" "0"
+            , Attr.style "overflow-x" "auto"
+            , Attr.style "padding" "0.125rem"
+            ]
+            (List.map (catalogCard model.thumbnails) (catalogItems model))
+        ]
+
+
+{-| The category tabs: a narrow column on the left of the catalog dock.
+-}
+categoryTabs : Model -> Html Msg
+categoryTabs model =
+    div
+        [ Attr.attribute "role" "tablist"
+        , Attr.attribute "aria-orientation" "vertical"
+        , Attr.attribute "aria-label" "Part categories"
+        , Attr.style "display" "flex"
+        , Attr.style "flex-direction" "column"
+        , Attr.style "justify-content" "space-between"
+        , Attr.style "flex-shrink" "0"
+        , Attr.style "width" "4.5rem"
+        , Attr.style "min-height" "0"
+        ]
+        (List.map (categoryTab model.activeCategory) [ GearsCategory, BeamsCategory, AxlesCategory, PinsCategory ])
+
+
+categoryTab : Category -> Category -> Html Msg
+categoryTab active cat =
+    let
+        isSelected =
+            active == cat
+
+        label =
+            case cat of
+                PinsCategory ->
+                    "Pins"
+
+                _ ->
+                    Catalog.categoryLabel cat
+    in
+    button
+        [ onClick (SetCategory cat)
+        , Attr.attribute "role" "tab"
+        , Attr.attribute "aria-selected"
+            (if isSelected then
+                "true"
+
+             else
+                "false"
+            )
+        , Attr.title (Catalog.categoryLabel cat)
+        , Attr.style "flex-shrink" "0"
+        , Attr.style "width" "100%"
+        , Attr.style "padding" "0.1875rem 0.25rem"
+        , Attr.style "font-size" "0.6875rem"
+        , Attr.style "font-weight" "600"
+        , Attr.style "line-height" "1.2"
+        , Attr.style "white-space" "nowrap"
+        , Attr.style "border" "none"
+        , Attr.style "border-radius" "0.375rem"
+        , Attr.style "background"
+            (if isSelected then
+                "var(--color-brand-yellow)"
+
+             else
+                "rgba(255, 255, 255, 0.08)"
+            )
+        , Attr.style "color"
+            (if isSelected then
+                "var(--color-brand)"
+
+             else
+                "var(--color-text-subtle)"
+            )
+        , Attr.style "cursor" "pointer"
+        , Attr.style "transition" "all 150ms ease"
+        , Attr.class "touch-target"
+        ]
+        [ text label ]
+
+
+{-| One catalog part as a compact picture card. Its name, part number and
+description are in the tooltip and the accessible name.
+-}
+catalogCard : Dict String Thumbnail -> PartItem -> Html Msg
+catalogCard thumbnails item =
+    PartCard.compactView
+        { imageUrl = Maybe.map .url (Dict.get (PartCard.thumbnailKey item.file item.color) thumbnails)
+        , tooltip = item.name ++ " (" ++ item.file ++ ")" ++ descriptionSuffix item.description
+        , ariaLabel = "Add " ++ item.name ++ " (" ++ partNumber item.file ++ ")"
+        , badge = Nothing
+        , onClick = Just (AddCatalogPart item)
+        , attributes = [ keepFocusOnCanvas ]
+        }
+
+
+descriptionSuffix : String -> String
+descriptionSuffix description =
+    if String.isEmpty description then
+        ""
+
+    else
+        " — " ++ description
+
+
+{-| Clicking a toolbar, dock or pad button must not leave it focused: a focused
+button takes Space for itself, so Space would undo or add a part instead of
+playing and pausing.
+-}
+keepFocusOnCanvas : Html.Attribute Msg
+keepFocusOnCanvas =
+    Focus.keepFocusOnCanvas NoOp
+
+
+{-| The shortcut list. The Machine section (Space and the gear rules) is listed
+only in Technic mode, where it applies.
+-}
+helpRows : Model -> List ( String, List ( String, String ) )
+helpRows model =
+    [ ( "Build"
+      , [ ( "Menu, top right", "Undo, redo, delete, clear, and this list" )
+        , ( "Drag a part", "Move it as seen from the camera (snaps to studs)" )
+        , ( "Fine (action bar) or Shift", "1 LDU moves for drags and W A S D Q E nudges" )
+        , ( "Wheel while dragging", "Raise / lower (Shift: coarser, Alt: finer)" )
+        , ( "Right click mid-drag", "Cancel the drag" )
+        , ( "Action bar (above the dock)", "Turn left / right, tip, raise, lower or remove the selected part; Fine toggles 1 LDU moves" )
+        , ( "W A S D  Q E", "Move the selected part (Shift: fine steps)" )
+        , ( "← → ↑ ↓", "Turn the selected part (Shift: 45°)" )
+        , ( "Delete", "Remove the selected part" )
+        , ( "Ctrl + Z", "Undo" )
+        , ( "Ctrl + Shift + Z  Ctrl + Y", "Redo" )
+        , ( "Ctrl + A", "Select all" )
+        , ( "Ctrl + click  Shift + click", "Add to or remove from the selection" )
+        , ( "Esc", "Cancel a drag, or deselect" )
+        ]
+      )
+    , ( "Camera"
+      , [ ( "Drag the globe, bottom right", "Orbit the camera (also by touch)" )
+        , ( "Tap the globe", "Fly to that side of the model" )
+        , ( "Zoom slider", "Zoom in and out" )
+        , ( "Reset view, or F", "Fit the whole model in view" )
+        , ( "Drag empty space", "Pan" )
+        , ( "Right-drag", "Orbit" )
+        , ( "Middle drag", "Pan" )
+        , ( "One finger on empty space", "Pan (two fingers: pan and pinch-zoom)" )
+        , ( "Wheel  + -", "Zoom" )
+        , ( "1 2 3 4 5 6  `", "Views: front, back, left, right, top, bottom, 3/4" )
+        , ( "G", "Street-level walk, on / off" )
+        ]
+      )
+    ]
+        ++ (if technicMode model then
+                [ ( "Machine"
+                  , [ ( "Space", "Play / pause the machine (an edit stops it and rewinds)" )
+                    , ( "Gears turn to mesh", "A gear that meets another turns its axle line so the teeth interlock" )
+                    , ( "Gear pill", "With one gear selected, says how it meets its nearest gear" )
+                    ]
+                  )
+                ]
+
+            else
+                []
+           )
+        ++ [ ( "Help"
+             , [ ( "?  /", "This list" ) ]
+             )
+           ]
+
+
+{-| Play or pause the machine. Highlighted while it runs, like the old
+simulate toggle, so the state is visible at a glance.
+-}
+playButton : Bool -> Html Msg
+playButton playing =
+    button
+        [ onClick TogglePlay
+        , Attr.title "Play / pause (Space)"
+        , Attr.attribute "aria-pressed"
+            (if playing then
+                "true"
+
+             else
+                "false"
+            )
+        , Attr.style "padding" "0.375rem 0.875rem"
+        , Attr.style "font-size" "0.875rem"
+        , Attr.style "font-weight" "700"
+        , Attr.style "border" "none"
+        , Attr.style "border-radius" "0.375rem"
+        , Attr.style "background"
+            (if playing then
+                "var(--color-brand-yellow)"
+
+             else
+                "rgba(255, 255, 255, 0.15)"
+            )
+        , Attr.style "color"
+            (if playing then
+                "var(--color-brand)"
+
+             else
+                "var(--color-text-on-dark)"
+            )
+        , Attr.style "cursor" "pointer"
+        , Attr.style "transition" "all 150ms ease"
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "gap" "0.375rem"
+        , Attr.style "white-space" "nowrap"
+        , Attr.class "touch-target"
+        ]
+        (if playing then
+            [ Icon.feather "pause", text "Pause" ]
+
+         else
+            [ Icon.feather "play", text "Play" ]
+        )
 
 
 {-| Main application program.

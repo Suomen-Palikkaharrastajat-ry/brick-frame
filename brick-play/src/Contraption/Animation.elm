@@ -5,8 +5,8 @@ module Contraption.Animation exposing
     , rotating
     )
 
-{-| Which parts Brick Contraptions draws turning, and which static copies it
-hides while it does.
+{-| Which parts Brick Play draws turning in Technic mode, and which static copies
+it hides while it does.
 
 The turning parts are drawn by the shared `Simulation` component: the gears
 (`Simulation.gearEntitiesFor`), one baked mesh per gear rotated about its own

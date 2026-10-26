@@ -36,5 +36,5 @@ if (runtime.app?.ports?.copyToClipboard) {
 
 initSnapshots(runtime.app?.ports)
 
-// Rendered part images for the kit dock, with the parts' .dat titles as names.
+// Rendered part images for the dock (the kit, or the Technic catalog), with the parts' .dat titles as names.
 initThumbnails(runtime.app?.ports, ldrawBase, { titles: true })

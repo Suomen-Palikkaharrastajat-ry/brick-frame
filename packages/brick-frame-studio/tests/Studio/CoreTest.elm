@@ -1440,7 +1440,7 @@ emptyDragPanSuite =
         ]
 
 
-{-| Shift in `DragPartsOrPan` hosts (Play, Contraptions): a Shift + press on a
+{-| Shift in `DragPartsOrPan` hosts (Play): a Shift + press on a
 part grabs it, holding Shift during a body drag moves on a 1 LDU grid, and a
 Shift + press on empty canvas pans. The default mode keeps Shift + drag as a pan.
 -}

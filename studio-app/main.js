@@ -46,7 +46,6 @@ const recentParts = readStorage(RECENTS_KEY, [])
 const model = requestedModel ?? (draft !== null ? '' : `${siteRoot}examples/wheeler.ldr`)
 
 const playBaseUrl = import.meta.env.DEV ? 'http://localhost:5175/' : new URL('../play/', window.location.href).href
-const contraptionsBaseUrl = import.meta.env.DEV ? 'http://localhost:5176/' : new URL('../contraptions/', window.location.href).href
 
 const ldrawBase = import.meta.env.VITE_LDRAW_BASE ?? `${siteRoot}ldraw`
 
@@ -58,7 +57,7 @@ const runtime = initBricksRuntime({
   ldrawFallbackBase: import.meta.env.VITE_LDRAW_FALLBACK_BASE ?? '',
   defaultModel: model,
   loadModelInJs: true,
-  extraFlags: { draft, favorites, recentParts, playBaseUrl, contraptionsBaseUrl },
+  extraFlags: { draft, favorites, recentParts, playBaseUrl },
   initialHash: window.location.hash ?? '',
   syncUrlHash: true,
   useWindowResize: true,

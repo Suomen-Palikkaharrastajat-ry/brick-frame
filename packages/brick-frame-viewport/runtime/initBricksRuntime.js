@@ -695,7 +695,7 @@ export function initBricksRuntime(options) {
     })
   }
 
-  // Ports are optional per host (brick-play and brick-contraptions do not expose
+  // Ports are optional per host (brick-play does not expose
   // requestFileUpload, for one), so every wiring goes through these helpers and
   // quietly skips a port the host did not expose instead of aborting setup.
   function subscribePort(name, handler) {

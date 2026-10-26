@@ -210,8 +210,7 @@ new pivot over 280 ms (smoothstep, one `repivot` of the starting camera per
 animation frame — a pan). Any other camera change (the user orbiting, Fit View),
 or a drag capturing the pointer, abandons the glide where it is, and it is a
 no-op before any content has been measured. Fit View is the reset: it recentres
-on the model. The editing hosts (`Studio.Core` for Brick Play and Brick
-Contraptions, `Studio.Workspace` in the studio) call it **only on an explicit
+on the model. The editing hosts (`Studio.Core` for Brick Play, `Studio.Workspace` in the studio) call it **only on an explicit
 click or tap that selects a part** (including a part pressed and released
 without moving it) — never on adding a part, keyboard or action-bar moves, a
 drag drop, undo/redo or select all. The viewer, the studio's Preview and
@@ -293,17 +292,17 @@ same figure as before.
   canvas does depends on the host's `Studio.Core.DragMode`:
   - Viewer and studio (`DragPartsOrOrbit`, the default): left drag on empty canvas orbits.
     In the studio a left drag on a part moves it.
-  - Brick Play and Brick Contraptions (`DragPartsOrPan OneFinger…`): left drag on empty
+  - Brick Play (`DragPartsOrPan OneFinger…`): left drag on empty
     canvas pans, exactly like Shift + drag (`Viewport.panCurrentGesture`). A left drag on
     a part moves it. A click on empty canvas still clears the selection. Shift + left
     press on a part grabs it for a fine move (`Viewport.setShiftPressGrabs`, switched on by
     `Core.setDragMode`); Shift + left press on empty canvas pans. Holding Shift during a
     body drag moves on a 1 LDU grid (the normal grid returns on release).
 
-  | Input | Viewer, studio | Brick Play, Brick Contraptions | Event |
+  | Input | Viewer, studio | Brick Play | Event |
   |---|---|---|---|
   | Left drag, plain | Orbit (empty canvas); a part is picked up if pressed | Pan (empty canvas); a part is picked up if pressed | `PressStarted`, host may `captureDrag` |
-  | Left drag + Shift | Pan | Pan on empty canvas; grabs a part (fine, 1 LDU) | `PressStarted` on a part (Play, Contraptions only), else none |
+  | Left drag + Shift | Pan | Pan on empty canvas; grabs a part (fine, 1 LDU) | `PressStarted` on a part (Play only), else none |
   | Left drag + Ctrl / Cmd | Orbit | Orbit | none (never grabs) |
   | Right drag | Orbit | Orbit | none (never grabs) |
   | Middle drag | Pan | Pan | none (never grabs) |
@@ -317,15 +316,15 @@ same figure as before.
   while a capture is active.
 - **Touch:** 2-finger pan + pinch zoom in every host. One finger orbits in the
   viewer (`OneFingerOrbits`, since touch has no right button). One finger on
-  empty canvas pans in the studio, Brick Play and Brick Contraptions
-  (`OneFingerPans` in Play and Contraptions; the studio workspace's empty-press
+  empty canvas pans in the studio and Brick Play
+  (`OneFingerPans` in Play; the studio workspace's empty-press
   handler calls `Viewport.panCurrentGesture`), because the camera globe does the
   orbiting there. A tap without travel clears the selection.
   Controls are finger-sized (44 px) on coarse pointers: `theme.css` `.touch-target`,
   with icon-button sizes kept in the `.ui-icon-button` class rather than inline,
   so the coarse rule can override them.
 - **Camera globe** (`UI.CameraGlobe`, in `packages/brick-frame-ui`, used by the
-  viewer, the studio, Brick Play and Brick Contraptions; it replaced the arrow
+  viewer, the studio and Brick Play; it replaced the arrow
   `UI.ViewPad`): a globe drawn from a fixed viewpoint above the horizon, with the
   camera's marker on it. Drag on the globe to fly the camera (the marker follows
   the pointer, `dragOrbit`), tap a point to jump straight there (`flyToDelta`), and
@@ -334,8 +333,7 @@ same figure as before.
   same factor. An `extras` slot takes the host's own buttons (walk, play, help). The
   host owns the pointer state and only forwards camera messages.
 - **Fit view:** the ⛶ button in the viewer control pad re-frames the model
-  (`FitView` → `frameModelBounds`); Brick Play's toolbar Fit View and Brick
-  Contraptions' globe reset do the same, and `F` works everywhere. Without it the camera was a one-way door:
+  (`FitView` → `frameModelBounds`); Brick Play's globe reset does the same, and `F` works everywhere. Without it the camera was a one-way door:
   the first interaction switches `cameraMode` to `CameraManual` and auto-fit
   never runs again, so a model lost off-screen needed a page reload. Fitting also
   returns to `Orbit`.

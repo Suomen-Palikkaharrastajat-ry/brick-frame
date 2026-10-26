@@ -456,9 +456,9 @@ suite =
                                 |> List.length
                     in
                     Expect.equal ( 1, 0 ) ( drivenCount 2, drivenCount 4 )
-            , test "a gear turned onto an X-axis axle on Brick Contraptions' axle line drives it" <|
+            , test "a gear turned onto an X-axis axle on Brick Play's Technic axle line drives it" <|
                 \_ ->
-                    -- Contraptions adds gears and axles at Y -60 (its axle line); an axle
+                    -- Technic mode adds gears and axles at Y -60 (its axle line); an axle
                     -- runs along X by default, and a gear turned to X slides onto it.
                     let
                         turnedGear =

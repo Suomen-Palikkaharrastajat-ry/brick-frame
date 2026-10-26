@@ -130,7 +130,6 @@ type alias Flags =
     , favorites : Maybe (List String)
     , recentParts : Maybe (List String)
     , playBaseUrl : Maybe String
-    , contraptionsBaseUrl : Maybe String
     }
 
 
@@ -201,7 +200,6 @@ type alias Model =
     , treeFocus : Maybe String
     , inspectorFocus : Maybe String
     , playBaseUrl : String
-    , contraptionsBaseUrl : String
     , toast : Maybe { message : String, timerId : Int }
     , toastCounter : Int
     , globeDrag : Maybe CameraGlobe.Drag
@@ -276,7 +274,7 @@ type Msg
     | ExportFormat Export.ExportFormat
     | CaptureSnapshot
     | CopyPlayUrl
-    | CopyContraptionsUrl
+    | CopyPlayModelUrl
     | ClearToast Int
     | WindowSized Int Int
     | PartIndexLoaded (Result Http.Error PartIndex.PartIndex)
@@ -415,7 +413,6 @@ init flags =
             , treeFocus = Nothing
             , inspectorFocus = Nothing
             , playBaseUrl = Maybe.withDefault "http://localhost:5175/" flags.playBaseUrl
-            , contraptionsBaseUrl = Maybe.withDefault "http://localhost:5176/" flags.contraptionsBaseUrl
             , toast = Nothing
             , toastCounter = 0
             , globeDrag = Nothing
@@ -1342,10 +1339,10 @@ updatePage msg model =
                 ]
             )
 
-        CopyContraptionsUrl ->
+        CopyPlayModelUrl ->
             let
                 url =
-                    UrlPayload.buildContraptionsUrl model.contraptionsBaseUrl model.document
+                    UrlPayload.buildPlayModelUrl model.playBaseUrl model.document
 
                 nextTimerId =
                     model.toastCounter + 1
@@ -5946,8 +5943,8 @@ viewExportMenu model =
         playUrl =
             UrlPayload.buildPlayUrl model.playBaseUrl model.document
 
-        contraptionsUrl =
-            UrlPayload.buildContraptionsUrl model.contraptionsBaseUrl model.document
+        playModelUrl =
+            UrlPayload.buildPlayModelUrl model.playBaseUrl model.document
 
         appItem targetUrl copyMsg label description =
             div
@@ -6037,7 +6034,7 @@ viewExportMenu model =
                ]
             ++ [ sectionTitle "Send to App"
                , appItem playUrl CopyPlayUrl "Brick Play" ("Free build with this kit of " ++ String.fromInt pieceCount ++ " " ++ pieceWord)
-               , appItem contraptionsUrl CopyContraptionsUrl "Brick Contraptions" ("Simulate & test mechanisms with these " ++ String.fromInt pieceCount ++ " " ++ pieceWord)
+               , appItem playModelUrl CopyPlayModelUrl "Brick Play with model" ("Simulate & test mechanisms with these " ++ String.fromInt pieceCount ++ " " ++ pieceWord)
                ]
         )
 

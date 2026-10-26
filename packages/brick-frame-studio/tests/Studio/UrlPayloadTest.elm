@@ -80,15 +80,15 @@ suite =
                         ]
                         decoded
             ]
-        , describe "encodeContraptionsHash and decodeHash"
-            [ test "encodes and decodes contraptions hash with model and parts" <|
+        , describe "encodePlayModelHash and decodeHash"
+            [ test "encodes and decodes a Play hash with model and parts" <|
                 \_ ->
                     let
                         doc =
                             Document.parse "1 7 0 0 0 1 0 0 0 1 0 0 0 1 3647.dat"
 
                         hash =
-                            UrlPayload.encodeContraptionsHash doc
+                            UrlPayload.encodePlayModelHash doc
 
                         decoded =
                             UrlPayload.decodeHash hash
@@ -105,7 +105,7 @@ suite =
                         ]
                         decoded
             ]
-        , describe "buildPlayUrl and buildContraptionsUrl"
+        , describe "buildPlayUrl and buildPlayModelUrl"
             [ test "builds play URL" <|
                 \_ ->
                     let
@@ -116,15 +116,15 @@ suite =
                             UrlPayload.buildPlayUrl "http://localhost:5175/" doc
                     in
                     Expect.equal (String.startsWith "http://localhost:5175/#parts=" url) True
-            , test "builds contraptions URL" <|
+            , test "builds a Play URL with the model" <|
                 \_ ->
                     let
                         doc =
                             Document.parse "1 7 0 0 0 1 0 0 0 1 0 0 0 1 3647.dat"
 
                         url =
-                            UrlPayload.buildContraptionsUrl "http://localhost:5176/" doc
+                            UrlPayload.buildPlayModelUrl "http://localhost:5175/" doc
                     in
-                    Expect.equal (String.startsWith "http://localhost:5176/#model=" url) True
+                    Expect.equal (String.startsWith "http://localhost:5175/#model=" url) True
             ]
         ]

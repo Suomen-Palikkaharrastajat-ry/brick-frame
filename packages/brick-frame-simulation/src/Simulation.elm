@@ -663,7 +663,7 @@ resolveMotorGearId model =
 
 
 {-| Put the playback clock at `seconds` and recompute every gear angle from it,
-for a host that runs its own clock instead of `Tick` (Brick Contraptions).
+for a host that runs its own clock instead of `Tick` (Brick Play in Technic mode).
 Pure in the time: `setTime t` gives the same angles however it is reached.
 -}
 setTime : Float -> Model -> Model

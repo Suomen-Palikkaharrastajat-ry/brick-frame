@@ -12,7 +12,7 @@ uses (see `Detect.meshFacts`).
 
 `gearFeedback` is pure and works on any `LDraw.Document`, so a host can show it
 without a `Studio.Core.Model`. `feedbackText` gives the status line and `pill`
-the status pill that Brick Contraptions shows under the canvas.
+the status pill that Brick Play shows under the canvas in Technic mode.
 
     gearFeedback [ selectedId ] document
         |> Maybe.map GearFeedback.pill

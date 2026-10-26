@@ -30,8 +30,6 @@ vendor: ## Init and update all git submodules to their pinned commits
 	ln -sfn ../../../vendor/master-builder/review/src/LlmAgent studio-app/review/src/LlmAgent
 	ln -sfn ../vendor/master-builder/packages brick-play/packages
 	ln -sfn ../../../vendor/master-builder/review/src/LlmAgent brick-play/review/src/LlmAgent
-	ln -sfn ../vendor/master-builder/packages brick-contraptions/packages
-	ln -sfn ../../../vendor/master-builder/review/src/LlmAgent brick-contraptions/review/src/LlmAgent
 
 # ── Development environment ──────────────────────────────────────────────────
 
@@ -53,7 +51,6 @@ SHARED_ELM_SOURCES := $(shell find packages/brick-frame-viewport/src packages/br
 VIEWER_APP_SOURCES := $(shell find viewer-app/src -name '*.elm') $(SHARED_ELM_SOURCES) packages/brick-frame-data/src/EmbeddedParts.elm
 STUDIO_APP_SOURCES := $(shell find studio-app/src -name '*.elm') $(SHARED_ELM_SOURCES) packages/brick-frame-data/src/EmbeddedParts.elm
 PLAY_APP_SOURCES := $(shell find brick-play/src -name '*.elm') $(SHARED_ELM_SOURCES) packages/brick-frame-data/src/EmbeddedParts.elm
-CONTRAPTIONS_APP_SOURCES := $(shell find brick-contraptions/src -name '*.elm') $(SHARED_ELM_SOURCES) packages/brick-frame-data/src/EmbeddedParts.elm
 VIEWPORT_JS_SOURCES := $(shell find packages/brick-frame-viewport/runtime -name '*.js') packages/brick-frame-viewport/geometry-worker.js
 # Shared package code that is elm-format clean. The older simulator modules and
 # the generated ColorData module are not validated yet.
@@ -95,13 +92,8 @@ play-dev: packages/brick-frame-data/src/Data.elm brick-play/.elm-tailwind/.stamp
 	cd brick-play && $(VITE) --host 0.0.0.0 --port $(WATCH_PORT)
 
 
-.PHONY: contraptions-dev
-contraptions-dev: packages/brick-frame-data/src/Data.elm brick-contraptions/.elm-tailwind/.stamp ## Start the brick-contraptions Vite dev server (http://localhost:WATCH_PORT)
-	cd brick-contraptions && $(VITE) --host 0.0.0.0 --port $(WATCH_PORT)
-
-
 .PHONY: elm-tailwind-gen
-elm-tailwind-gen: viewer-app/.elm-tailwind/.stamp studio-app/.elm-tailwind/.stamp brick-play/.elm-tailwind/.stamp brick-contraptions/.elm-tailwind/.stamp ## Generate typed Tailwind Elm modules into viewer-app, studio-app, brick-play, brick-contraptions
+elm-tailwind-gen: viewer-app/.elm-tailwind/.stamp studio-app/.elm-tailwind/.stamp brick-play/.elm-tailwind/.stamp ## Generate typed Tailwind Elm modules into viewer-app, studio-app, brick-play
 
 studio-app/.elm-tailwind/.stamp: studio-app/elm.json studio-app/vite.config.mjs studio-app/main.css $(STUDIO_APP_SOURCES) $(ELM_PACKAGE_SOURCES) packages/brick-frame-data/src/Data.elm
 	cd studio-app && elm-tailwind-classes gen
@@ -116,11 +108,6 @@ viewer-app/.elm-tailwind/.stamp: viewer-app/elm.json viewer-app/vite.config.mjs 
 brick-play/.elm-tailwind/.stamp: brick-play/elm.json brick-play/vite.config.mjs brick-play/main.css $(PLAY_APP_SOURCES) $(ELM_PACKAGE_SOURCES) packages/brick-frame-data/src/Data.elm
 	cd brick-play && elm-tailwind-classes gen
 	mkdir -p brick-play/.elm-tailwind
-	touch $@
-
-brick-contraptions/.elm-tailwind/.stamp: brick-contraptions/elm.json brick-contraptions/vite.config.mjs brick-contraptions/main.css $(CONTRAPTIONS_APP_SOURCES) $(ELM_PACKAGE_SOURCES) packages/brick-frame-data/src/Data.elm
-	cd brick-contraptions && elm-tailwind-classes gen
-	mkdir -p brick-contraptions/.elm-tailwind
 	touch $@
 
 build/.elm-stamp: viewer-app/.elm-tailwind/.stamp $(VIEWER_APP_SOURCES) $(ELM_PACKAGE_SOURCES) $(VIEWPORT_JS_SOURCES) viewer-app/elm.json viewer-app/vite.config.mjs viewer-app/index.html viewer-app/main.js viewer-app/main.css packages/brick-frame-ui/theme.css
@@ -148,22 +135,16 @@ build/.play-stamp-ci: build/.elm-stamp-ci packages/brick-frame-data/src/.data-ni
 	cd brick-play && $(VITE) build
 	touch $@
 
-build/.contraptions-stamp: build/.elm-stamp brick-contraptions/.elm-tailwind/.stamp $(CONTRAPTIONS_APP_SOURCES) $(ELM_PACKAGE_SOURCES) $(VIEWPORT_JS_SOURCES) brick-contraptions/elm.json brick-contraptions/vite.config.mjs brick-contraptions/index.html brick-contraptions/main.js brick-contraptions/main.css packages/brick-frame-ui/theme.css
-	cd brick-contraptions && $(VITE) build
-	touch $@
-
-build/.contraptions-stamp-ci: build/.elm-stamp-ci packages/brick-frame-data/src/.data-nix-stamp brick-contraptions/.elm-tailwind/.stamp $(CONTRAPTIONS_APP_SOURCES) $(ELM_PACKAGE_SOURCES) $(VIEWPORT_JS_SOURCES) brick-contraptions/elm.json brick-contraptions/vite.config.mjs brick-contraptions/index.html brick-contraptions/main.js brick-contraptions/main.css packages/brick-frame-ui/theme.css
-	cd brick-contraptions && $(VITE) build
-	touch $@
-
 .PHONY: studio-build
 studio-build: build/.studio-stamp ## Production build of the studio → build/studio/
 
 .PHONY: play-build
 play-build: build/.play-stamp ## Production build of brick-play → build/play/
 
-.PHONY: contraptions-build
-contraptions-build: build/.contraptions-stamp ## Production build of brick-contraptions → build/contraptions/
+.PHONY: redirect-build
+redirect-build: ## Copy the old Brick Contraptions address → build/contraptions/, which forwards to Brick Play
+	mkdir -p build/contraptions
+	cp redirects/contraptions/index.html build/contraptions/index.html
 
 .PHONY: elm-build
 elm-build: build/.elm-stamp ## Production build of Elm SPA → build/
@@ -180,18 +161,16 @@ build/.wc-stamp-ci: packages/brick-frame-data/src/.data-nix-stamp viewer-app/elm
 wc-build: build/.wc-stamp ## Production build of Web Components bundle
 
 .PHONY: elm-test
-elm-test: elm-tailwind-gen packages/brick-frame-data/src/Data.elm ## Run Elm unit tests (viewer, studio, play, and contraptions apps)
+elm-test: elm-tailwind-gen packages/brick-frame-data/src/Data.elm ## Run Elm unit tests (viewer, studio and play apps)
 	cd viewer-app && elm-test
 	cd studio-app && elm-test
 	cd brick-play && elm-test
-	cd brick-contraptions && elm-test
 
 .PHONY: elm-check
 elm-check: ## Check Elm formatting (no changes)
 	cd viewer-app && elm-format --validate src/ tests/
 	cd studio-app && elm-format --validate src/ tests/
 	cd brick-play && elm-format --validate src/ tests/
-	cd brick-contraptions && elm-format --validate src/ tests/
 	elm-format --validate $(SHARED_PACKAGE_DIRS)
 
 .PHONY: elm-format
@@ -199,7 +178,6 @@ elm-format: ## Auto-format Elm source files
 	cd viewer-app && elm-format --yes src/ tests/
 	cd studio-app && elm-format --yes src/ tests/
 	cd brick-play && elm-format --yes src/ tests/
-	cd brick-contraptions && elm-format --yes src/ tests/
 	elm-format --yes $(SHARED_PACKAGE_DIRS)
 
 .PHONY: elm-review
@@ -207,14 +185,12 @@ elm-review: ## Run elm-review LLM-agent rules (no changes) on all apps and the s
 	cd viewer-app && elm-review
 	cd studio-app && elm-review
 	cd brick-play && elm-review
-	cd brick-contraptions && elm-review
 
 .PHONY: elm-review-fix
 elm-review-fix: ## Run elm-review with auto-fix
 	cd viewer-app && elm-review --fix
 	cd studio-app && elm-review --fix
 	cd brick-play && elm-review --fix
-	cd brick-contraptions && elm-review --fix
 
 # ── Combined targets ──────────────────────────────────────────────────────────
 
@@ -222,7 +198,7 @@ elm-review-fix: ## Run elm-review with auto-fix
 dev: elm-dev ## Generate data + start Vite dev server
 
 .PHONY: build
-build: elm-build wc-build studio-build play-build contraptions-build ## Generate data + production build of all apps → build/
+build: elm-build wc-build studio-build play-build redirect-build ## Generate data + production build of all apps → build/
 
 .PHONY: preview
 preview: build ## Serve production build of all apps locally on port 4173 (http://localhost:4173)
@@ -232,7 +208,7 @@ preview: build ## Serve production build of all apps locally on port 4173 (http:
 serve: preview ## Alias for preview
 
 .PHONY: dist-ci
-dist-ci: build/.elm-stamp-ci build/.wc-stamp-ci build/.studio-stamp-ci build/.play-stamp-ci build/.contraptions-stamp-ci ## CI build: generator (Nix binary) + viewer + web components + studio + play + contraptions → build/
+dist-ci: build/.elm-stamp-ci build/.wc-stamp-ci build/.studio-stamp-ci build/.play-stamp-ci redirect-build ## CI build: generator (Nix binary) + viewer + web components + studio + play + the Contraptions redirect → build/
 
 .PHONY: watch
 watch: ## Watch Haskell sources and run Vite dev server (WATCH_PORT, default 5173)
@@ -321,4 +297,4 @@ format: ## Auto-format Haskell and Elm source files
 .PHONY: clean
 clean: ## Remove build artifacts and generated output
 	cabal clean
-	rm -rf build brick-data-generator .hpc viewer-app/.elm-tailwind viewer-app/elm-stuff studio-app/.elm-tailwind studio-app/elm-stuff brick-play/.elm-tailwind brick-play/elm-stuff brick-contraptions/.elm-tailwind brick-contraptions/elm-stuff packages/brick-frame-studio/elm-stuff packages/brick-frame-data/src/Data.elm packages/brick-frame-data/src/.data-nix-stamp build/.wc-stamp build/.wc-stamp-ci build/.studio-stamp build/.studio-stamp-ci build/.play-stamp build/.contraptions-stamp build/.play-stamp-ci build/.contraptions-stamp-ci
+	rm -rf build brick-data-generator .hpc viewer-app/.elm-tailwind viewer-app/elm-stuff studio-app/.elm-tailwind studio-app/elm-stuff brick-play/.elm-tailwind brick-play/elm-stuff packages/brick-frame-studio/elm-stuff packages/brick-frame-data/src/Data.elm packages/brick-frame-data/src/.data-nix-stamp build/.wc-stamp build/.wc-stamp-ci build/.studio-stamp build/.studio-stamp-ci build/.play-stamp build/.play-stamp-ci

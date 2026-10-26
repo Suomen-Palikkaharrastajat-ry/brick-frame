@@ -1,7 +1,6 @@
 module UI.PartCard exposing (Badge, CompactConfig, Config, compactPanelHeight, compactView, thumbnailKey, view)
 
-{-| A visual part card for the dark floating docks of Brick Play and Brick
-Contraptions: a rendered image of the part with its short name below and a
+{-| A visual part card for the dark floating dock of Brick Play: a rendered image of the part with its short name below and a
 line of small secondary text (a part number, or how many are left).
 
 The images come from the shared thumbnail pipeline
@@ -92,7 +91,7 @@ compactImageSize =
 
 
 {-| Height of a dock of compact cards: the same as the camera globe panel in
-Brick Contraptions (a 112 px globe inside 8 px padding and a 1 px border on each
+Brick Play (a 112 px globe inside 8 px padding and a 1 px border on each
 side), so the two panels line up along the bottom of the screen.
 -}
 compactPanelHeight : String

@@ -78,7 +78,7 @@ analyseMachine document partCache =
 
 
 {-| Evaluates whether the contraption goal is accomplished:
-"brick-contraption play is accomplished when all gears are rotating and part of the same machine".
+"Technic play is accomplished when all gears are rotating and part of the same machine".
 -}
 isAccomplished : MachineState -> Bool
 isAccomplished state =

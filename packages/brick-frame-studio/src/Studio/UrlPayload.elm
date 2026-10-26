@@ -1,18 +1,18 @@
 module Studio.UrlPayload exposing
     ( PartKitItem
     , Payload
-    , buildContraptionsUrl
+    , buildPlayModelUrl
     , buildPlayUrl
     , decodeHash
     , decodeParts
-    , encodeContraptionsHash
     , encodeParts
     , encodePlayHash
+    , encodePlayModelHash
     , extractKit
     )
 
 {-| URL hash encoding and decoding for exporting Studio models and part kits
-to companion applications: Brick Play and Brick Contraptions.
+to companion applications: Brick Play, with its kit alone or with a model.
 
 Enables deep-linking between Palikkakehys applications with kit inventories
 and model definitions passed directly through URL fragments.
@@ -133,11 +133,12 @@ encodePlayHash doc =
     "parts=" ++ Url.percentEncode partsStr
 
 
-{-| Encode a document into a Brick Contraptions hash fragment string.
-Produces `"model=...&parts=..."`.
+{-| Encode a document's model and its kit into a Brick Play hash fragment string,
+for a Technic mechanism (Brick Play turns Technic mode on by itself when the
+model holds gears). Produces `"model=...&parts=..."`.
 -}
-encodeContraptionsHash : Document -> String
-encodeContraptionsHash doc =
+encodePlayModelHash : Document -> String
+encodePlayModelHash doc =
     let
         modelStr =
             Writer.writeDocument doc
@@ -216,13 +217,14 @@ buildPlayUrl baseUrl doc =
     cleanBase ++ "#" ++ hash
 
 
-{-| Build a complete Brick Contraptions URL from a base URL and a document.
+{-| Build a complete Brick Play URL with the document's model and kit, from a base
+URL and a document.
 -}
-buildContraptionsUrl : String -> Document -> String
-buildContraptionsUrl baseUrl doc =
+buildPlayModelUrl : String -> Document -> String
+buildPlayModelUrl baseUrl doc =
     let
         hash =
-            encodeContraptionsHash doc
+            encodePlayModelHash doc
 
         cleanBase =
             if String.endsWith "#" baseUrl then

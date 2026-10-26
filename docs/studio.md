@@ -7,14 +7,14 @@ read-only viewer and links here with "Edit in studio" when `studioUrl` is set.
 
 ## Decisions
 
-- **Apps and shared packages.** `viewer-app/`, `studio-app/`, `brick-play/`, and
-  `brick-contraptions/` compile the shared packages in `packages/brick-frame-{simulator,viewport,simulation,studio,ui,data}`.
+- **Apps and shared packages.** `viewer-app/`, `studio-app/` and `brick-play/`
+  compile the shared packages in `packages/brick-frame-{simulator,viewport,simulation,studio,ui,data}`.
 - **Reusable studio package.** `packages/brick-frame-studio` provides the core 3D editing
   engine (`Studio.Core`, `Studio.Edit`, `Studio.Gizmo`, `Studio.Overlay`, `Studio.Transform`,
   `Studio.Layout`, `Studio.Shortcuts`, `Studio.PartIndex`, `Studio.BuildGroups`, `Studio.Colours`, `Studio.Hints`).
-  This allows specialized applications like `brick-play` (minimal brick building) and
-  `brick-contraptions` (Technic playground) to reuse 3D editing, snapping, and gizmos
-  without duplicating editor code.
+  This allows the specialized application `brick-play` (minimal brick building, with
+  a Technic mode) to reuse 3D editing, snapping, and gizmos without duplicating
+  editor code.
 - **Generated data is shared.** `Data.elm` is generated into
   `packages/brick-frame-data/src` (gitignored, never edited); `EmbeddedParts.elm`
   is hand-written in the same directory.
@@ -150,11 +150,11 @@ the inspector. It never happens during a drag, in walk navigation, or on the
 Preview and Instructions pages. Deselecting keeps the last pivot; Fit View
 (`F`, the camera globe's reset button) recentres on the whole model.
 
-### Host placement (Brick Play, Brick Contraptions)
+### Host placement (Brick Play)
 
 `Studio.Core.addPart` rests a new part on the ground (origin Y = −bottom);
 `Core.addPartAt part colour matrix` adds it at exactly the given placement, for a
-host with its own heights (Contraptions' axle line). `Core.freeSpotFor part`
+host with its own heights (Brick Play's Technic axle line). `Core.freeSpotFor part`
 finds where to add a ground-resting part without overlapping anything
 (`Studio.DragPlane.freeSpot`: grid positions ring by ring outward from the
 selection, or from the camera target when nothing is selected, until the part's
@@ -165,14 +165,14 @@ and the next ones beside the selected piece. `Core.setDragSettles False` makes
 horizontal-plane body drags keep the press-time height instead of settling on
 the support (camera-facing drags, the wheel and raise/lower are unchanged).
 
-Brick Contraptions (`Contraption.Placement`) adds every catalog Technic part —
+In Technic mode Brick Play (`Contraption.Placement`) adds every catalog Technic part —
 gears, axles, beams, pins, bushes — with its origin on one **axle line** at
 Y = −60 LDU (60 above the ground, so a 40T's teeth clear it): each of these parts
 has its origin on its own axis or hole row, so gears of any size share one axis
 height and mesh by sliding along X/Z only. A new gear goes into the selected
 part's plane, on the first free spot along X; other Technic parts use
 `freeSpotForPlacement`, and a project's non-Technic parts rest on the ground.
-Contraptions turns drag settling off. `Core.partBox` gives a host the studio's
+Technic mode turns drag settling off. `Core.partBox` gives a host the studio's
 local box for a part.
 
 While the camera is still auto-fitting (`Viewport.CameraAutoFit`: not moved
@@ -181,18 +181,19 @@ re-frames the whole model once its geometry is built, so a model built from the
 dock stays in view; after any camera move (or a click that glides onto a part)
 adds leave the camera alone.
 
-## Brick Play and Brick Contraptions
+## Brick Play
 
-Both hosts embed `Studio.Core` with the gizmo off, so they edit like the studio
-while showing their own chrome. Their `Main.elm` owns the Msgs and forwards the
-action bar to the component. Both keep the chrome minimal: no title badge (a
-visually hidden `h1` keeps the heading), one top-right menu, and a compact dock.
+Brick Play embeds `Studio.Core` with the gizmo off, so it edits like the studio
+while showing its own chrome. Its `Main.elm` owns the Msgs and forwards the action
+bar to the component. It keeps the chrome minimal: no title badge (a visually
+hidden `h1` keeps the heading), one top-right menu, and a compact dock. Technic
+mode (below) adds the gear chrome to the same view.
 
 - **No gizmo.** `Core.setGizmoStyle NoGizmo` draws and hit-tests no arrows or
   rings. A body drag still moves a part on the view-relative plane
   (`Studio.DragPlane`), and turning, raising and lowering go through the keyboard
   or the action bar. The yellow selection box is still drawn.
-- **Drag mode.** Brick Play and Brick Contraptions use `DragPartsOrPan OneFingerPans`
+- **Drag mode.** Brick Play uses `DragPartsOrPan OneFingerPans`
   and a camera globe (see
   [rendering.md](rendering.md) § Interaction controls).
 - **Shift fine moves.** In `DragPartsOrPan` a Shift + left press on a part grabs
@@ -207,14 +208,12 @@ visually hidden `h1` keeps the heading), one top-right menu, and a compact dock.
   `Core.deleteSelection`).
 - **Menu.** A visible `?` button (Keyboard shortcuts, the same as the `?` key) sits
   beside one hamburger button at the top right (`UI.HamburgerMenu`), which opens
-  Undo, Redo, Delete, Clear and Fit view (Brick Play only; Contraptions has the
-  globe's reset), each with its shortcut shown. Contraptions' Play|Pause sits between
-  them. Items send the same
+  Undo, Redo, Delete and Clear, each with its shortcut shown. Items send the same
   Msgs as the old toolbar buttons, wrapped in `MenuPicked` so the menu closes first.
   A click outside (a backdrop) or Escape closes it; Escape closes the menu before it
   deselects anything. While the menu is open the studio's editing keys are paused,
   like the help dialog.
-- **Accomplishment banner (Brick Contraptions).** One green line, "All N gears are
+- **Accomplishment banner (Technic mode).** One green line, "All N gears are
   rotating together!" (`role="status"`), in the top row between the title-less
   left edge and the buttons, the buttons' height. It shrinks and ellipsizes on narrow
   windows. The green is LDraw's Green from the colour table; the theme has no green
@@ -228,20 +227,20 @@ visually hidden `h1` keeps the heading), one top-right menu, and a compact dock.
   neutral placeholder keeps the card size until an image arrives; a part with none
   left is disabled, not hidden.
 - **Dock height.** The dock is `PartCard.compactPanelHeight` (130 px) tall, the same
-  as Brick Contraptions' camera globe panel, and its bottom edge sits on the globe's
-  (0.75 rem from the bottom). Brick Contraptions' category tabs are a narrow vertical
+  as the camera globe panel, and its bottom edge sits on the globe's
+  (0.75 rem from the bottom). The Technic catalog's category tabs are a narrow vertical
   column (`role="tablist"`, `aria-orientation="vertical"`) on the dock's left; the
   card row scrolls sideways when it overflows.
-- **Mesh status (Brick Contraptions).** With one gear selected, a status pill says how
+- **Mesh status (Technic mode).** With one gear selected, a status pill says how
   it sits against its nearest other gear (`Machine.gearFeedback`, worded by
   `Machine.feedbackText`), e.g. `24T ↔ 24T: 40 LDU apart — needs 60` or
   `Meshes with 24T ✓`. It turns yellow once the two mesh.
-- **Playing (Brick Contraptions).** Space plays and pauses the machine in the same
+- **Playing (Technic mode).** Space plays and pauses the machine in the same
   view as editing. Gears and their driven parts animate, and their static copies are
   hidden (`Contraption.Animation`). Any edit stops the machine and rewinds it to 0.
-  Brick Play has no simulation and leaves Space unbound.
-- **Placement.** Brick Play adds dock parts with `Core.freeSpotFor`; Brick
-  Contraptions places them on its axle line. See "Host placement" above.
+  Without gears Space is unbound, and the play button is hidden.
+- **Placement.** Technic parts go on the axle line (`Contraption.Placement`); other
+  parts use `Core.freeSpotFor`. See "Host placement" above.
 
 ## Gear alignment
 
@@ -416,7 +415,7 @@ The **Export** menu in the header provides both file downloads and instant cross
 1. **File exports**: Download the active document as an LDraw model (`.ldr`), multi-part archive (`.mpd`), WebGL/glTF 3D scene (`.gltf`), AR model (`.usdz` for iOS Quick Look), or take a 1080p picture (`.png`) of the current view.
 2. **Send to App**: Transfer the project directly into companion Palikkakehys applications without server roundtrips:
    - **Brick Play**: Exports the document as a limited building kit inventory. Placements are grouped by part file and colour into a piece kit (`Studio.UrlPayload.extractKit`). In Brick Play, users build freely within the constraints of this kit, spawning bricks from inventory cards in the bottom dock until the available counts are exhausted.
-   - **Brick Contraptions**: Exports the complete assembled model alongside its part kit. In Brick Contraptions, the model loads directly onto the canvas for mechanism simulation, motor control, and accomplishment evaluation, while its parts appear in a dedicated "Project" tab in the Technic dock.
+   - **Brick Play with model**: Exports the complete assembled model alongside its part kit. The model loads directly onto the canvas, where Technic mode (mechanism simulation, motor control, and accomplishment evaluation) switches on by itself, and the kit is counted in the dock.
 
 Each companion app entry opens the target app in a new browser tab and includes a **Copy Link** button that copies the shareable URL to the clipboard, displaying an ephemeral toast confirmation.
 
@@ -425,7 +424,7 @@ Each companion app entry opens the target app in a new browser tab and includes 
 Cross-app deep-linking operates through URL hash fragments (`#...`), keeping sharing fully static and client-side:
 
 - **Brick Play URL**: `<playBaseUrl>#parts=<encoded-parts>`
-- **Brick Contraptions URL**: `<contraptionsBaseUrl>#model=<encoded-model>&parts=<encoded-parts>`
+- **Brick Play with model URL**: `<playBaseUrl>#model=<encoded-model>&parts=<encoded-parts>`
 
 Parameters:
 - `parts`: A comma-separated list of `<part-file>:<ldraw-color>:<count>` items (for example `3001.dat:14:5,3002.dat:4:2`), URL percent-encoded.

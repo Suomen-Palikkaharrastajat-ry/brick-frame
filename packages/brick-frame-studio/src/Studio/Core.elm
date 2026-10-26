@@ -184,7 +184,7 @@ dragModeGrabsWithShift mode =
   - `OneFingerOrbits` — orbit, as in `DragPartsOrOrbit`: touch has no right
     button, so a host without on-screen orbit controls (Brick Play) keeps it.
   - `OneFingerPans` — pan, like the mouse; for a host with its own orbit
-    control (Brick Contraptions' camera globe).
+    control (Brick Play's camera globe).
 
 A tap without travel clears the selection either way.
 
@@ -452,7 +452,7 @@ setDragMode mode model =
 {-| Whether a body drag on the horizontal working plane settles the parts onto
 their support (the highest part under their footprint, or the ground). On by
 default. With `False` the dragged parts keep their press-time height, so a host
-can hold parts at a chosen height — Brick Contraptions keeps gear and axle axes
+can hold parts at a chosen height — Brick Play in Technic mode keeps gear and axle axes
 on one line. Drags on the vertical camera-facing plane, the wheel lift and the
 raise/lower keys are unaffected.
 -}
@@ -522,7 +522,7 @@ renderQuality model =
 move or add that meshes gears turns the rigid group of each moved gear (the
 gears and axles on its axle line) so the teeth interlock, in the same undo step
 (see `Studio.GearAlign`). Off by default, so a host that does not place gears on
-axles (Brick Play) is unchanged. Brick Contraptions turns it on.
+axles (Brick Play) is unchanged. Brick Play turns it on in Technic mode.
 -}
 setGearAlignment : Bool -> Model -> Model
 setGearAlignment on model =
@@ -837,7 +837,7 @@ addPart partFile color position model =
 
 {-| Add a new part with exactly this placement matrix (LDraw: the part's origin
 and orientation), and select it. Unlike `addPart` nothing rests it on the
-ground — for hosts that put parts at a height of their own (Brick Contraptions
+ground — for hosts that put parts at a height of their own (Brick Play in Technic mode
 puts gear and axle axes on a common line). Recorded in the history; the camera
 does not move.
 -}
@@ -963,7 +963,7 @@ freeSpotFor part model =
 {-| `freeSpotFor` for a part placed by matrix (see `addPartAt`): the given
 placement's height and orientation are kept and only its X and Z are replaced by
 the first free grid position around the selection (or the camera target). Pass
-the result to `addPartAt`. Brick Contraptions uses it to put a new gear on the
+the result to `addPartAt`. Brick Play's Technic mode uses it to put a new gear on the
 axle line beside the selected one.
 -}
 freeSpotForPlacement : String -> Mat4 -> Model -> Mat4
@@ -1113,8 +1113,8 @@ resolvedLines model name =
 
 {-| A part's local bounds (LDraw) as the studio measures them for drags and free
 spots (`partLocalBox`): put it under a placement matrix with
-`Studio.DragPlane.worldBox`. For hosts with placement rules of their own (Brick
-Contraptions keeps a new gear in the selected gear's plane).
+`Studio.DragPlane.worldBox`. For hosts with placement rules of their own (Brick Play in Technic mode
+keeps a new gear in the selected gear's plane).
 -}
 partBox : String -> Model -> DragPlane.Box
 partBox part model =
