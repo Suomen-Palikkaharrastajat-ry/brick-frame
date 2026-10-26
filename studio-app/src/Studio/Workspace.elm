@@ -6497,7 +6497,7 @@ cameraActions =
     , onReset = ResetView
     , onWalk = ViewportMsg Viewport.ToggleWalkMode
     , onHelp = ToggleHelp
-    , onRaytrace = ToggleRenderQuality
+    , onRealistic = ToggleRenderQuality
     , onSnapshot = CaptureSnapshot
     , noOp = NoOp
     }

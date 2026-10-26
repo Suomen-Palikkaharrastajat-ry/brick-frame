@@ -1,4 +1,4 @@
-module Main exposing (Flags, Model, Msg, init, main, needsAnimationFrame)
+module Main exposing (Flags, Model, Msg(..), init, main, needsAnimationFrame, update)
 
 {-| Brick Frame (Palikkakehys) viewer and simulator: the thin shell.
 
@@ -201,7 +201,7 @@ type Msg
     | RequestFileUpload
     | ToggleControlsPanel
     | ToggleShortcutHelp
-    | ToggleRaytrace
+    | ToggleRealistic
     | CaptureSnapshot
     | SnapshotReady { dataUrl : String, filename : String }
     | SnapshotSave { dataUrl : String, filename : String }
@@ -265,6 +265,28 @@ cameraChangedIfNeededCmd before after =
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
+    if closesSnapshot msg model then
+        ( { model | snapshotModal = Nothing }, Cmd.none )
+
+    else
+        updateApp msg model
+
+
+{-| Escape closes an open snapshot modal before anything else sees the key, so
+the editing keys and the layers underneath do not react as well.
+-}
+closesSnapshot : Msg -> Model -> Bool
+closesSnapshot msg model =
+    case ( model.snapshotModal, msg ) of
+        ( Just _, ViewportMsg (Viewport.KeyPressed keyEvent) ) ->
+            Shortcuts.closesDialog keyEvent
+
+        _ ->
+            False
+
+
+updateApp : Msg -> Model -> ( Model, Cmd Msg )
+updateApp msg model =
     let
         ( newModel, cmd ) =
             updateInner msg model
@@ -336,7 +358,7 @@ updateInner msg model =
         ToggleShortcutHelp ->
             ( { model | showShortcutHelp = not model.showShortcutHelp }, Cmd.none )
 
-        ToggleRaytrace ->
+        ToggleRealistic ->
             let
                 nextQuality =
                     case Viewport.renderQuality model.viewport of
@@ -709,7 +731,7 @@ extraButtons model =
             , enabled = True
             , showLabel = False
             }
-            ToggleRaytrace
+            ToggleRealistic
          , Button.icon
             { icon = Icon.feather "camera"
             , label = "Take snapshot"

@@ -1,5 +1,6 @@
 import './main.css'
 import { initBricksRuntime } from '../packages/brick-frame-viewport/runtime/initBricksRuntime.js'
+import { initSnapshots } from '../packages/brick-frame-viewport/runtime/snapshot.js'
 import { Elm } from './src/Main.elm'
 import { initThumbnails } from '../packages/brick-frame-viewport/runtime/thumbnail-pipeline.js'
 
@@ -105,56 +106,7 @@ if (ports.copyToClipboard) {
 }
 
 // High-resolution screenshot / render capture
-if (ports.captureRender) {
-  ports.captureRender.subscribe(({ width, height, transparent, filename }) => {
-    const canvas = document.querySelector('canvas')
-    if (!canvas) return
-
-    const targetWidth = width || canvas.width
-    const targetHeight = height || canvas.height
-
-    const offscreen = document.createElement('canvas')
-    offscreen.width = targetWidth
-    offscreen.height = targetHeight
-    const ctx = offscreen.getContext('2d')
-
-    if (!transparent) {
-      // Solid neutral dark theme background from @theme CSS variable
-      const bg =
-        getComputedStyle(document.documentElement)
-          .getPropertyValue('--color-surface-canvas')
-          .trim() || 'rgb(15, 23, 42)'
-      ctx.fillStyle = bg
-      ctx.fillRect(0, 0, targetWidth, targetHeight)
-    }
-
-    ctx.imageSmoothingEnabled = true
-    ctx.imageSmoothingQuality = 'high'
-    ctx.drawImage(canvas, 0, 0, targetWidth, targetHeight)
-
-    const resolvedFilename = filename || 'palikkakehys-render.png'
-
-    // Multi-pass raytracing simulation delay (~1.6s) to allow progress UI animation
-    setTimeout(() => {
-      const dataUrl = offscreen.toDataURL('image/png')
-      ports.snapshotReady?.send({
-        dataUrl,
-        filename: resolvedFilename,
-      })
-    }, 1600)
-  })
-}
-
-if (ports.saveSnapshot) {
-  ports.saveSnapshot.subscribe(({ dataUrl, filename }) => {
-    const link = document.createElement('a')
-    link.href = dataUrl
-    link.download = filename || 'palikkakehys-render.png'
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-  })
-}
+initSnapshots(ports)
 
 // Draft: the document is offered on every change, which is far more often than
 // it needs storing — write the latest one once the edits pause.

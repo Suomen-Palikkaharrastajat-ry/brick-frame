@@ -4,6 +4,7 @@ module Viewport.Shortcuts exposing
     , Look
     , Movement
     , actionFor
+    , closesDialog
     , hasContinuousInput
     , helpRows
     , isTextEntryTarget
@@ -237,6 +238,15 @@ actionFor context event =
 
             _ ->
                 Nothing
+
+
+{-| Whether a key press closes the dialog open over the canvas (the snapshot
+modal or the help reference): Escape, as `actionFor` reads it while a dialog is
+open. Hosts check this before any other handling of the key.
+-}
+closesDialog : KeyEvent -> Bool
+closesDialog event =
+    actionFor { helpVisible = True, walking = False } event == Just CloseHelp
 
 
 {-| Translation requested by the currently held keys.

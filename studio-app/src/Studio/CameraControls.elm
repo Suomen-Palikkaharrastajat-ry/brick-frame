@@ -29,7 +29,7 @@ type alias Actions msg =
     , onReset : msg
     , onWalk : msg
     , onHelp : msg
-    , onRaytrace : msg
+    , onRealistic : msg
     , onSnapshot : msg
     , noOp : msg
     }
@@ -77,7 +77,7 @@ extraButtons actions state =
             , enabled = True
             , showLabel = False
             }
-            actions.onRaytrace
+            actions.onRealistic
         , Button.icon
             { icon = Icon.feather "camera"
             , label = "Take snapshot"

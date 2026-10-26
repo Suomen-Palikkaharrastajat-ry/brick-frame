@@ -96,7 +96,7 @@ type Msg
     | TogglePlay
     | PlaybackTick Time.Posix
     | ToggleAutoFrame
-    | ToggleRaytrace
+    | ToggleRealistic
     | CaptureSnapshot
     | FocusActiveStep
     | ToggleViewMode
@@ -350,7 +350,7 @@ update msg model =
         ToggleAutoFrame ->
             ( { model | autoFrame = not model.autoFrame }, Cmd.none )
 
-        ToggleRaytrace ->
+        ToggleRealistic ->
             let
                 nextQuality =
                     case model.renderQuality of
@@ -1119,7 +1119,7 @@ cameraActions =
     , onReset = ResetView
     , onWalk = ViewportMsg Viewport.ToggleWalkMode
     , onHelp = ToggleHelp
-    , onRaytrace = ToggleRaytrace
+    , onRealistic = ToggleRealistic
     , onSnapshot = CaptureSnapshot
     , noOp = NoOp
     }

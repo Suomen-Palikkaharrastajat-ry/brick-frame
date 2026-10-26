@@ -40,6 +40,7 @@ suite : Test
 suite =
     describe "Brick Contraptions"
         [ menuTests
+        , snapshotTests
         , sharingAndToastTests
         , fineTests
         , describe "Curated Catalog"
@@ -1117,6 +1118,38 @@ dockPlacementTests =
                     ()
         , test "a project's own (non-Technic) part rests on the ground" <|
             \_ -> Expect.equal False (Placement.onAxleLine "3001.dat")
+        ]
+
+
+{-| The snapshot modal: Escape closes it and does nothing else, so the part under
+the modal keeps its selection.
+-}
+snapshotTests : Test
+snapshotTests =
+    let
+        start =
+            Tuple.first (init testFlags)
+
+        selected =
+            update (AddPart gear8) start
+                |> Tuple.first
+                |> (\m -> Tuple.first (update (StudioMsg (Core.SelectOnly 0)) m))
+    in
+    describe "Snapshot modal"
+        [ test "Escape closes an open snapshot and keeps the selection" <|
+            \_ ->
+                let
+                    ( opened, _ ) =
+                        update CaptureSnapshot selected
+
+                    ( afterEscape, _ ) =
+                        update (pressKey { key = "Escape", ctrl = False, shift = False }) opened
+                in
+                Expect.equal [ True, True, True ]
+                    [ opened.snapshotModal /= Nothing
+                    , afterEscape.snapshotModal == Nothing
+                    , Core.hasSelection afterEscape.studio
+                    ]
         ]
 
 

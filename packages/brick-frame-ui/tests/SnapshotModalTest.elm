@@ -97,7 +97,7 @@ suite =
                         |> Query.fromHtml
                         |> Expect.all
                             [ Query.has [ Selector.tag "img", Selector.attribute (HtmlAttr.src "data:image/png;base64,abc123") ]
-                            , Query.has [ Selector.text "render.png • 1080p PNG" ]
+                            , Query.has [ Selector.text "render.png • PNG" ]
                             , Query.has [ Selector.tag "button", Selector.text "Save Image" ]
                             , Query.has [ Selector.tag "button", Selector.text "Close" ]
                             , Query.hasNot [ Selector.tag "input" ]

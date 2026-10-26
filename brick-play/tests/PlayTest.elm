@@ -24,6 +24,7 @@ suite : Test
 suite =
     describe "Brick Play"
         [ menuTests
+        , snapshotTests
         , sharingAndToastTests
         , touchTests
         , fineTests
@@ -690,6 +691,39 @@ sharingAndToastTests =
                     , \h -> Expect.equal False (String.contains "model=" h)
                     ]
                     hash
+        ]
+
+
+{-| The snapshot modal: Escape closes it and does nothing else, so the part under
+the modal keeps its selection.
+-}
+snapshotTests : Test
+snapshotTests =
+    let
+        start =
+            Tuple.first (init testFlags)
+
+        ( studioWithGear, _, _ ) =
+            Core.addPart "3647.dat" 7 (vec3 0 0 0) start.studio
+
+        selected =
+            Tuple.first (update (StudioMsg (Core.SelectOnly 0)) { start | studio = studioWithGear })
+    in
+    describe "Snapshot modal"
+        [ test "Escape closes an open snapshot and keeps the selection" <|
+            \_ ->
+                let
+                    ( opened, _ ) =
+                        update CaptureSnapshot selected
+
+                    ( afterEscape, _ ) =
+                        update (pressKey "Escape") opened
+                in
+                Expect.equal [ True, True, True ]
+                    [ opened.snapshotModal /= Nothing
+                    , afterEscape.snapshotModal == Nothing
+                    , Core.hasSelection afterEscape.studio
+                    ]
         ]
 
 

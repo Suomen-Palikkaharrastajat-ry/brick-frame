@@ -81,7 +81,7 @@ type Msg
     = ViewportMsg Viewport.Msg
     | SimulationMsg Simulation.Msg
     | ToggleHelp
-    | ToggleRaytrace
+    | ToggleRealistic
     | CaptureSnapshot
     | GlobePressed ( Float, Float )
     | GlobeMoved ( Float, Float )
@@ -202,7 +202,7 @@ updateInner msg model =
         ToggleHelp ->
             ( { model | helpOpen = not model.helpOpen }, Cmd.none )
 
-        ToggleRaytrace ->
+        ToggleRealistic ->
             let
                 nextQuality =
                     case model.renderQuality of
@@ -698,7 +698,7 @@ cameraActions =
     , onReset = ResetView
     , onWalk = ViewportMsg Viewport.ToggleWalkMode
     , onHelp = ToggleHelp
-    , onRaytrace = ToggleRaytrace
+    , onRealistic = ToggleRealistic
     , onSnapshot = CaptureSnapshot
     , noOp = NoOp
     }

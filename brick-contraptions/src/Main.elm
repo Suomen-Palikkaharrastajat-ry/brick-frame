@@ -143,7 +143,7 @@ type alias Thumbnail =
 type Msg
     = StudioMsg Core.Msg
     | TogglePlay
-    | ToggleRaytrace
+    | ToggleRealistic
     | CaptureSnapshot
     | SnapshotReady { dataUrl : String, filename : String }
     | SnapshotSave { dataUrl : String, filename : String }
@@ -334,6 +334,28 @@ stops and rewinds (`stopForEdit`).
 -}
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
+    if closesSnapshot msg model then
+        ( { model | snapshotModal = Nothing }, Cmd.none )
+
+    else
+        updateApp msg model
+
+
+{-| Escape closes an open snapshot modal before anything else sees the key, so
+the editing keys and the layers underneath do not react as well.
+-}
+closesSnapshot : Msg -> Model -> Bool
+closesSnapshot msg model =
+    case ( model.snapshotModal, msg ) of
+        ( Just _, StudioMsg (Core.ViewportMsg (Viewport.KeyPressed keyEvent)) ) ->
+            ViewportShortcuts.closesDialog keyEvent
+
+        _ ->
+            False
+
+
+updateApp : Msg -> Model -> ( Model, Cmd Msg )
+updateApp msg model =
     let
         ( next, cmd ) =
             step msg model
@@ -698,7 +720,7 @@ step msg model =
             , Cmd.none
             )
 
-        ToggleRaytrace ->
+        ToggleRealistic ->
             let
                 nextQuality =
                     case Core.renderQuality model.studio of
@@ -1281,7 +1303,7 @@ globeControl model =
                     , enabled = True
                     , showLabel = False
                     }
-                    ToggleRaytrace
+                    ToggleRealistic
                 , Button.icon
                     { icon = Icon.feather "camera"
                     , label = "Take snapshot"

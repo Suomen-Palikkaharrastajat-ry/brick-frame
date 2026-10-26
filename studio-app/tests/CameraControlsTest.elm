@@ -77,7 +77,7 @@ suite =
                     , onReset = ()
                     , onWalk = ()
                     , onHelp = ()
-                    , onRaytrace = ()
+                    , onRealistic = ()
                     , onSnapshot = ()
                     , noOp = ()
                     }

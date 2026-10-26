@@ -19,6 +19,8 @@ import Studio.Instructions as Instructions
 import Studio.Preview as Preview
 import Studio.Workspace as Workspace
 import UI.SnapshotModal as SnapshotModal
+import Viewport
+import Viewport.Shortcuts as Shortcuts
 
 
 {-| Flags from `initBricksRuntime`; the same record the viewer takes.
@@ -58,6 +60,34 @@ init flags =
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
+    if closesSnapshot msg model then
+        ( { model | snapshotModal = Nothing }, Cmd.none )
+
+    else
+        updateApp msg model
+
+
+{-| Escape closes an open snapshot modal before anything else sees the key, so
+the editing keys and the layers underneath do not react as well.
+-}
+closesSnapshot : Msg -> Model -> Bool
+closesSnapshot msg model =
+    case ( model.snapshotModal, msg ) of
+        ( Just _, WorkspaceMsg (Workspace.ViewportMsg (Viewport.KeyPressed keyEvent)) ) ->
+            Shortcuts.closesDialog keyEvent
+
+        ( Just _, PreviewMsg (Preview.ViewportMsg (Viewport.KeyPressed keyEvent)) ) ->
+            Shortcuts.closesDialog keyEvent
+
+        ( Just _, InstructionsMsg (Instructions.ViewportMsg (Viewport.KeyPressed keyEvent)) ) ->
+            Shortcuts.closesDialog keyEvent
+
+        _ ->
+            False
+
+
+updateApp : Msg -> Model -> ( Model, Cmd Msg )
+updateApp msg model =
     case ( msg, model.preview, model.instructions ) of
         ( WorkspaceMsg Workspace.SimulateRequested, Nothing, Nothing ) ->
             openPreview model

@@ -122,6 +122,10 @@ suite =
                 \_ ->
                     Shortcuts.actionFor { helpVisible = False, walking = True } (press "Escape")
                         |> Expect.equal (Just LeaveWalk)
+            , test "closesDialog is true for Escape only" <|
+                \_ ->
+                    Expect.equal [ True, False ]
+                        [ Shortcuts.closesDialog (press "Escape"), Shortcuts.closesDialog (press "f") ]
             , test "and does nothing when there is nothing to leave" <|
                 \_ ->
                     Expect.equal Nothing (action "Escape")

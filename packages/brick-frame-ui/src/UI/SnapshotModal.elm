@@ -10,7 +10,7 @@ module UI.SnapshotModal exposing
     )
 
 {-| Full-screen modal for capturing, previewing, and saving a snapshot of the
-canvas as a 1080p PNG.
+canvas as a PNG of up to 1920 × 1080.
 
 The modal takes over the whole UI with a blurred backdrop while the capture is
 being made, then shows the captured image with a Save button. The user can close
@@ -191,7 +191,7 @@ viewHeader =
                 , Attr.style "font-size" "12px"
                 , Attr.style "color" Theme.textMuted
                 ]
-                [ text "A 1920 × 1080 PNG capture of the current view" ]
+                [ text "A PNG of the current view, up to 1920 × 1080" ]
             ]
         , span
             [ Attr.style "font-size" "11px"
@@ -202,7 +202,7 @@ viewHeader =
             , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
             , Attr.style "color" Theme.textMuted
             ]
-            [ text "1080p" ]
+            [ text "PNG" ]
         ]
 
 
@@ -283,7 +283,7 @@ viewPreview data =
             , Attr.style "color" Theme.textMuted
             ]
             [ div []
-                [ text (data.filename ++ " • 1080p PNG") ]
+                [ text (data.filename ++ " • PNG") ]
             , if data.hasSaved then
                 div
                     [ Attr.style "display" "inline-flex"
