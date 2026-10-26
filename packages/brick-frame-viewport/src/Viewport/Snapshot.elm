@@ -16,6 +16,7 @@ geometry the viewport's `view` draws, so the snapshot matches the screen:
 
 import Dict
 import Json.Encode as Encode
+import LDraw.ColorData exposing (Finish(..))
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (Vec3)
 import Render.Camera as Camera exposing (Camera)
@@ -67,6 +68,7 @@ sceneTriangles config =
             Snapshot.placedTriangles
                 { matrix = Mat4.identity
                 , instanceColor = Shader.noInstanceColor
+                , finish = Solid
                 , ghost = False
                 }
                 scene.surface
@@ -95,6 +97,7 @@ placementTriangles instanced hidden activeSources placement =
                 Snapshot.placedTriangles
                     { matrix = placement.matrix
                     , instanceColor = placement.color
+                    , finish = placement.finish
                     , ghost = isGhost activeSources placement.source
                     }
                     mesh.surface

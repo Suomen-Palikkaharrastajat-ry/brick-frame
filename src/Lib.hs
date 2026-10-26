@@ -1,4 +1,4 @@
-module Lib (generateColorDataModule, generateElmModule) where
+module Lib (Finish (..), LDrawColor (..), parseLdConfig, generateColorDataModule, generateElmModule) where
 
 import Data.Bifunctor (second)
 import Data.Maybe (mapMaybe)
@@ -21,8 +21,22 @@ data LDrawColor = LDrawColor
     , colorG :: Float
     , colorB :: Float
     , colorAlpha :: Float
+    , colorFinish :: Finish
     }
     deriving (Show)
+
+-- The surface finish of an LDraw colour, as the path tracer's materials see it.
+-- The constructor names are also the Elm constructors of `LDraw.ColorData.Finish`.
+data Finish
+    = Solid
+    | Transparent
+    | Chrome
+    | Metal
+    | Pearl
+    | Rubber
+    | Glitter
+    | Speckle
+    deriving (Show, Eq, Bounded, Enum)
 
 -- Colours are read from the official LDraw configuration file that ships with
 -- the synced LDraw assets, rather than being maintained by hand here. That file
@@ -55,13 +69,30 @@ parseColorLine line =
         ("0" : "!COLOUR" : name : rest) -> do
             code <- keywordValue "CODE" rest >>= readInt
             (r, g, b) <- keywordValue "VALUE" rest >>= parseHexRgb
-            let alpha =
-                    case keywordValue "ALPHA" rest >>= readInt of
+            let alphaByte = keywordValue "ALPHA" rest >>= readInt
+                alpha =
+                    case alphaByte of
                         Just a -> fromIntegral a / 255
                         Nothing -> 1.0
-            Just (LDrawColor code name r g b alpha)
+            Just (LDrawColor code name r g b alpha (finishOf alphaByte rest))
         _ ->
             Nothing
+
+-- The finish a `!COLOUR` line declares, from the keywords after its name. A
+-- surface keyword (CHROME, METAL, PEARLESCENT, RUBBER) wins, then MATERIAL
+-- GLITTER or SPECKLE, then an ALPHA below 255 is Transparent. Anything else is
+-- Solid, which includes MATERIAL FABRIC and CANVAS. Translucent glitter keeps
+-- its GLITTER finish; the snapshot falls back to the alpha for it.
+finishOf :: Maybe Int -> [Text] -> Finish
+finishOf alphaByte tokens
+    | "CHROME" `elem` tokens = Chrome
+    | "METAL" `elem` tokens || "MATTE_METALLIC" `elem` tokens = Metal
+    | "PEARLESCENT" `elem` tokens = Pearl
+    | "RUBBER" `elem` tokens = Rubber
+    | keywordValue "MATERIAL" tokens == Just "GLITTER" = Glitter
+    | keywordValue "MATERIAL" tokens == Just "SPECKLE" = Speckle
+    | maybe False (< 255) alphaByte = Transparent
+    | otherwise = Solid
 
 -- The token immediately following `keyword`, if present.
 keywordValue :: Text -> [Text] -> Maybe Text
@@ -199,9 +230,9 @@ generateColorDataModule = do
     ldrawColors <- parseLdConfig ldConfigPath
     pure $
         Text.unlines
-            [ "module LDraw.ColorData exposing (colorNames, colorTable)"
+            [ "module LDraw.ColorData exposing (Finish(..), colorNames, colorTable, finishFor)"
             , ""
-            , "{-| LDraw colour code → RGBA, generated from " <> Text.pack ldConfigPath <> "."
+            , "{-| LDraw colour code → RGBA and finish, generated from " <> Text.pack ldConfigPath <> "."
             , ""
             , "Do not edit by hand — run `make generate`."
             , ""
@@ -210,12 +241,42 @@ generateColorDataModule = do
             , "import Dict exposing (Dict)"
             , ""
             , ""
+            , "{-| The surface finish of a colour, as the path tracer's materials see it:"
+            , "plastic, transparent, chrome, metal, pearlescent paint, rubber, and the"
+            , "glitter and speckle plastics."
+            , "-}"
+            , "type Finish"
+            , "    = Solid"
+            , "    | Transparent"
+            , "    | Chrome"
+            , "    | Metal"
+            , "    | Pearl"
+            , "    | Rubber"
+            , "    | Glitter"
+            , "    | Speckle"
+            , ""
+            , ""
             , "{-| Every official LDraw colour, as linear RGBA in [0.0, 1.0]."
             , "-}"
             , "colorTable : Dict Int { r : Float, g : Float, b : Float, alpha : Float }"
             , "colorTable ="
             , "    Dict.fromList"
             , "        [ " <> Text.intercalate "\n        , " (map colorEntry ldrawColors)
+            , "        ]"
+            , ""
+            , ""
+            , "{-| The finish of an LDraw colour code. Codes that are not in the table"
+            , "(16, 24 and the rest) are plain `Solid`."
+            , "-}"
+            , "finishFor : Int -> Finish"
+            , "finishFor code ="
+            , "    Dict.get code finishTable |> Maybe.withDefault Solid"
+            , ""
+            , ""
+            , "finishTable : Dict Int Finish"
+            , "finishTable ="
+            , "    Dict.fromList"
+            , "        [ " <> Text.intercalate "\n        , " (map finishEntry ldrawColors)
             , "        ]"
             , ""
             , ""
@@ -228,6 +289,10 @@ generateColorDataModule = do
             , "        [ " <> Text.intercalate "\n        , " (map colorNameEntry ldrawColors)
             , "        ]"
             ]
+
+finishEntry :: LDrawColor -> Text
+finishEntry c =
+    "( " <> Text.pack (show (colorCode c)) <> ", " <> Text.pack (show (colorFinish c)) <> " )"
 
 colorNameEntry :: LDrawColor -> Text
 colorNameEntry c =

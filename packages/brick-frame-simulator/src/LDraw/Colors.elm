@@ -1,4 +1,4 @@
-module LDraw.Colors exposing (resolveColor, toVec4)
+module LDraw.Colors exposing (finishOf, resolveColor, toVec4)
 
 {-| LDraw color resolution.
 
@@ -22,6 +22,15 @@ import Math.Vector4 as Vec4 exposing (Vec4)
 
 
 -- ── Public API ────────────────────────────────────────────────────────────────
+
+
+{-| The surface finish of a colour code (chrome, rubber, pearl, ...), as the
+path tracer shades it. Codes 16, -1, 24 and -2 are not table colours and
+read as `Solid`; Studio's 100000 offset is stripped first.
+-}
+finishOf : Int -> LDraw.ColorData.Finish
+finishOf code =
+    LDraw.ColorData.finishFor (normalizeColorCode code)
 
 
 {-| Resolve a LDraw color code to an RGBA value.

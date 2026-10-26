@@ -8,6 +8,7 @@ context is shown) and the JSON request around them.
 import Dict
 import Expect
 import Json.Decode as Decode
+import LDraw.ColorData exposing (Finish(..))
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3
 import Math.Vector4 as Vec4
@@ -57,10 +58,22 @@ placement source x =
     , part = "3001.dat"
     , matrix = Mat4.makeTranslate3 x 0 0
     , color = Vec4.vec4 0.1 0.2 0.3 1
+    , finish = Solid
     , center = Vec3.vec3 (x + 5) 5 0
     , radius = 7
     , flipped = False
     }
+
+
+{-| A corner whose colour is inherited from its placement.
+-}
+inheritingCorner : Float -> Float -> Vertex
+inheritingCorner x y =
+    let
+        plain =
+            corner x y
+    in
+    { plain | inherit = 1 }
 
 
 instanced : InstancedScene
@@ -140,6 +153,30 @@ suite =
                         , activeSources = Nothing
                         }
                         |> Expect.equal [ 50, 50, 0, 60, 50, 0, 50, 60, 0, 0.1, 0.2, 0.3, 1, 0 ]
+            , test "a chrome placement's inherited faces are material 2" <|
+                \_ ->
+                    let
+                        chromeMesh =
+                            { partMesh
+                                | surface = [ ( inheritingCorner 0 0, inheritingCorner 10 0, inheritingCorner 0 10 ) ]
+                            }
+
+                        chromePlacement =
+                            placement 1 0
+
+                        chrome =
+                            { instanced
+                                | parts = Dict.fromList [ ( "3001.dat", chromeMesh ) ]
+                                , placements = [ { chromePlacement | finish = Chrome } ]
+                            }
+                    in
+                    Snapshot.sceneTriangles
+                        { scene = Nothing
+                        , instanced = Just chrome
+                        , hidden = Set.empty
+                        , activeSources = Nothing
+                        }
+                        |> Expect.equal [ 0, 0, 0, 10, 0, 0, 0, 10, 0, 0.1, 0.2, 0.3, 1, 2 ]
             , test "with neither scene there is nothing to draw" <|
                 \_ ->
                     Snapshot.sceneTriangles

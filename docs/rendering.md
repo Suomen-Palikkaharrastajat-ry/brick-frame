@@ -574,6 +574,19 @@ browser figure is better): loading it takes about 2.4 s; adding, moving or
 removing one placement takes 8–125 ms, mostly the garbage collector working
 through the placement list.
 
+## Snapshot materials
+
+The path-traced snapshot (`Viewport.Snapshot` → `Render.Snapshot`) takes each
+LDraw colour's finish from `LDConfig.ldr` (`LDraw.ColorData.finishFor`, generated
+from the `!COLOUR` keywords: CHROME, METAL, PEARLESCENT, RUBBER, MATERIAL GLITTER
+and SPECKLE, otherwise Transparent for an ALPHA below 255, otherwise Solid). An
+instanced placement carries its finish (`Render.Instanced.Placement.finish`), and
+an inherited vertex takes its placement's. The triangle's material code is
+chrome or metal `2`, rubber `3`, pearl `4`, transparent `1`, and plastic `0`
+(glitter and speckle are plastic). Ghost context is always `1`. Baked models
+(small files loaded without a document) carry only RGBA, so their material
+comes from the alpha alone.
+
 ## Limitations
 
 - **Edge line width is always 1 px.** WebGL 1.0 does not support `lineWidth > 1`

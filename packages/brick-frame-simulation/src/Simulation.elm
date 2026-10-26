@@ -51,6 +51,7 @@ import Gear.Components as Components
 import Gear.Detect as Detect
 import Gear.Lod as Lod exposing (Lod)
 import Gear.Types exposing (GearGraph, GearId, GearInstance, GearSpec)
+import LDraw.ColorData exposing (Finish(..))
 import LDraw.Resolve exposing (PartCache, PartStatus(..))
 import LDraw.Types exposing (LDrawLine(..))
 import Math.Matrix4 as Mat4
@@ -877,6 +878,7 @@ gearSnapshotFloats model =
                         Snapshot.placedTriangles
                             { matrix = Meshes.rotationAround angle rendered.axis rendered.center
                             , instanceColor = Shader.noInstanceColor
+                            , finish = Solid
                             , ghost = False
                             }
                             rendered.surface
@@ -900,6 +902,7 @@ componentSnapshotFloats model =
                 Snapshot.placedTriangles
                     { matrix = Meshes.rotationAround angle component.axis component.rotationCenter
                     , instanceColor = Shader.noInstanceColor
+                    , finish = Solid
                     , ghost = False
                     }
                     component.surface

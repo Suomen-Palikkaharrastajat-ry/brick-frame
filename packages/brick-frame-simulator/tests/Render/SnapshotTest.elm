@@ -8,6 +8,7 @@ import Expect
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3
 import Math.Vector4 as Vec4 exposing (Vec4)
+import LDraw.ColorData exposing (Finish(..))
 import Render.Mesh exposing (Vertex)
 import Render.Snapshot as Snapshot exposing (Placed)
 import Test exposing (Test, describe, test)
@@ -53,8 +54,20 @@ placed : Placed
 placed =
     { matrix = yUpFlip
     , instanceColor = white
+    , finish = Solid
     , ghost = False
     }
+
+
+{-| The material code of a single inherited brick face drawn with `finish`
+in the given placement colour.
+-}
+materialOf : Finish -> Vec4 -> Float
+materialOf finish colour =
+    Snapshot.placedTriangles { placed | finish = finish, instanceColor = colour } [ brickFace red 1 ]
+        |> List.drop 13
+        |> List.head
+        |> Maybe.withDefault -1
 
 
 suite : Test
@@ -91,6 +104,47 @@ suite =
                     Snapshot.placedTriangles { placed | matrix = Mat4.makeTranslate3 100 0 0 } [ brickFace red 0 ]
                         |> List.take 3
                         |> Expect.equal [ 100, -24, 0 ]
+            , test "a chrome placement's inherited faces are material 2" <|
+                \_ ->
+                    materialOf Chrome white
+                        |> Expect.equal 2
+            , test "a metal placement's inherited faces are material 2" <|
+                \_ ->
+                    materialOf Metal white
+                        |> Expect.equal 2
+            , test "a rubber placement's inherited faces are material 3" <|
+                \_ ->
+                    materialOf Rubber white
+                        |> Expect.equal 3
+            , test "a pearlescent placement's inherited faces are material 4" <|
+                \_ ->
+                    materialOf Pearl white
+                        |> Expect.equal 4
+            , test "a transparent placement's inherited faces are material 1" <|
+                \_ ->
+                    materialOf Transparent (Vec4.vec4 0.5 0.25 0.125 0.5)
+                        |> Expect.equal 1
+            , test "a plain placement's inherited faces are material 0" <|
+                \_ ->
+                    materialOf Solid white
+                        |> Expect.equal 0
+            , test "glitter and speckle are plastic, material 0 when opaque" <|
+                \_ ->
+                    Expect.equal [ 0, 0 ] [ materialOf Glitter white, materialOf Speckle white ]
+            , test "translucent glitter keeps the transparent material" <|
+                \_ ->
+                    materialOf Glitter (Vec4.vec4 0.5 0.25 0.125 0.5)
+                        |> Expect.equal 1
+            , test "a fixed colour is shaded by its own alpha, whatever the placement's finish" <|
+                \_ ->
+                    Snapshot.placedTriangles { placed | finish = Chrome } [ brickFace red 0 ]
+                        |> List.drop 13
+                        |> Expect.equal [ 0 ]
+            , test "ghost geometry is transparent whatever its finish" <|
+                \_ ->
+                    Snapshot.placedTriangles { placed | finish = Chrome, ghost = True } [ brickFace red 1 ]
+                        |> List.drop 13
+                        |> Expect.equal [ 1 ]
             , test "no triangles give no floats" <|
                 \_ ->
                     Snapshot.placedTriangles placed []

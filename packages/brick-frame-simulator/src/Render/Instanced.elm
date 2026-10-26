@@ -71,6 +71,7 @@ recorded per placement and the cull face is switched accordingly.
 -}
 
 import Dict exposing (Dict)
+import LDraw.ColorData as ColorData
 import LDraw.Colors as Colors
 import LDraw.Geometry as Geometry
 import LDraw.Resolve exposing (PartCache, PartStatus(..))
@@ -150,12 +151,16 @@ from the part's local bounds.
 document placement (which may expand to many instances when it references a
 submodel) without rebuilding the scene. It is `-1` for scenes made by `build`.
 
+`finish` is the finish of `color`'s LDraw code, which the path tracer's
+snapshot uses for the vertices that inherited that colour.
+
 -}
 type alias Placement =
     { source : Int
     , part : PartKey
     , matrix : Mat4
     , color : Vec4
+    , finish : ColorData.Finish
     , center : Vec3
     , radius : Float
     , flipped : Bool
@@ -515,7 +520,7 @@ toPlacement parts source raw =
                 -- Extraction already resolved inheritance, so the code is
                 -- concrete here and the parent argument goes unused; this is a
                 -- plain lookup that still normalises Studio's colour offsets.
-                placementFor mesh source raw.part (Colors.toVec4 (Colors.resolveColor raw.color raw.color)) raw.matrix
+                placementFor mesh source raw.part (Colors.toVec4 (Colors.resolveColor raw.color raw.color)) (Colors.finishOf raw.color) raw.matrix
             )
 
 
@@ -534,11 +539,11 @@ when the part has no mesh in `parts`.
 retarget : Dict PartKey PartMesh -> Mat4 -> Placement -> Maybe Placement
 retarget parts docMatrix placement =
     Dict.get placement.part parts
-        |> Maybe.map (\mesh -> placementFor mesh placement.source placement.part placement.color docMatrix)
+        |> Maybe.map (\mesh -> placementFor mesh placement.source placement.part placement.color placement.finish docMatrix)
 
 
-placementFor : PartMesh -> Int -> PartKey -> Vec4 -> Mat4 -> Placement
-placementFor mesh source part color docMatrix =
+placementFor : PartMesh -> Int -> PartKey -> Vec4 -> ColorData.Finish -> Mat4 -> Placement
+placementFor mesh source part color finish docMatrix =
     let
         matrix =
             renderMatrix docMatrix
@@ -547,6 +552,7 @@ placementFor mesh source part color docMatrix =
     , part = part
     , matrix = matrix
     , color = color
+    , finish = finish
     , center = Mat4.transform matrix mesh.localCenter
     , radius = mesh.localRadius * maxScale matrix
     , flipped = determinant3 matrix < 0

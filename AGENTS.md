@@ -65,7 +65,7 @@ brick-play/src/                  # Brick Play: free building or a puzzle (chosen
   Ports.elm             # JS interop (file reading, geometry worker, URL hash)
 
 src/
-  Lib.hs                # LDrawColor, GearSpec, Elm module generation
+  Lib.hs                # LDrawColor (with its Finish from the !COLOUR keywords), GearSpec, Elm module generation
 generator/Main.hs       # Writes packages/brick-frame-data/src/Data.elm
 tests/Main.hs           # Haskell test suite (hspec)
 ```
