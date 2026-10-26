@@ -10,6 +10,7 @@ module Studio.Core exposing
     , addPart
     , addPartAt
     , addPartCentered
+    , applyFixes
     , canRedo
     , canUndo
     , cancelDrag
@@ -49,6 +50,7 @@ module Studio.Core exposing
     , setGlued
     , setGridStep
     , setHelpVisible
+    , setPreview
     , setRenderQuality
     , setRotateStep
     , setSnapDistance
@@ -88,6 +90,7 @@ import LDraw.Types exposing (LDrawLine(..))
 import Math.Matrix4 as Mat4 exposing (Mat4)
 import Math.Vector3 as Vec3 exposing (Vec3, vec3)
 import Render.Camera as Camera
+import Render.Instanced as Instanced
 import Render.Pick as Pick
 import Render.Style as Style
 import Set exposing (Set)
@@ -95,6 +98,7 @@ import Studio.DragPlane as DragPlane exposing (WorkingPlane)
 import Studio.Edit as Edit exposing (Axis(..), Command(..), History, NewPart)
 import Studio.GearAlign as GearAlign
 import Studio.Gizmo as Gizmo exposing (ArcHandle, DragHandle(..), Handle)
+import Studio.Health as Health
 import Studio.Overlay as Overlay
 import Studio.Shortcuts as StudioShortcuts exposing (Tool(..))
 import Studio.Transform as Transform
@@ -266,6 +270,7 @@ type alias Model =
     , fitAfterAdd : Maybe Int
     , gearAlignment : Bool
     , glueEditable : Bool
+    , preview : List Health.Fix
     }
 
 
@@ -372,6 +377,7 @@ init config =
             , fitAfterAdd = Nothing
             , gearAlignment = False
             , glueEditable = True
+            , preview = []
             }
 
         ( finalModel, extraCmds, _ ) =
@@ -711,6 +717,58 @@ clearUnglued model =
                 |> List.foldl Document.removePlacement model.document
     in
     resetDocument kept model
+
+
+{-| Show a Tidy up preview: the parts the fixes move are highlighted, and a
+translucent ghost of each is drawn at its planned place (see `viewWithExtra`).
+`[]` clears the preview. Hosts pause editing while a preview is open.
+-}
+setPreview : List Health.Fix -> Model -> Model
+setPreview fixes model =
+    { model | preview = fixes }
+
+
+{-| Apply Tidy up fixes (`Studio.Health.plan`) as one undo step, setting each
+placement to its planned matrix. A glued placement is never moved, so fixes for
+glued parts are dropped. Ends the preview.
+-}
+applyFixes : List Health.Fix -> Model -> ( Model, Cmd Msg, List Event )
+applyFixes fixes model =
+    let
+        gluedNow =
+            Document.gluedIds model.document
+
+        pairs =
+            fixes
+                |> List.filter (\fix -> not (Set.member fix.placement gluedNow))
+                |> List.map (\fix -> ( fix.placement, fix.to ))
+    in
+    if List.isEmpty pairs then
+        ( { model | preview = [] }, Cmd.none, [] )
+
+    else
+        let
+            ( newDoc, newHistory ) =
+                Edit.record (SetMatrix pairs) model.document model.history
+
+            ( nextViewport, viewportCmd, events ) =
+                Viewport.applyDocument newDoc model.viewport
+
+            nextModel =
+                { model
+                    | viewport = nextViewport
+                    , document = Document.clearTouched newDoc
+                    , history = newHistory
+                    , preview = []
+                }
+
+            ( finalModel, extraCmds, emittedEvents ) =
+                handleViewportEvents events ( nextModel, [], [ DocumentChanged nextModel.document ] )
+        in
+        ( finalModel
+        , Cmd.batch (Cmd.map ViewportMsg viewportCmd :: extraCmds)
+        , emittedEvents
+        )
 
 
 {-| The selected placements a move, turn, nudge, delete or recolour may change: the
@@ -2658,6 +2716,18 @@ viewWithExtra config model =
 
                 Nothing ->
                     Nothing
+
+        -- A Tidy up preview outlines the parts it moves (in the collision red).
+        colliding =
+            if List.isEmpty model.preview then
+                if model.drag == Nothing then
+                    Set.empty
+
+                else
+                    model.collidingPlacements
+
+            else
+                Set.fromList (List.map .placement model.preview)
     in
     div
         [ Attr.style "width" (String.fromInt config.width ++ "px")
@@ -2668,25 +2738,64 @@ viewWithExtra config model =
         [ Html.map ViewportMsg
             (Viewport.view
                 { extraEntities =
-                    \camera _ aspect ->
+                    \camera style aspect ->
                         Overlay.entities camera
                             aspect
                             model.viewport.instancedScene
                             { selection = model.selection
-                            , colliding =
-                                if model.drag == Nothing then
-                                    Set.empty
-
-                                else
-                                    model.collidingPlacements
+                            , colliding = colliding
                             , snapGuide = Maybe.map .guide model.activeSnap
                             , axisGuide = dragAxisGuide
                             }
                             (currentHandles model)
                             (currentArcHandles model)
+                            ++ previewEntities { width = config.width, height = config.height } model camera style
                             ++ config.extraEntities camera aspect
                 , coarsenWhileMoving = True
                 }
                 model.viewport
             )
         ]
+
+
+{-| The ghosts of a Tidy up preview: each previewed part drawn again at its
+planned matrix, through the instanced renderer with every placement ghosted
+(translucent, `Render.Instanced.renderWithGhost` with no active sources). Nothing
+is drawn without a preview, or while the viewport has no instanced scene.
+-}
+previewEntities :
+    { width : Int, height : Int }
+    -> Model
+    -> Camera.Camera
+    -> Style.Style
+    -> List Entity
+previewEntities dimensions model camera style =
+    case ( model.preview, model.viewport.instancedScene ) of
+        ( [], _ ) ->
+            []
+
+        ( _, Nothing ) ->
+            []
+
+        ( fixes, Just scene ) ->
+            let
+                targets =
+                    Dict.fromList (List.map (\fix -> ( fix.placement, fix.to )) fixes)
+
+                ghosts =
+                    List.filterMap
+                        (\placement ->
+                            Dict.get placement.source targets
+                                |> Maybe.map (\matrix -> { placement | matrix = matrix })
+                        )
+                        scene.placements
+            in
+            Instanced.renderWithGhost
+                { camera = camera
+                , style = style
+                , width = dimensions.width
+                , height = dimensions.height
+                , coarsen = False
+                , activeSources = Just Set.empty
+                }
+                { scene | placements = ghosts }

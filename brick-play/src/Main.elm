@@ -59,6 +59,13 @@ clear, beside a visible ? button that opens the shortcut list and the play butto
 Escape closes the menu first. Share link copies a puzzle: for a free build, its
 glued parts stay on the board and everything else becomes the kit.
 
+Tidy up (`Studio.Health`) checks the build after each change: a studded part that
+sits off the stud grid, or parts that overlap, show a pill above the action bar
+("2 loose bricks · Tidy up"). A healthy build shows nothing. The pill opens a
+preview: the parts that move are outlined, a translucent ghost shows each new
+place, and Apply makes all the moves one undo step. While the preview is open
+editing is paused; Escape or Cancel leaves the build as it was.
+
 -}
 
 import Array
@@ -71,7 +78,7 @@ import EmbeddedParts
 import FeatherIcons
 import Free.Catalog as FreeCatalog
 import Gear.Placements as Placements
-import Html exposing (Html, button, div, h1, header, input, span, text)
+import Html exposing (Html, button, div, h1, h2, header, input, li, p, span, text, ul)
 import Html.Attributes as Attr
 import Html.Events exposing (onClick, onFocus, onInput)
 import Html.Keyed as Keyed
@@ -89,6 +96,7 @@ import Simulation
 import Studio.Colours as Colours
 import Studio.Core as Core
 import Studio.GearFeedback as GearFeedback
+import Studio.Health as Health
 import Studio.PartIndex as PartIndex
 import Studio.PartSearch as PartSearch
 import Studio.Shortcuts as StudioShortcuts exposing (TurnDirection(..))
@@ -161,6 +169,8 @@ type alias Model =
     , toast : Maybe { message : String, id : Int }
     , toastCounter : Int
     , snapshotModal : Maybe SnapshotModal.Model
+    , tidy : List Health.Fix
+    , tidyOpen : Bool
     }
 
 
@@ -248,6 +258,9 @@ type Msg
     | ToggleHelp
     | ToggleMenu
     | CloseMenu
+    | OpenTidy
+    | CancelTidy
+    | ApplyTidy
     | ShareLink
     | DismissToast Int
     | MenuPicked Msg
@@ -341,13 +354,15 @@ init flags =
             , toast = Nothing
             , toastCounter = 0
             , snapshotModal = Nothing
+            , tidy = []
+            , tidyOpen = False
             }
 
         fetchViewportSize =
             Browser.Dom.getViewport
                 |> Task.perform (\info -> WindowResized (round info.viewport.width) (round info.viewport.height))
     in
-    ( withTechnicSettings initialModel
+    ( withTechnicSettings (withTidy initialModel)
     , Cmd.batch
         [ Cmd.map StudioMsg studioCmd
         , fetchViewportSize
@@ -606,11 +621,162 @@ hashFor before after =
 -}
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
-    if closesSnapshot msg model then
+    if model.tidyOpen then
+        updateTidying msg model
+
+    else if closesSnapshot msg model then
         ( { model | snapshotModal = Nothing }, cancelSnapshotCmd model.snapshotModal )
 
     else
         updateApp msg model
+
+
+{-| While the Tidy up preview is open editing is paused. Escape cancels, Apply
+and Cancel act, and only camera, loading and layout messages pass through, so a
+pointer press cannot start a drag and no key can edit the build.
+-}
+updateTidying : Msg -> Model -> ( Model, Cmd Msg )
+updateTidying msg model =
+    case msg of
+        StudioMsg (Core.ViewportMsg (Viewport.KeyPressed keyEvent)) ->
+            if ViewportShortcuts.closesDialog keyEvent then
+                updateApp CancelTidy model
+
+            else
+                ( model, Cmd.none )
+
+        CancelTidy ->
+            updateApp msg model
+
+        ApplyTidy ->
+            updateApp msg model
+
+        _ ->
+            if passesWhileTidying msg then
+                updateApp msg model
+
+            else
+                ( model, Cmd.none )
+
+
+{-| The messages a Tidy up preview lets through: loading, layout, and the
+camera's own controls (none of which edits the document).
+-}
+passesWhileTidying : Msg -> Bool
+passesWhileTidying msg =
+    case msg of
+        StudioMsg (Core.ViewportMsg viewportEvent) ->
+            case viewportEvent of
+                Viewport.WindowResize _ _ ->
+                    True
+
+                Viewport.TopLevelLoaded _ _ ->
+                    True
+
+                Viewport.PartLoaded _ _ ->
+                    True
+
+                Viewport.FileContentReceived _ ->
+                    True
+
+                Viewport.FileLoadError _ ->
+                    True
+
+                Viewport.GeometryFlattened _ ->
+                    True
+
+                Viewport.GeometryFlattenFailed _ ->
+                    True
+
+                Viewport.AnimationFrame _ ->
+                    True
+
+                Viewport.Wheel _ ->
+                    True
+
+                Viewport.MouseMove _ _ ->
+                    True
+
+                Viewport.MouseUp _ _ ->
+                    True
+
+                Viewport.RotateCameraBy _ _ ->
+                    True
+
+                Viewport.StartHoldRotate _ _ ->
+                    True
+
+                Viewport.EndHoldRotate ->
+                    True
+
+                Viewport.FitView ->
+                    True
+
+                Viewport.ToggleWalkMode ->
+                    True
+
+                Viewport.SetViewPreset _ ->
+                    True
+
+                Viewport.SetRenderQuality _ ->
+                    True
+
+                Viewport.KeyReleased _ ->
+                    True
+
+                Viewport.AllKeysReleased ->
+                    True
+
+                Viewport.DismissError ->
+                    True
+
+                Viewport.ContextMenuOpened ->
+                    True
+
+                _ ->
+                    False
+
+        StudioMsg (Core.GeometryFlattened _) ->
+            True
+
+        StudioMsg (Core.GeometryFlattenFailed _) ->
+            True
+
+        WindowResized _ _ ->
+            True
+
+        ThumbnailLoaded _ ->
+            True
+
+        Tick _ ->
+            True
+
+        DismissToast _ ->
+            True
+
+        GlobePressed _ ->
+            True
+
+        GlobeMoved _ ->
+            True
+
+        GlobeReleased ->
+            True
+
+        ZoomTo _ ->
+            True
+
+        ZoomDone ->
+            True
+
+        ResetView ->
+            True
+
+        NoOp ->
+            True
+
+        _ ->
+            False
 
 
 {-| Stop the path tracer when the snapshot modal closes while it is still rendering.
@@ -683,6 +849,10 @@ settle before after =
         edited =
             after.studio.document.submodels /= before.studio.document.submodels
 
+        -- A part's geometry arriving can change what the build check can see.
+        partsArrived =
+            Dict.size before.studio.viewport.partCache /= Dict.size after.studio.viewport.partCache
+
         analysed =
             if edited then
                 { after | machine = Machine.analyseMachine after.studio.document after.studio.viewport.partCache }
@@ -696,8 +866,39 @@ settle before after =
 
             else
                 analysed
+
+        -- Mid-drag the document changes on every move, so the check waits for the drop.
+        checked =
+            if (edited || partsArrived) && after.studio.drag == Nothing then
+                withTidy rested
+
+            else
+                rested
     in
-    withTechnicSettings rested
+    withTechnicSettings checked
+
+
+{-| The Tidy up plan for the studio's document: what `Studio.Health` would move.
+Empty when the build is healthy.
+-}
+tidyPlan : Core.Model -> List Health.Fix
+tidyPlan studio =
+    let
+        document =
+            studio.document
+
+        cache =
+            studio.viewport.partCache
+
+        glued =
+            Document.gluedIds document
+    in
+    Health.plan cache document glued (Health.check cache document glued)
+
+
+withTidy : Model -> Model
+withTidy model =
+    { model | tidy = tidyPlan model.studio }
 
 
 {-| Technic mode turns on gear alignment (a meshing gear turns its axle line so
@@ -1002,6 +1203,32 @@ step msg model =
             in
             ( syncKeyPause { model | helpOpen = open, menuOpen = False }, Cmd.none )
 
+        OpenTidy ->
+            if List.isEmpty model.tidy then
+                ( model, Cmd.none )
+
+            else
+                ( syncKeyPause
+                    { model
+                        | tidyOpen = True
+                        , menuOpen = False
+                        , studio = Core.setPreview model.tidy model.studio
+                    }
+                , Cmd.none
+                )
+
+        CancelTidy ->
+            ( syncKeyPause { model | tidyOpen = False, studio = Core.setPreview [] model.studio }, Cmd.none )
+
+        ApplyTidy ->
+            let
+                ( studio, studioCmd, events ) =
+                    Core.applyFixes model.tidy model.studio
+            in
+            ( syncKeyPause { model | tidyOpen = False, studio = studio }
+            , Cmd.batch [ Cmd.map StudioMsg studioCmd, handleCoreEvents events ]
+            )
+
         ToggleMenu ->
             ( syncKeyPause { model | menuOpen = not model.menuOpen && not model.helpOpen }, Cmd.none )
 
@@ -1098,7 +1325,7 @@ snapshotTriangles model =
 
 syncKeyPause : Model -> Model
 syncKeyPause model =
-    { model | studio = Core.setHelpVisible (model.helpOpen || model.menuOpen) model.studio }
+    { model | studio = Core.setHelpVisible (model.helpOpen || model.menuOpen || model.tidyOpen) model.studio }
 
 
 {-| Run a studio edit and forward its effects.
@@ -1396,7 +1623,192 @@ view model =
 
             Nothing ->
                 text ""
+        , if model.tidyOpen then
+            tidyPanel model
+
+          else
+            text ""
         ]
+
+
+{-| The Tidy up pill: shown only when the build has problems and no preview is
+open. It sits in the bottom column, beside the gear pill, above the action bar.
+-}
+tidyRow : Model -> Html Msg
+tidyRow model =
+    if model.tidyOpen || List.isEmpty model.tidy then
+        text ""
+
+    else
+        div
+            [ Attr.style "display" "flex"
+            , Attr.style "justify-content" "center"
+            , Attr.style "max-width" "100%"
+            , Attr.style "min-width" "0"
+            , Attr.style "overflow" "hidden"
+            , Attr.style "white-space" "nowrap"
+            ]
+            [ tidyPill (List.length model.tidy) ]
+
+
+tidyPill : Int -> Html Msg
+tidyPill count =
+    button
+        [ onClick OpenTidy
+        , Attr.attribute "data-tidy-pill" ""
+        , Attr.title "Preview the tidy-up moves"
+        , Attr.attribute "aria-haspopup" "dialog"
+        , Attr.style "pointer-events" "auto"
+        , Attr.style "align-self" "center"
+        , Attr.style "max-width" "100%"
+        , Attr.style "padding" "0.3125rem 0.875rem"
+        , Attr.style "background" "rgba(5, 19, 29, 0.85)"
+        , Attr.style "backdrop-filter" "blur(8px)"
+        , Attr.style "border-radius" "9999px"
+        , Attr.style "border" "1px solid var(--color-brand-yellow)"
+        , Attr.style "color" "var(--color-brand-yellow)"
+        , Attr.style "font-family" "var(--font-sans)"
+        , Attr.style "font-size" "0.8125rem"
+        , Attr.style "font-weight" "600"
+        , Attr.style "white-space" "nowrap"
+        , Attr.style "overflow" "hidden"
+        , Attr.style "text-overflow" "ellipsis"
+        , Attr.style "cursor" "pointer"
+        ]
+        [ text (tidyLabel count) ]
+
+
+{-| The pill's words: "1 loose brick · Tidy up", "3 loose bricks · Tidy up".
+-}
+tidyLabel : Int -> String
+tidyLabel count =
+    (if count == 1 then
+        "1 loose brick"
+
+     else
+        String.fromInt count ++ " loose bricks"
+    )
+        ++ " · Tidy up"
+
+
+{-| The Tidy up preview: an accessible dialog listing the moves, with Apply and
+Cancel. The moved parts are outlined and their ghosts drawn in the studio.
+-}
+tidyPanel : Model -> Html Msg
+tidyPanel model =
+    let
+        count =
+            List.length model.tidy
+
+        summary =
+            String.fromInt count
+                ++ (if count == 1 then
+                        " part will move."
+
+                    else
+                        " parts will move."
+                   )
+                ++ " The translucent copies show where."
+    in
+    div
+        [ Attr.attribute "role" "dialog"
+        , Attr.attribute "aria-modal" "true"
+        , Attr.attribute "aria-labelledby" "tidy-title"
+        , Attr.attribute "aria-describedby" "tidy-summary"
+        , Attr.attribute "data-tidy-preview" ""
+        , Attr.style "position" "absolute"
+        , Attr.style "top" "4.5rem"
+        , Attr.style "left" "1rem"
+        , Attr.style "width" "min(22rem, calc(100% - 2rem))"
+        , Attr.style "max-height" "calc(100% - 9rem)"
+        , Attr.style "overflow-y" "auto"
+        , Attr.style "padding" "1rem 1.125rem"
+        , Attr.style "background" "rgba(5, 19, 29, 0.95)"
+        , Attr.style "border" "1px solid rgba(255, 255, 255, 0.2)"
+        , Attr.style "border-radius" "0.75rem"
+        , Attr.style "box-shadow" "0 4px 16px rgba(0, 0, 0, 0.5)"
+        , Attr.style "color" "var(--color-text-on-dark)"
+        , Attr.style "font-family" "var(--font-sans)"
+        , Attr.style "font-size" "0.875rem"
+        , Attr.style "z-index" "25"
+        , Attr.style "pointer-events" "auto"
+        ]
+        [ h2
+            [ Attr.id "tidy-title"
+            , Attr.style "margin" "0 0 0.375rem"
+            , Attr.style "font-size" "1rem"
+            , Attr.style "font-weight" "700"
+            ]
+            [ text "Tidy up" ]
+        , p
+            [ Attr.id "tidy-summary"
+            , Attr.style "margin" "0 0 0.625rem"
+            ]
+            [ text summary ]
+        , ul
+            [ Attr.attribute "aria-label" "Planned moves"
+            , Attr.style "margin" "0 0 0.875rem"
+            , Attr.style "padding-left" "1.125rem"
+            ]
+            (List.map
+                (\fix -> li [ Attr.style "margin" "0.125rem 0" ] [ text (Health.describe partTitle model.studio.document fix) ])
+                model.tidy
+            )
+        , div
+            [ Attr.style "display" "flex"
+            , Attr.style "justify-content" "flex-end"
+            , Attr.style "gap" "0.5rem"
+            ]
+            [ tidyButton False CancelTidy "Cancel"
+            , tidyButton True ApplyTidy "Apply"
+            ]
+        ]
+
+
+tidyButton : Bool -> Msg -> String -> Html Msg
+tidyButton primary msg label =
+    button
+        [ onClick msg
+        , Attr.style "padding" "0.375rem 0.875rem"
+        , Attr.style "font-size" "0.875rem"
+        , Attr.style "font-weight" "700"
+        , Attr.style "border" "none"
+        , Attr.style "border-radius" "0.375rem"
+        , Attr.style "background"
+            (if primary then
+                "var(--color-brand-yellow)"
+
+             else
+                "rgba(255, 255, 255, 0.15)"
+            )
+        , Attr.style "color"
+            (if primary then
+                "var(--color-brand)"
+
+             else
+                "var(--color-text-on-dark)"
+            )
+        , Attr.style "cursor" "pointer"
+        , Attr.class "touch-target"
+        ]
+        [ text label ]
+
+
+{-| A part's readable name for Tidy up's sentences: its dock description ("2 x 4
+brick") when the dock lists it, else its number.
+-}
+partTitle : String -> String
+partTitle file =
+    case
+        List.concatMap FreeCatalog.entriesFor FreeCatalog.tabs
+            |> List.filter (\entry -> String.toLower entry.file == String.toLower file)
+            |> List.head
+    of
+        Just entry ->
+            entry.description
+
+        Nothing ->
+            "part " ++ String.replace ".dat" "" file
 
 
 {-| Toast notification overlay.
@@ -1465,6 +1877,7 @@ bottomArea model =
 
           else
             text ""
+        , tidyRow model
         , selectionBar model
         , touchLabel model
         , if isNarrow model then
@@ -2471,6 +2884,7 @@ helpRows model =
         , ( "Ctrl + Shift + Z  Ctrl + Y", "Redo" )
         , ( "Ctrl + A", "Select all" )
         , ( "Ctrl + click  Shift + click", "Add to or remove from the selection" )
+        , ( "Tidy up (pill above the action bar)", "Shown when parts sit off the studs or overlap. Tidy up previews the moves as ghosts; Apply makes them one undo step, Cancel or Esc changes nothing" )
         , ( "Esc", "Cancel a drag, or deselect" )
         ]
             ++ (if model.free then

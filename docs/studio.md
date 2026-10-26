@@ -47,6 +47,7 @@ and studio-specific application UI (`studio-app/`):
 | `Studio.Shortcuts` | `packages/brick-frame-studio` | Pure keyboard shortcuts layered on `Viewport.Shortcuts` |
 | `Studio.Layout` | `packages/brick-frame-studio` | Canvas-size and pane dimension arithmetic |
 | `Studio.Hints` | `packages/brick-frame-studio` | Live gear analysis hints for the document |
+| `Studio.Health` | `packages/brick-frame-studio` | Build health for Tidy up: misaligned studded parts and overlaps, and the moves that clear them |
 | `Studio.Colours` | `packages/brick-frame-studio` | Curated color swatches and categorization |
 | `Studio.Workspace` | `studio-app` | Studio page wiring together document workspace, tools, and side panels |
 | `Studio.Palette` | `studio-app` | Categorized part drawer and search UI |
@@ -320,6 +321,82 @@ so their teeth interlock (`Studio.GearAlign`; the tooth geometry is in
 - **Undo.** The turns are recorded in the same `Group` as the edit, so one undo
   restores both the position and the rotation, and redo applies both again. Drags
   record the turns in the drop's history entry as well.
+
+## Build health (Tidy up)
+
+`Studio.Health` finds the parts of a document that sit off the stud grid or inside
+another part, and plans the moves that put them right. It is pure:
+
+    check : PartCache -> Document -> Set Int -> List Issue
+    plan  : PartCache -> Document -> Set Int -> List Issue -> List Fix
+
+`check` returns `Misaligned { placement }` and `Overlapping { first, second }`.
+A `Fix` is a placement id, its matrix before (`from`) and after (`to`), and a
+`reason`: `SnapToStud` or `LiftOut { other }`. Only the main submodel is checked.
+`describe` words a fix ("Move 1 x 1 brick half a stud", "Lift 2 x 4 brick out of
+another brick").
+
+**Stud rule.** A studded part (stud points, no Technic axle or pin points) is
+misaligned when it connects to nothing and is not where studs put it:
+
+- A part **connects** when one of its anti-studs lies within 0.5 LDU of a stud
+  of another part. An intentional offset such as a jumper plate's is therefore
+  healthy.
+- A part that **rests on the ground** (its bottom at Y 0) is off when its origin is
+  off the stud lattice: X and Z on the lattice for its rotation
+  (`Connectivity.studOffset`, mod 20).
+- A part that **sits on studs** has a support: a stud of another part at its
+  anti-stud height, within its footprint plus 10 LDU. Without one the part is
+  floating, and it is not reported. Tidy up never drops a part.
+
+**Overlaps.** Two parts overlap when their effective boxes (the bounds without the
+stud protrusions, `Connectivity.effectiveEnvelope`) intersect by more than 1 LDU.
+Touching faces do not count. Catalog parts use the catalog's box; other parts use
+the bounds of their loaded geometry, sub-files included. A part whose geometry has
+not arrived is left out until it does. A Technic axle or pin is not an overlap
+with the part it connects to: a hole, or a gear's hub, that lies within 1 LDU of
+an axle's line (or coincides with a pin point) is a joint (`technicJoined`).
+
+**Glue.** A glued part is never moved. It still counts as an obstacle and a support.
+
+**Plan.** `plan` moves each misaligned part, keeping its height and rotation. On the
+ground it moves to the nearest origin on the stud lattice. On studs below it moves
+to the translation that puts the most anti-studs on studs, the nearest one on a
+tie, so a half-stud-off 1 x 1 moves half a stud. Then each overlap moves one part,
+the unglued one or (both unglued) the higher id, the later added, to the nearest
+free stud-lattice spot (`DragPlane.freeSpotPlacement`, a 20 LDU grid shifted by the
+stud offset). Moves repeat until nothing overlaps, within a budget. The result is one
+`Fix` per moved part, in id order; the same document always gives the same plan.
+
+Tolerances: coincidence 0.5 LDU, overlap 1 LDU, axis 1 LDU, lattice pitch 20 LDU,
+footprint margin 10 LDU. The check reads what is loaded: a non-catalog part's
+connections and box need its geometry in the part cache, and the check runs again
+when the cache grows.
+
+In `Studio.Core`:
+
+- `setPreview : List Fix -> Model -> Model` shows a preview. Each moving part is
+  outlined in the collision red, and a translucent ghost of each is drawn at its
+  planned matrix: `Render.Instanced.renderWithGhost` over the instanced scene, with
+  every ghost placement ghosted (alpha 0.25). `[]` clears the preview.
+- `applyFixes : List Fix -> Model -> (Model, Cmd Msg, List Event)` sets every
+  fixed part to its planned matrix as one history entry (`Edit.SetMatrix`). A fix
+  for a glued placement is dropped, and the preview is cleared.
+
+### Brick Play
+
+After each document change (not mid-drag, and again when a part's geometry
+arrives) Brick Play plans the fixes. When there are any, a pill shows above the
+action bar, beside the gear pill: "2 loose bricks · Tidy up", or "1 loose brick ·
+Tidy up". A healthy build shows nothing. Tapping the pill opens the preview, a
+dialog (`role="dialog"`, `aria-modal`) that lists the moves with their dock names
+and has Apply and Cancel. Each moving part is outlined and its ghost drawn at the
+new place.
+
+While the preview is open editing is paused. Keys do not edit (Escape cancels),
+and the edit commands and pointer presses are ignored, while the camera, loading
+and layout still work. Apply is one undo step. Cancel and Escape change nothing.
+The `?` list has a Tidy up row.
 
 ## Palette and part index
 

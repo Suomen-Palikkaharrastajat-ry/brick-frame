@@ -60,9 +60,9 @@ A starter foundation with pre-built walls and an installed White 1×2×2 Window 
 #### Pre-placed Starter Model (LDraw)
 ```ldraw
 1 19 0 -24 0 1 0 0 0 1 0 0 0 1 3001.dat
-1 15 0 -72 0 1 0 0 0 1 0 0 0 1 60592.dat
-1 19 -30 -48 0 1 0 0 0 1 0 0 0 1 3005.dat
-1 19 30 -48 0 1 0 0 0 1 0 0 0 1 3005.dat
+1 15 0 -72 10 1 0 0 0 1 0 0 0 1 60592.dat
+1 19 -30 -48 10 1 0 0 0 1 0 0 0 1 3005.dat
+1 19 30 -48 10 1 0 0 0 1 0 0 0 1 3005.dat
 ```
 
 #### Kit Inventory
@@ -113,10 +113,10 @@ Twin stone piers set 80 LDU apart (clear span between $X = -20$ and $X = 20$). T
 
 #### Pre-placed Starter Model (LDraw)
 ```ldraw
-1 15 -50 -24 0 1 0 0 0 1 0 0 0 1 3003.dat
-1 15 -50 -48 0 1 0 0 0 1 0 0 0 1 3003.dat
-1 15 50 -24 0 1 0 0 0 1 0 0 0 1 3003.dat
-1 15 50 -48 0 1 0 0 0 1 0 0 0 1 3003.dat
+1 15 -40 -24 0 1 0 0 0 1 0 0 0 1 3003.dat
+1 15 -40 -48 0 1 0 0 0 1 0 0 0 1 3003.dat
+1 15 40 -24 0 1 0 0 0 1 0 0 0 1 3003.dat
+1 15 40 -48 0 1 0 0 0 1 0 0 0 1 3003.dat
 ```
 
 #### Kit Inventory

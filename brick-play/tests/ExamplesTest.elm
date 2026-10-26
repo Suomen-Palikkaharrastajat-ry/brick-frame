@@ -1,4 +1,4 @@
-module ExamplesTest exposing (suite)
+module ExamplesTest exposing (examples, suite)
 
 {-| The Brick Play example models of docs/examples.md, decoded from their hash
 fragments (the production link of each example), must be stud-aligned.
