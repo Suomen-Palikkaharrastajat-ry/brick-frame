@@ -95,7 +95,6 @@ type alias Model =
     , uiMode : UiMode
     , viewerControlsEnabled : Bool
     , showShortcutHelp : Bool
-    , renderQuality : Style.Quality
     , studioUrl : String
     , currentModelUrl : Maybe String
     , globeDrag : Maybe CameraGlobe.Drag
@@ -150,7 +149,6 @@ init flags =
       , uiMode = parseUiMode flags.uiMode
       , viewerControlsEnabled = flags.controlsEnabled
       , showShortcutHelp = False
-      , renderQuality = Style.Draft
       , studioUrl = String.trim flags.studioUrl
       , currentModelUrl = currentModelUrl
       , globeDrag = Nothing
@@ -207,8 +205,7 @@ type Msg
     | CaptureSnapshot
     | SnapshotReady { dataUrl : String, filename : String }
     | SnapshotSave { dataUrl : String, filename : String }
-    | SnapshotToggleAgreed Bool
-    | SnapshotContinue
+    | SnapshotClose
     | GlobePressed ( Float, Float )
     | GlobeMoved ( Float, Float )
     | GlobeReleased
@@ -342,17 +339,14 @@ updateInner msg model =
         ToggleRaytrace ->
             let
                 nextQuality =
-                    case model.renderQuality of
+                    case Viewport.renderQuality model.viewport of
                         Style.Draft ->
                             Style.Realistic
 
                         Style.Realistic ->
                             Style.Draft
             in
-            ( { model
-                | renderQuality = nextQuality
-                , viewport = Viewport.setRenderQuality nextQuality model.viewport
-              }
+            ( { model | viewport = Viewport.setRenderQuality nextQuality model.viewport }
             , Cmd.none
             )
 
@@ -376,12 +370,7 @@ updateInner msg model =
             , Ports.saveSnapshot payload
             )
 
-        SnapshotToggleAgreed agreed ->
-            ( { model | snapshotModal = Maybe.map (SnapshotModal.setAgreed agreed) model.snapshotModal }
-            , Cmd.none
-            )
-
-        SnapshotContinue ->
+        SnapshotClose ->
             ( { model | snapshotModal = Nothing }
             , Cmd.none
             )
@@ -714,16 +703,16 @@ extraButtons model =
         ]
         ([ Button.icon
             { icon = Icon.feather "sun"
-            , label = "Raytrace mode"
+            , label = "Realistic rendering"
             , shortcut = Nothing
-            , pressed = Just (model.renderQuality == Style.Realistic)
+            , pressed = Just (Viewport.renderQuality model.viewport == Style.Realistic)
             , enabled = True
             , showLabel = False
             }
             ToggleRaytrace
          , Button.icon
             { icon = Icon.feather "camera"
-            , label = "Render snapshot"
+            , label = "Take snapshot"
             , shortcut = Nothing
             , pressed = Nothing
             , enabled = True
@@ -857,8 +846,7 @@ viewOverlay model =
                     Just modal ->
                         [ SnapshotModal.view
                             { onSave = SnapshotSave
-                            , onToggleAgreed = SnapshotToggleAgreed
-                            , onContinue = SnapshotContinue
+                            , onClose = SnapshotClose
                             }
                             modal
                         ]

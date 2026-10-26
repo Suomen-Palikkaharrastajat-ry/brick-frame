@@ -42,8 +42,7 @@ type Msg
     | InstructionsMsg Instructions.Msg
     | SnapshotReady { dataUrl : String, filename : String }
     | SnapshotSave { dataUrl : String, filename : String }
-    | SnapshotToggleAgreed Bool
-    | SnapshotContinue
+    | SnapshotClose
 
 
 init : Flags -> ( Model, Cmd Msg )
@@ -210,12 +209,7 @@ update msg model =
             , Ports.saveSnapshot payload
             )
 
-        ( SnapshotToggleAgreed agreed, _, _ ) ->
-            ( { model | snapshotModal = Maybe.map (SnapshotModal.setAgreed agreed) model.snapshotModal }
-            , Cmd.none
-            )
-
-        ( SnapshotContinue, _, _ ) ->
+        ( SnapshotClose, _, _ ) ->
             ( { model | snapshotModal = Nothing }
             , Cmd.none
             )
@@ -294,8 +288,7 @@ view model =
                 [ pageContent
                 , SnapshotModal.view
                     { onSave = SnapshotSave
-                    , onToggleAgreed = SnapshotToggleAgreed
-                    , onContinue = SnapshotContinue
+                    , onClose = SnapshotClose
                     }
                     modal
                 ]

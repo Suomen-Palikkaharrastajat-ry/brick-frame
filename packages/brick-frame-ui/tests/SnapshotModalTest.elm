@@ -1,6 +1,6 @@
 module SnapshotModalTest exposing (suite)
 
-{-| Tests for UI.SnapshotModal lifecycle, state transitions, and continue gating.
+{-| Tests for UI.SnapshotModal state transitions and its rendered controls.
 -}
 
 import Expect
@@ -13,34 +13,26 @@ import UI.SnapshotModal as SnapshotModal
 
 type TestMsg
     = Save { dataUrl : String, filename : String }
-    | ToggleAgreed Bool
-    | Continue
+    | Close
 
 
 testActions : SnapshotModal.Actions TestMsg
 testActions =
     { onSave = Save
-    , onToggleAgreed = ToggleAgreed
-    , onContinue = Continue
+    , onClose = Close
     }
 
 
 suite : Test
 suite =
     describe "UI.SnapshotModal"
-        [ describe "State transitions and gating"
-            [ test "init starts in Rendering phase and cannot continue" <|
+        [ describe "State transitions"
+            [ test "init starts in Rendering phase" <|
                 \_ ->
-                    let
-                        modal =
-                            SnapshotModal.init { filename = "test-render.png" }
-                    in
-                    Expect.all
-                        [ \m -> Expect.equal SnapshotModal.Rendering m.phase
-                        , \m -> Expect.equal False (SnapshotModal.canContinue m)
-                        ]
-                        modal
-            , test "setReady transitions to Preview with hasSaved = False and hasAgreed = False" <|
+                    SnapshotModal.init { filename = "test-render.png" }
+                        |> .phase
+                        |> Expect.equal SnapshotModal.Rendering
+            , test "setReady transitions to Preview with hasSaved = False" <|
                 \_ ->
                     let
                         modal =
@@ -50,24 +42,18 @@ suite =
                                     , filename = "test-render.png"
                                     }
                     in
-                    Expect.all
-                        [ \m -> Expect.equal False (SnapshotModal.canContinue m)
-                        , \m ->
-                            case m.phase of
-                                SnapshotModal.Preview data ->
-                                    Expect.all
-                                        [ \d -> Expect.equal "data:image/png;base64,mock" d.dataUrl
-                                        , \d -> Expect.equal "test-render.png" d.filename
-                                        , \d -> Expect.equal False d.hasSaved
-                                        , \d -> Expect.equal False d.hasAgreed
-                                        ]
-                                        data
+                    case modal.phase of
+                        SnapshotModal.Preview data ->
+                            Expect.all
+                                [ \d -> Expect.equal "data:image/png;base64,mock" d.dataUrl
+                                , \d -> Expect.equal "test-render.png" d.filename
+                                , \d -> Expect.equal False d.hasSaved
+                                ]
+                                data
 
-                                SnapshotModal.Rendering ->
-                                    Expect.fail "Expected Preview phase"
-                        ]
-                        modal
-            , test "markSaved permits continuation" <|
+                        SnapshotModal.Rendering ->
+                            Expect.fail "Expected Preview phase"
+            , test "markSaved records the save in the Preview phase" <|
                 \_ ->
                     let
                         modal =
@@ -75,58 +61,46 @@ suite =
                                 |> SnapshotModal.setReady { dataUrl = "data:image/png;base64,mock", filename = "test.png" }
                                 |> SnapshotModal.markSaved
                     in
-                    Expect.equal True (SnapshotModal.canContinue modal)
-            , test "setAgreed permits continuation even when not saved" <|
+                    case modal.phase of
+                        SnapshotModal.Preview data ->
+                            Expect.equal True data.hasSaved
+
+                        SnapshotModal.Rendering ->
+                            Expect.fail "Expected Preview phase"
+            , test "markSaved is a no-op while Rendering" <|
                 \_ ->
                     let
                         modal =
                             SnapshotModal.init { filename = "test.png" }
-                                |> SnapshotModal.setReady { dataUrl = "data:image/png;base64,mock", filename = "test.png" }
-                                |> SnapshotModal.setAgreed True
                     in
-                    Expect.equal True (SnapshotModal.canContinue modal)
-            , test "toggling agreed to False without saving prevents continuation" <|
-                \_ ->
-                    let
-                        modal =
-                            SnapshotModal.init { filename = "test.png" }
-                                |> SnapshotModal.setReady { dataUrl = "data:image/png;base64,mock", filename = "test.png" }
-                                |> SnapshotModal.setAgreed True
-                                |> SnapshotModal.setAgreed False
-                    in
-                    Expect.equal False (SnapshotModal.canContinue modal)
+                    Expect.equal modal (SnapshotModal.markSaved modal)
             ]
         , describe "Rendering view"
-            [ test "shows progress indicator in Rendering phase" <|
+            [ test "shows the capturing message and a Close button without progress claims" <|
                 \_ ->
-                    let
-                        modal =
-                            SnapshotModal.init { filename = "render.png" }
-                    in
-                    SnapshotModal.view testActions modal
+                    SnapshotModal.init { filename = "render.png" }
+                        |> SnapshotModal.view testActions
                         |> Query.fromHtml
                         |> Expect.all
                             [ Query.has [ Selector.attribute (HtmlAttr.attribute "role" "dialog") ]
-                            , Query.has [ Selector.text "Raytracing realistic rendering..." ]
-                            , Query.has [ Selector.text "Please wait while the snapshot renders..." ]
-                            , Query.has [ Selector.tag "button", Selector.text "Continue" ]
+                            , Query.has [ Selector.text "Capturing snapshot…" ]
+                            , Query.hasNot [ Selector.text "Raytrac" ]
+                            , Query.has [ Selector.tag "button", Selector.text "Close" ]
                             ]
-            , test "shows preview image and enables Continue when agreed or saved" <|
+            ]
+        , describe "Preview view"
+            [ test "shows the image and Save, with Close and no agreement checkbox" <|
                 \_ ->
-                    let
-                        modal =
-                            SnapshotModal.init { filename = "render.png" }
-                                |> SnapshotModal.setReady { dataUrl = "data:image/png;base64,abc123", filename = "render.png" }
-                                |> SnapshotModal.setAgreed True
-                    in
-                    SnapshotModal.view testActions modal
+                    SnapshotModal.init { filename = "render.png" }
+                        |> SnapshotModal.setReady { dataUrl = "data:image/png;base64,abc123", filename = "render.png" }
+                        |> SnapshotModal.view testActions
                         |> Query.fromHtml
                         |> Expect.all
                             [ Query.has [ Selector.tag "img", Selector.attribute (HtmlAttr.src "data:image/png;base64,abc123") ]
-                            , Query.has [ Selector.text "render.png • 1080p high quality PNG" ]
-                            , Query.has [ Selector.text "Save Image" ]
-                            , Query.has [ Selector.text "I have saved / reviewed the render" ]
-                            , Query.has [ Selector.tag "button", Selector.text "Continue" ]
+                            , Query.has [ Selector.text "render.png • 1080p PNG" ]
+                            , Query.has [ Selector.tag "button", Selector.text "Save Image" ]
+                            , Query.has [ Selector.tag "button", Selector.text "Close" ]
+                            , Query.hasNot [ Selector.tag "input" ]
                             ]
             ]
         ]

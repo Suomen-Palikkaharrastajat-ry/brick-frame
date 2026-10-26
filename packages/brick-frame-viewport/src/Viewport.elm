@@ -219,6 +219,7 @@ type alias Model =
     , useWindowResize : Bool
     , supportsPointerEvents : Bool
     , renderStyle : Style.Style
+    , renderQuality : Style.Quality
     , activeSources : Maybe (Set Int)
     , hiddenSources : Set Int
     , activePath : List Int
@@ -344,6 +345,7 @@ init config =
       , useWindowResize = config.useWindowResize
       , supportsPointerEvents = config.supportsPointerEvents
       , renderStyle = config.renderStyle
+      , renderQuality = Style.Draft
       , activeSources = Nothing
       , hiddenSources = Set.empty
       , activePath = []
@@ -996,7 +998,7 @@ updateInner msg model =
             ( applyViewPreset preset model, Cmd.none, [ CameraSettled ] )
 
         SetRenderQuality quality ->
-            ( { model | renderStyle = Style.fromQuality quality }, Cmd.none, [] )
+            ( applyRenderQuality quality model, Cmd.none, [] )
 
         KeyPressed event ->
             if Shortcuts.isTextEntryTarget event || Shortcuts.isWidgetKey event then
@@ -2962,18 +2964,26 @@ type alias ViewConfig =
 -}
 setRenderQuality : Style.Quality -> Model -> Model
 setRenderQuality quality model =
-    { model | renderStyle = Style.fromQuality quality }
+    applyRenderQuality quality model
 
 
-{-| The current rendering quality preset of the viewport.
+{-| The current rendering quality preset of the viewport, as last set by
+`setRenderQuality`. A host that customises `renderStyle` keeps its quality
+label here, independent of the style's values.
 -}
 renderQuality : Model -> Style.Quality
 renderQuality model =
-    if model.renderStyle == Style.realisticStyle then
-        Style.Realistic
+    model.renderQuality
 
-    else
-        Style.Draft
+
+{-| Set both the quality preset and the style it maps to.
+-}
+applyRenderQuality : Style.Quality -> Model -> Model
+applyRenderQuality quality model =
+    { model
+        | renderQuality = quality
+        , renderStyle = Style.fromQuality quality
+    }
 
 
 {-| The instanced scene with the placements of `hidden` drawn as nothing (see

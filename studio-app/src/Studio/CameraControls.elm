@@ -71,7 +71,7 @@ extraButtons actions state =
         ]
         [ Button.icon
             { icon = Icon.feather "sun"
-            , label = "Raytrace mode"
+            , label = "Realistic rendering"
             , shortcut = Nothing
             , pressed = Just (state.renderQuality == Style.Realistic)
             , enabled = True
@@ -80,7 +80,7 @@ extraButtons actions state =
             actions.onRaytrace
         , Button.icon
             { icon = Icon.feather "camera"
-            , label = "Render snapshot"
+            , label = "Take snapshot"
             , shortcut = Nothing
             , pressed = Nothing
             , enabled = True

@@ -85,9 +85,9 @@ suite =
                     |> Query.fromHtml
                     |> Expect.all
                         [ Query.has [ Selector.attribute (HtmlAttr.attribute "aria-label" "Camera") ]
-                        , Query.find [ Selector.attribute (HtmlAttr.attribute "aria-label" "Raytrace mode") ]
+                        , Query.find [ Selector.attribute (HtmlAttr.attribute "aria-label" "Realistic rendering") ]
                             >> Query.has [ Selector.attribute (HtmlAttr.attribute "aria-pressed" "false") ]
-                        , Query.find [ Selector.attribute (HtmlAttr.attribute "aria-label" "Render snapshot") ]
+                        , Query.find [ Selector.attribute (HtmlAttr.attribute "aria-label" "Take snapshot") ]
                             >> Query.has [ Selector.class "touch-target" ]
                         , Query.find [ Selector.attribute (HtmlAttr.attribute "aria-label" "Street level view") ]
                             >> Query.has [ Selector.attribute (HtmlAttr.attribute "aria-pressed" "false"), Selector.class "touch-target" ]

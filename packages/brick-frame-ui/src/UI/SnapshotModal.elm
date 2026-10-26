@@ -3,22 +3,22 @@ module UI.SnapshotModal exposing
     , Model
     , Phase(..)
     , PreviewData
-    , canContinue
     , init
     , markSaved
-    , setAgreed
     , setReady
     , view
     )
 
-{-| Full-screen modal for taking, previewing, and saving high-quality raytraced screenshots.
+{-| Full-screen modal for capturing, previewing, and saving a snapshot of the
+canvas as a 1080p PNG.
 
-Takes over the whole UI with a blurred backdrop while rendering completes (~1.5s–2s)
-and allows continuing only after saving the render or agreeing/confirming review.
+The modal takes over the whole UI with a blurred backdrop while the capture is
+being made, then shows the captured image with a Save button. The user can close
+it at any time, whether or not the image has been saved.
 
 -}
 
-import Html exposing (Html, button, div, h2, img, input, label, p, span, text)
+import Html exposing (Html, button, div, h2, img, p, span, text)
 import Html.Attributes as Attr
 import Html.Events
 import UI.Button as Button
@@ -26,17 +26,16 @@ import UI.Icon as Icon
 import UI.Theme as Theme
 
 
-{-| Data for the preview phase once the high-resolution render is ready.
+{-| Data for the preview phase once the captured image is ready.
 -}
 type alias PreviewData =
     { dataUrl : String
     , filename : String
     , hasSaved : Bool
-    , hasAgreed : Bool
     }
 
 
-{-| The two phases of screenshot capture.
+{-| The two phases of snapshot capture.
 -}
 type Phase
     = Rendering
@@ -55,12 +54,11 @@ type alias Model =
 -}
 type alias Actions msg =
     { onSave : { dataUrl : String, filename : String } -> msg
-    , onToggleAgreed : Bool -> msg
-    , onContinue : msg
+    , onClose : msg
     }
 
 
-{-| Initialize modal in the rendering phase.
+{-| Initialize modal in the capturing phase.
 -}
 init : { filename : String } -> Model
 init config =
@@ -69,7 +67,7 @@ init config =
     }
 
 
-{-| Transition to the preview phase when JavaScript delivers the rendered data URL.
+{-| Transition to the preview phase when JavaScript delivers the captured data URL.
 -}
 setReady : { dataUrl : String, filename : String } -> Model -> Model
 setReady { dataUrl, filename } model =
@@ -80,7 +78,6 @@ setReady { dataUrl, filename } model =
                 { dataUrl = dataUrl
                 , filename = filename
                 , hasSaved = False
-                , hasAgreed = False
                 }
     }
 
@@ -97,30 +94,6 @@ markSaved model =
             model
 
 
-{-| Update user agreement checkbox.
--}
-setAgreed : Bool -> Model -> Model
-setAgreed agreed model =
-    case model.phase of
-        Preview data ->
-            { model | phase = Preview { data | hasAgreed = agreed } }
-
-        Rendering ->
-            model
-
-
-{-| Whether the user is permitted to dismiss the modal and continue.
--}
-canContinue : Model -> Bool
-canContinue model =
-    case model.phase of
-        Preview data ->
-            data.hasSaved || data.hasAgreed
-
-        Rendering ->
-            False
-
-
 {-| Render the modal overlay.
 -}
 view : Actions msg -> Model -> Html msg
@@ -128,11 +101,11 @@ view actions model =
     div
         [ Attr.attribute "role" "dialog"
         , Attr.attribute "aria-modal" "true"
-        , Attr.attribute "aria-label" "Raytraced snapshot"
+        , Attr.attribute "aria-label" "Snapshot"
         , Attr.style "position" "fixed"
         , Attr.style "inset" "0"
         , Attr.style "z-index" "99999"
-        , Attr.style "background" "rgba(10, 15, 29, 0.85)"
+        , Attr.style "background" scrim
         , Attr.style "backdrop-filter" "blur(12px)"
         , Attr.style "-webkit-backdrop-filter" "blur(12px)"
         , Attr.style "display" "flex"
@@ -147,7 +120,7 @@ view actions model =
             , Attr.style "color" Theme.textPrimary
             , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
             , Attr.style "border-radius" "12px"
-            , Attr.style "box-shadow" "0 25px 50px -12px rgba(0, 0, 0, 0.75)"
+            , Attr.style "box-shadow" ("0 25px 50px -12px " ++ shadowColour)
             , Attr.style "max-width" "840px"
             , Attr.style "width" "100%"
             , Attr.style "max-height" "calc(100vh - 40px)"
@@ -162,19 +135,33 @@ view actions model =
         ]
 
 
+{-| The dimmed backdrop behind the dialog, derived from the brand colour.
+-}
+scrim : String
+scrim =
+    "color-mix(in srgb, " ++ Theme.brand ++ " 85%, transparent)"
+
+
+{-| The backdrop behind the captured image, a dark tone from the theme.
+-}
+previewBackground : String
+previewBackground =
+    "var(--color-bg-dark)"
+
+
+{-| The drop shadow colour of the dialog, derived from the brand colour.
+-}
+shadowColour : String
+shadowColour =
+    "color-mix(in srgb, " ++ Theme.brand ++ " 75%, transparent)"
+
+
 viewStyles : Html msg
 viewStyles =
     Html.node "style"
         []
         [ text """
-@keyframes raytraceProgressAnim {
-    0% { width: 5%; }
-    20% { width: 35%; }
-    55% { width: 70%; }
-    80% { width: 90%; }
-    100% { width: 98%; }
-}
-@keyframes raytraceSpinAnim {
+@keyframes snapshotSpinAnim {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
 }
@@ -198,13 +185,13 @@ viewHeader =
                 , Attr.style "font-weight" "600"
                 , Attr.style "letter-spacing" "-0.01em"
                 ]
-                [ text "High-Quality Raytraced Snapshot" ]
+                [ text "Snapshot" ]
             , p
                 [ Attr.style "margin" "2px 0 0"
                 , Attr.style "font-size" "12px"
                 , Attr.style "color" Theme.textMuted
                 ]
-                [ text "Realistic rendering with global illumination and ambient occlusion" ]
+                [ text "A 1920 × 1080 PNG capture of the current view" ]
             ]
         , span
             [ Attr.style "font-size" "11px"
@@ -215,7 +202,7 @@ viewHeader =
             , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
             , Attr.style "color" Theme.textMuted
             ]
-            [ text "1080p (1920 × 1080)" ]
+            [ text "1080p" ]
         ]
 
 
@@ -230,15 +217,15 @@ viewBody model =
         ]
         (case model.phase of
             Rendering ->
-                [ viewRendering ]
+                [ viewCapturing ]
 
             Preview data ->
                 [ viewPreview data ]
         )
 
 
-viewRendering : Html msg
-viewRendering =
+viewCapturing : Html msg
+viewCapturing =
     div
         [ Attr.style "display" "flex"
         , Attr.style "flex-direction" "column"
@@ -249,41 +236,17 @@ viewRendering =
         , Attr.style "text-align" "center"
         ]
         [ div
-            [ Attr.style "animation" "raytraceSpinAnim 1.2s linear infinite"
+            [ Attr.style "animation" "snapshotSpinAnim 1.2s linear infinite"
             , Attr.style "display" "flex"
             , Attr.style "color" Theme.brandYellow
+            , Attr.attribute "aria-hidden" "true"
             ]
             [ Icon.featherSized 32 "loader" ]
-        , div []
-            [ div
-                [ Attr.style "font-size" "15px"
-                , Attr.style "font-weight" "600"
-                , Attr.style "margin-bottom" "4px"
-                ]
-                [ text "Raytracing realistic rendering..." ]
-            , div
-                [ Attr.style "font-size" "13px"
-                , Attr.style "color" Theme.textMuted
-                ]
-                [ text "Accumulating samples, raytracing global illumination & ambient occlusion" ]
-            ]
         , div
-            [ Attr.style "width" "100%"
-            , Attr.style "max-width" "420px"
-            , Attr.style "height" "8px"
-            , Attr.style "background" "rgba(255, 255, 255, 0.1)"
-            , Attr.style "border-radius" "4px"
-            , Attr.style "overflow" "hidden"
-            , Attr.style "margin-top" "8px"
+            [ Attr.style "font-size" "15px"
+            , Attr.style "font-weight" "600"
             ]
-            [ div
-                [ Attr.style "height" "100%"
-                , Attr.style "background" Theme.brandYellow
-                , Attr.style "border-radius" "4px"
-                , Attr.style "animation" "raytraceProgressAnim 1.8s ease-out forwards"
-                ]
-                []
-            ]
+            [ text "Capturing snapshot…" ]
         ]
 
 
@@ -297,14 +260,14 @@ viewPreview data =
         [ div
             [ Attr.style "display" "flex"
             , Attr.style "justify-content" "center"
-            , Attr.style "background" "#0b0f19"
+            , Attr.style "background" previewBackground
             , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
             , Attr.style "border-radius" "8px"
             , Attr.style "overflow" "hidden"
             ]
             [ img
                 [ Attr.src data.dataUrl
-                , Attr.alt "High-quality raytraced render preview"
+                , Attr.alt "Snapshot preview"
                 , Attr.style "max-height" "460px"
                 , Attr.style "width" "100%"
                 , Attr.style "object-fit" "contain"
@@ -320,7 +283,7 @@ viewPreview data =
             , Attr.style "color" Theme.textMuted
             ]
             [ div []
-                [ text (data.filename ++ " • 1080p high quality PNG") ]
+                [ text (data.filename ++ " • 1080p PNG") ]
             , if data.hasSaved then
                 div
                     [ Attr.style "display" "inline-flex"
@@ -357,88 +320,64 @@ viewFooter actions model =
                     [ Attr.style "font-size" "13px"
                     , Attr.style "color" Theme.textMuted
                     ]
-                    [ text "Please wait while the snapshot renders..." ]
-                , Button.action { enabled = False } actions.onContinue "Continue"
+                    [ text "The image will appear here when it is ready." ]
+                , Button.secondary actions.onClose "Close"
                 ]
 
             Preview data ->
-                let
-                    allowed =
-                        canContinue model
-                in
-                [ label
-                    [ Attr.style "display" "inline-flex"
-                    , Attr.style "align-items" "center"
-                    , Attr.style "gap" "8px"
-                    , Attr.style "cursor" "pointer"
-                    , Attr.style "font-size" "13px"
-                    , Attr.style "user-select" "none"
-                    , Attr.style "color" Theme.textPrimary
-                    ]
-                    [ input
-                        [ Attr.type_ "checkbox"
-                        , Attr.checked data.hasAgreed
-                        , Html.Events.onCheck actions.onToggleAgreed
-                        , Attr.style "cursor" "pointer"
-                        , Attr.style "width" "16px"
-                        , Attr.style "height" "16px"
-                        ]
-                        []
-                    , text "I have saved / reviewed the render"
-                    ]
-                , div
+                [ div
                     [ Attr.style "display" "flex"
                     , Attr.style "align-items" "center"
                     , Attr.style "gap" "10px"
                     ]
-                    [ button
-                        [ Attr.type_ "button"
-                        , Html.Events.onClick (actions.onSave { dataUrl = data.dataUrl, filename = data.filename })
-                        , Attr.class "ui-button touch-target"
-                        , Attr.style "display" "inline-flex"
-                        , Attr.style "align-items" "center"
-                        , Attr.style "gap" "8px"
-                        , Attr.style "padding" "8px 16px"
-                        , Attr.style "background"
-                            (if data.hasSaved then
-                                Theme.panelSubtleBackground
-
-                             else
-                                Theme.brandYellow
-                            )
-                        , Attr.style "color"
-                            (if data.hasSaved then
-                                Theme.textPrimary
-
-                             else
-                                Theme.brand
-                            )
-                        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
-                        , Attr.style "border-radius" "6px"
-                        , Attr.style "font-weight" "600"
-                        , Attr.style "font-size" "13px"
-                        , Attr.style "cursor" "pointer"
-                        ]
-                        [ Icon.feather
-                            (if data.hasSaved then
-                                "check"
-
-                             else
-                                "download"
-                            )
-                        , text
-                            (if data.hasSaved then
-                                "Saved Image"
-
-                             else
-                                "Save Image"
-                            )
-                        ]
-                    , if allowed then
-                        Button.primary actions.onContinue "Continue"
-
-                      else
-                        Button.action { enabled = False } actions.onContinue "Continue"
-                    ]
+                    [ saveButton actions data ]
+                , Button.secondary actions.onClose "Close"
                 ]
         )
+
+
+saveButton : Actions msg -> PreviewData -> Html msg
+saveButton actions data =
+    button
+        [ Attr.type_ "button"
+        , Html.Events.onClick (actions.onSave { dataUrl = data.dataUrl, filename = data.filename })
+        , Attr.class "ui-button touch-target"
+        , Attr.style "display" "inline-flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "gap" "8px"
+        , Attr.style "padding" "8px 16px"
+        , Attr.style "border" ("1px solid " ++ Theme.borderDefault)
+        , Attr.style "border-radius" "6px"
+        , Attr.style "font-weight" "600"
+        , Attr.style "font-size" "13px"
+        , Attr.style "cursor" "pointer"
+        , Attr.style "background"
+            (if data.hasSaved then
+                Theme.panelSubtleBackground
+
+             else
+                Theme.brandYellow
+            )
+        , Attr.style "color"
+            (if data.hasSaved then
+                Theme.textPrimary
+
+             else
+                Theme.brand
+            )
+        ]
+        [ Icon.feather
+            (if data.hasSaved then
+                "check"
+
+             else
+                "download"
+            )
+        , text
+            (if data.hasSaved then
+                "Saved Image"
+
+             else
+                "Save Image"
+            )
+        ]

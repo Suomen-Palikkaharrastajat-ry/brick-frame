@@ -118,7 +118,6 @@ type alias Model =
     , projectParts : List PartItem
     , currentTime : Float
     , motorRpm : Float
-    , renderQuality : Style.Quality
     , simulation : Simulation.Model
     , animated : Animated
     , windowWidth : Int
@@ -148,8 +147,7 @@ type Msg
     | CaptureSnapshot
     | SnapshotReady { dataUrl : String, filename : String }
     | SnapshotSave { dataUrl : String, filename : String }
-    | SnapshotToggleAgreed Bool
-    | SnapshotContinue
+    | SnapshotClose
     | GlobePressed ( Float, Float )
     | GlobeMoved ( Float, Float )
     | GlobeReleased
@@ -250,7 +248,6 @@ init flags =
             , projectParts = projectParts
             , currentTime = 0.0
             , motorRpm = motorRpm
-            , renderQuality = Style.Draft
             , simulation =
                 Simulation.init
                     { gearSpecs = Data.gearParts
@@ -704,17 +701,14 @@ step msg model =
         ToggleRaytrace ->
             let
                 nextQuality =
-                    case model.renderQuality of
+                    case Core.renderQuality model.studio of
                         Style.Draft ->
                             Style.Realistic
 
                         Style.Realistic ->
                             Style.Draft
             in
-            ( { model
-                | renderQuality = nextQuality
-                , studio = Core.setRenderQuality nextQuality model.studio
-              }
+            ( { model | studio = Core.setRenderQuality nextQuality model.studio }
             , Cmd.none
             )
 
@@ -738,12 +732,7 @@ step msg model =
             , Ports.saveSnapshot payload
             )
 
-        SnapshotToggleAgreed agreed ->
-            ( { model | snapshotModal = Maybe.map (SnapshotModal.setAgreed agreed) model.snapshotModal }
-            , Cmd.none
-            )
-
-        SnapshotContinue ->
+        SnapshotClose ->
             ( { model | snapshotModal = Nothing }
             , Cmd.none
             )
@@ -1091,8 +1080,7 @@ view model =
             Just modal ->
                 SnapshotModal.view
                     { onSave = SnapshotSave
-                    , onToggleAgreed = SnapshotToggleAgreed
-                    , onContinue = SnapshotContinue
+                    , onClose = SnapshotClose
                     }
                     modal
 
@@ -1287,16 +1275,16 @@ globeControl model =
                 ]
                 [ Button.icon
                     { icon = Icon.feather "sun"
-                    , label = "Raytrace mode"
+                    , label = "Realistic rendering"
                     , shortcut = Nothing
-                    , pressed = Just (model.renderQuality == Style.Realistic)
+                    , pressed = Just (Core.renderQuality model.studio == Style.Realistic)
                     , enabled = True
                     , showLabel = False
                     }
                     ToggleRaytrace
                 , Button.icon
                     { icon = Icon.feather "camera"
-                    , label = "Render snapshot"
+                    , label = "Take snapshot"
                     , shortcut = Nothing
                     , pressed = Nothing
                     , enabled = True
