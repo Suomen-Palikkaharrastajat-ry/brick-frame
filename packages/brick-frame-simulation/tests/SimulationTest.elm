@@ -96,6 +96,7 @@ drivenCache =
         , ( "3649.dat", Loaded [] )
         , ( "3705.dat", Loaded [] )
         , ( "2780.dat", Loaded [] )
+        , ( "32523.dat", Loaded [] )
         ]
 
 
@@ -562,6 +563,24 @@ suite =
 
                         _ ->
                             Expect.fail "expected one component mesh for the pin"
+            , test "a liftarm with a round hole at origin on an axle is not detected as a driven part" <|
+                \_ ->
+                    let
+                        liftarm =
+                            SubFileRef
+                                { color = 4
+                                , transform = Mat4.makeTranslate3 60 0 0
+                                , file = "32523.dat"
+                                }
+
+                        m =
+                            Simulation.init config
+                                |> Simulation.analyse { lines = drivenLines ++ [ liftarm ], cache = drivenCache }
+                                |> Tuple.first
+                    in
+                    drivenPartsFor [ 0, 1 ] m
+                        |> List.map .file
+                        |> Expect.equal [ "3705.dat" ]
             ]
         , describe "motor"
             [ test "SetMotorGear changes the driving gear" <|

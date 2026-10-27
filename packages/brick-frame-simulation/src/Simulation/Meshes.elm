@@ -458,22 +458,26 @@ topLevelCoaxialGear cache drivenAxles line gears =
                     pos :: connectorPoints
 
                 axleMatch =
-                    drivenAxles
-                        |> List.filterMap
-                            (\axle ->
-                                bestLineMatchForPoints samplePoints axle.center axle.axis
-                                    |> Maybe.andThen
-                                        (\( lineDist, axialOffset ) ->
-                                            if lineDist <= 6 && axialOffset <= 240 then
-                                                Just ( lineDist, axialOffset, axle.drivingGearId )
+                    if List.isEmpty connectorPoints then
+                        Nothing
 
-                                            else
-                                                Nothing
-                                        )
-                            )
-                        |> List.sortBy (\( lineDist, axialOffset, _ ) -> ( lineDist, axialOffset ))
-                        |> List.head
-                        |> Maybe.map (\( _, _, gearId ) -> gearId)
+                    else
+                        drivenAxles
+                            |> List.filterMap
+                                (\axle ->
+                                    bestLineMatchForPoints connectorPoints axle.center axle.axis
+                                        |> Maybe.andThen
+                                            (\( lineDist, axialOffset ) ->
+                                                if lineDist <= 2.5 && axialOffset <= 240 then
+                                                    Just ( lineDist, axialOffset, axle.drivingGearId )
+
+                                                else
+                                                    Nothing
+                                            )
+                                )
+                            |> List.sortBy (\( lineDist, axialOffset, _ ) -> ( lineDist, axialOffset ))
+                            |> List.head
+                            |> Maybe.map (\( _, _, gearId ) -> gearId)
 
                 gearMatch =
                     gears
@@ -499,7 +503,7 @@ topLevelCoaxialGear cache drivenAxles line gears =
                                         else
                                             Vec3.scale (1 / gearAxisLen) gearAxisRaw
                                 in
-                                gearHoleOffsets gear.spec.partFile
+                                gearPinAndAxleHoles gear.spec.partFile
                                     |> List.filterMap
                                         (\( hx, hy ) ->
                                             let
@@ -537,6 +541,11 @@ topLevelCoaxialGear cache drivenAxles line gears =
 
 gearHoleOffsets : String -> List ( Float, Float )
 gearHoleOffsets partFile =
+    ( 0, 0 ) :: gearPinAndAxleHoles partFile
+
+
+gearPinAndAxleHoles : String -> List ( Float, Float )
+gearPinAndAxleHoles partFile =
     let
         clean =
             partFile
@@ -547,19 +556,19 @@ gearHoleOffsets partFile =
     in
     case clean of
         "3648" ->
-            ( 0, 0 ) :: pinHoles24T
+            pinHoles24T
 
         "3648a" ->
-            ( 0, 0 ) :: pinHoles24T
+            pinHoles24T
 
         "3648b" ->
-            ( 0, 0 ) :: pinHoles24T
+            pinHoles24T
 
         "3649" ->
-            ( 0, 0 ) :: (axleHoles40T ++ pinHoles40T)
+            axleHoles40T ++ pinHoles40T
 
         _ ->
-            [ ( 0, 0 ) ]
+            []
 
 
 pinHoles24T : List ( Float, Float )
