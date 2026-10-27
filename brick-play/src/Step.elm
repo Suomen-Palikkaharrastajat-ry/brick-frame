@@ -2,7 +2,7 @@ module Step exposing
     ( StepSize(..)
     , all
     , apply
-    , label
+    , icon
     , steps
     , title
     )
@@ -55,19 +55,19 @@ steps size =
             { horizontal = 1, vertical = 1 }
 
 
-{-| The visible words on the segment.
+{-| The icon name for a step size button.
 -}
-label : StepSize -> String
-label size =
+icon : StepSize -> String
+icon size =
     case size of
         Stud ->
-            "Stud"
+            "grid"
 
         HalfStud ->
-            "½ stud"
+            "columns"
 
         Bit ->
-            "Bit"
+            "crosshair"
 
 
 {-| The accessible name and tooltip of a segment, with what it moves.

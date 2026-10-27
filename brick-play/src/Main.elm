@@ -1219,7 +1219,23 @@ step msg model =
             )
 
         ToggleDragShift ->
-            ( { model | studio = Core.setShiftHeld (not (Core.shiftHeld model.studio)) model.studio }
+            let
+                active =
+                    Core.shiftHeld model.studio || Core.fineMove model.studio
+
+                nextStep =
+                    if active && model.stepSize == Step.Bit then
+                        Step.Stud
+
+                    else
+                        model.stepSize
+
+                nextStudio =
+                    model.studio
+                        |> Step.apply nextStep
+                        |> Core.setShiftHeld (not active)
+            in
+            ( { model | stepSize = nextStep, studio = nextStudio }
             , Cmd.none
             )
 
@@ -1368,7 +1384,17 @@ step msg model =
             )
 
         ToggleCameraPanel ->
-            ( { model | cameraShown = not model.cameraShown }, Cmd.none )
+            ( { model
+                | cameraShown = not model.cameraShown
+                , ringPart =
+                    if model.cameraShown then
+                        model.ringPart
+
+                    else
+                        Nothing
+              }
+            , Cmd.none
+            )
 
         ToggleHelp ->
             let
@@ -1531,6 +1557,7 @@ openRing id model =
         ( { model
             | studio = studio
             , ringPart = Just id
+            , cameraShown = False
             , lastTap = Nothing
             , hint = Nothing
             , hintSeen = True
@@ -2310,12 +2337,13 @@ bottomArea model =
         ]
 
 
-{-| The Shift toggle pill shown while a brick is being dragged: tapping or
-holding it switches the active drag to 1-LDU bit-dragging.
+{-| The Shift · Bit toggle pill shown above the palette or mobile context toolbar
+whenever a movable brick is selected or being dragged: tapping or holding it
+switches body drags to 1-LDU bit-dragging without magnetic snapping.
 -}
 shiftDragRow : Model -> Html Msg
 shiftDragRow model =
-    if not (Core.isDragging model.studio) then
+    if not (Core.selectionMovable model.studio || Core.isDragging model.studio) then
         text ""
 
     else
@@ -2331,6 +2359,7 @@ shiftDragRow model =
             [ button
                 [ onClick ToggleDragShift
                 , preventDefaultOn "touchstart" (Decode.succeed ( ToggleDragShift, True ))
+                , keepFocusOnCanvas
                 , Attr.attribute "data-shift-drag" ""
                 , Attr.attribute "aria-label" "Shift (bit-drag)"
                 , Attr.attribute "aria-pressed"
@@ -2340,14 +2369,14 @@ shiftDragRow model =
                      else
                         "false"
                     )
-                , Attr.title "Shift: drag by 1 LDU (bit-dragging)"
+                , Attr.title "Shift: drag by 1 LDU without snapping (bit-dragging)"
                 , Attr.class "touch-target"
                 , Attr.style "pointer-events" "auto"
                 , Attr.style "display" "inline-flex"
                 , Attr.style "align-items" "center"
                 , Attr.style "gap" "0.375rem"
-                , Attr.style "min-height" "2.75rem"
-                , Attr.style "padding" "0.375rem 0.875rem"
+                , Attr.style "min-height" "2.5rem"
+                , Attr.style "padding" "0.25rem 0.75rem"
                 , Attr.style "border-radius" "9999px"
                 , Attr.style "border"
                     (if active then
@@ -2361,7 +2390,7 @@ shiftDragRow model =
                         "var(--color-brand-yellow)"
 
                      else
-                        "rgba(5, 19, 29, 0.85)"
+                        "rgba(5, 19, 29, 0.75)"
                     )
                 , Attr.style "color"
                     (if active then
@@ -2376,20 +2405,21 @@ shiftDragRow model =
                 , Attr.style "font-weight" "700"
                 , Attr.style "cursor" "pointer"
                 ]
-                [ Icon.featherSized 16 "arrow-up"
+                [ Icon.featherSized 16 "crosshair"
                 , span [] [ text "Shift · Bit" ]
                 ]
             ]
 
 
-{-| The narrow bottom row: the dock (or the camera globe) and the toggle between
-them, at a finger-sized width.
+{-| The narrow bottom row: the dock (or the mobile context toolbar while a part's
+ring is open, or the camera globe) and the toggle between them, at a finger-sized
+width.
 -}
 narrowRow : Model -> Html Msg
 narrowRow model =
     div
         [ Attr.style "display" "flex"
-        , Attr.style "align-items" "center"
+        , Attr.style "align-items" "flex-end"
         , Attr.style "gap" "0.5rem"
         , Attr.style "width" "100%"
         , Attr.style "min-width" "0"
@@ -2408,7 +2438,12 @@ narrowRow model =
                 globeControl model
 
               else
-                viewDock model
+                case model.ringPart of
+                    Just id ->
+                        Ring.mobileView (ringConfig model id)
+
+                    Nothing ->
+                        viewDock model
             ]
         , cameraToggle model
         ]
@@ -2514,13 +2549,14 @@ globeControl model =
 
 
 {-| On touch screens, where tooltips never show: the name of the dock part last
-tapped, above the dock. Hidden while the camera globe takes the bottom row.
+tapped, above the dock. Hidden while the camera globe or mobile context menu takes
+the bottom row.
 -}
 touchLabel : Model -> Html Msg
 touchLabel model =
     case model.lastTapped of
         Just name ->
-            if isNarrow model && model.cameraShown then
+            if isNarrow model && (model.cameraShown || model.ringPart /= Nothing) then
                 text ""
 
             else
@@ -2749,33 +2785,41 @@ viewCanvas model =
         shown
 
 
-{-| The context ring for the selected part (`Ring`). It is shown only while a part
-is selected by a double-click or double-tap and its box is on screen.
+{-| The context ring for the selected part (`Ring`) on wide screens. On narrow
+screens (`isNarrow`) the context toolbar replaces the bottom palette in `narrowRow`.
 -}
 ringView : Model -> Html Msg
 ringView model =
-    case model.ringPart of
-        Just id ->
-            Ring.view
-                { part = partScreenRect model id
-                , avoid = ringAvoid model
-                , canvas = ( toFloat model.studio.viewport.width, toFloat model.studio.viewport.height )
-                , free = model.free
-                , glued = Core.selectionGlued model.studio
-                , movable = Core.selectionMovable model.studio
-                , step = model.stepSize
-                , onTurn = TurnSelection
-                , onRaise = RaiseSelection
-                , onLower = LowerSelection
-                , onDelete = Delete
-                , onGlue = ToggleGlue
-                , onMove = MoveSelection
-                , onStep = SetStepSize
-                , noOp = NoOp
-                }
+    if isNarrow model then
+        text ""
 
-        Nothing ->
-            text ""
+    else
+        case model.ringPart of
+            Just id ->
+                Ring.view (ringConfig model id)
+
+            Nothing ->
+                text ""
+
+
+ringConfig : Model -> Int -> Ring.Config Msg
+ringConfig model id =
+    { part = partScreenRect model id
+    , avoid = ringAvoid model
+    , canvas = ( toFloat model.studio.viewport.width, toFloat model.studio.viewport.height )
+    , free = model.free
+    , glued = Core.selectionGlued model.studio
+    , movable = Core.selectionMovable model.studio
+    , step = model.stepSize
+    , onTurn = TurnSelection
+    , onRaise = RaiseSelection
+    , onLower = LowerSelection
+    , onDelete = Delete
+    , onGlue = ToggleGlue
+    , onMove = MoveSelection
+    , onStep = SetStepSize
+    , noOp = NoOp
+    }
 
 
 {-| The first-selection hint, a small line above the dock that does not take
@@ -2954,8 +2998,8 @@ colourRow model =
         [ Attr.attribute "role" "group"
         , Attr.attribute "aria-label" "Colour of parts added"
         , Attr.style "display" "grid"
-        , Attr.style "grid-template-columns" "repeat(2, 1.25rem)"
-        , Attr.style "grid-template-rows" "repeat(4, 1.25rem)"
+        , Attr.style "grid-template-columns" "repeat(2, 1.125rem)"
+        , Attr.style "grid-template-rows" "repeat(4, 1.125rem)"
         , Attr.style "gap" "0.25rem"
         , Attr.style "align-content" "center"
         , Attr.style "flex-shrink" "0"
@@ -2977,8 +3021,8 @@ swatch chosen code =
         , Attr.attribute "aria-label" name
         , Attr.attribute "aria-pressed" (boolText isChosen)
         , Attr.title name
-        , Attr.style "width" "1.25rem"
-        , Attr.style "height" "1.25rem"
+        , Attr.style "width" "1.125rem"
+        , Attr.style "height" "1.125rem"
         , Attr.style "padding" "0"
         , Attr.style "border-radius" "9999px"
         , Attr.style "background" (swatchBackground code)
@@ -2990,7 +3034,6 @@ swatch chosen code =
                 "1px solid rgba(255, 255, 255, 0.35)"
             )
         , Attr.style "cursor" "pointer"
-        , Attr.class "touch-target"
         ]
         []
 

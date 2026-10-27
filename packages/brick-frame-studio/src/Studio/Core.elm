@@ -582,17 +582,18 @@ setDragMode mode model =
         }
 
 
-{-| Keep the viewport's `secondFingerShift` flag in sync with the selection and
-active drag in `DragPartsOrPan` mode: when a movable part is selected (or being
-dragged), a second finger on the screen acts as Shift for 1-LDU bit-dragging;
-when no movable part is selected, two fingers zoom, pan, and orbit the camera.
+{-| Keep the viewport's `secondFingerShift` flag in sync with an active drag in
+`DragPartsOrPan` mode: while a part is being dragged, a second finger on the
+screen acts as Shift for 1-LDU bit-dragging; otherwise, two fingers zoom, pan,
+and orbit the camera.
 -}
 syncTouchShiftMode : Model -> Model
 syncTouchShiftMode model =
     let
         active =
             dragModeGrabsWithShift model.dragMode
-                && (not (Set.isEmpty (movableSelection model)) || model.drag /= Nothing)
+                && model.drag
+                /= Nothing
     in
     { model | viewport = Viewport.setSecondFingerShift active model.viewport }
 
@@ -2471,89 +2472,41 @@ grabPart ( x, y ) model =
         Nothing
 
     else
-        case
-            Viewport.pickBodyPoint x y model.viewport
-                |> Maybe.andThen
-                    (\hit ->
-                        -- A glued part is an obstacle, not something to grab: a press on it only selects.
-                        if isGlued hit.source model then
-                            Nothing
+        Viewport.pickBodyPoint x y model.viewport
+            |> Maybe.andThen
+                (\hit ->
+                    -- A glued part is an obstacle, not something to grab: a press on it only selects.
+                    if isGlued hit.source model then
+                        Nothing
 
-                        else
-                            Just
-                                { kind = PlaneDrag hit.point
-                                , plane = Just (DragPlane.choose model.viewport.camera hit.point)
-                                , ids =
-                                    if Set.member hit.source model.selection then
-                                        Set.toList (movableSelection model)
+                    else
+                        Just
+                            { kind = PlaneDrag hit.point
+                            , plane = Just (DragPlane.choose model.viewport.camera hit.point)
+                            , ids =
+                                if Set.member hit.source model.selection then
+                                    Set.toList (movableSelection model)
 
-                                    else
-                                        [ hit.source ]
-                                , start = ( x, y )
-                                , lastPoint = ( x, y )
-                                , original = model.document
-                                , amount = 0
-                                , elevationOffset = 0.0
-                                , axisLock = Nothing
-                                , modeAnchor = ( x, y )
-                                , baseElevation = 0.0
-                                , shiftToggle = Nothing
-                                }
-                    )
-        of
-            Just drag ->
-                Just drag
-
-            Nothing ->
-                grabSelectedTouch ( x, y ) model
-
-
-{-| On touch in `DragPartsOrPan` mode, when a movable part is already selected,
-a press anywhere on the canvas drags the selected part along its working plane
-instead of panning the camera.
--}
-grabSelectedTouch : ( Float, Float ) -> Model -> Maybe Drag
-grabSelectedTouch ( x, y ) model =
-    let
-        movable =
-            movableSelection model
-    in
-    if Viewport.isTouchGesture model.viewport && dragModeGrabsWithShift model.dragMode && not (Set.isEmpty movable) then
-        Edit.selectionCenter (Set.toList movable) model.document
-            |> Maybe.map
-                (\modelCentre ->
-                    let
-                        centreRender =
-                            selectionPivot movable modelCentre model
-
-                        plane0 =
-                            DragPlane.choose model.viewport.camera centreRender
-
-                        grab =
-                            Pick.screenRay model.viewport.camera model.viewport.width model.viewport.height x y
-                                |> Maybe.andThen (DragPlane.intersect plane0)
-                                |> Maybe.withDefault centreRender
-
-                        plane =
-                            DragPlane.choose model.viewport.camera grab
-                    in
-                    { kind = PlaneDrag grab
-                    , plane = Just plane
-                    , ids = Set.toList movable
-                    , start = ( x, y )
-                    , lastPoint = ( x, y )
-                    , original = model.document
-                    , amount = 0
-                    , elevationOffset = 0.0
-                    , axisLock = Nothing
-                    , modeAnchor = ( x, y )
-                    , baseElevation = 0.0
-                    , shiftToggle = Nothing
-                    }
+                                else
+                                    [ hit.source ]
+                            , start = ( x, y )
+                            , lastPoint = ( x, y )
+                            , original = model.document
+                            , amount = 0
+                            , elevationOffset = 0.0
+                            , axisLock = Nothing
+                            , modeAnchor = ( x, y )
+                            , baseElevation = 0.0
+                            , shiftToggle = Nothing
+                            }
                 )
 
-    else
-        Nothing
+
+{-| Whether bit-dragging (1 LDU step, free of magnetic snapping) is active.
+-}
+isBitDrag : Model -> Bool
+isBitDrag model =
+    model.fineMove || (model.shiftHeld && dragModeGrabsWithShift model.dragMode)
 
 
 {-| The grid step of a body drag on the working plane: 1 LDU while Shift is
@@ -2561,7 +2514,7 @@ held in a `DragPartsOrPan` host, else the grid.
 -}
 dragGridStep : Model -> Float
 dragGridStep model =
-    if model.fineMove || (model.shiftHeld && dragModeGrabsWithShift model.dragMode) then
+    if isBitDrag model then
         1
 
     else
@@ -2774,7 +2727,7 @@ movePlaneDrag initialDrag grab ( x, y ) model =
                     else
                         not (Connectivity.isSnapColliding 0.5 leadP.id leadP.matrix draggedOrigBoxes sceneBoxes snap)
             in
-            if model.altHeld || model.snapDistance <= 0 then
+            if model.altHeld || model.snapDistance <= 0 || isBitDrag model then
                 let
                     draggedGizmoBoxes =
                         originalPlacements

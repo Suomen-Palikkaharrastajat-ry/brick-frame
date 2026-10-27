@@ -236,32 +236,35 @@ closeTests =
                 openRing builtWithOneBrick
                     |> send ToggleMenu
                     |> (\m -> Expect.equal Nothing m.ringPart)
-        , test "dragging a brick shows the Shift bit-drag button, which toggles shiftHeld and resets on release" <|
+        , test "selecting a movable brick shows the Shift · Bit button above the palette, which toggles shiftHeld and resets on drag release" <|
             \_ ->
                 let
+                    unselected =
+                        send (StudioMsg Core.ClearSelection) builtWithOneBrick
+
                     ( x, y ) =
                         screenCentre builtWithOneBrick
 
+                    shifted =
+                        send ToggleDragShift builtWithOneBrick
+
                     dragging =
-                        builtWithOneBrick
+                        shifted
                             |> send (StudioMsg (Core.ViewportMsg (Viewport.TouchStart [ { id = 1, x = x, y = y } ])))
                             |> send (StudioMsg (Core.ViewportMsg (Viewport.TouchMove [ { id = 1, x = x + 30, y = y } ])))
 
-                    shifted =
-                        send ToggleDragShift dragging
-
                     released =
-                        send (StudioMsg (Core.ViewportMsg (Viewport.TouchEnd []))) shifted
+                        send (StudioMsg (Core.ViewportMsg (Viewport.TouchEnd []))) dragging
                 in
                 Expect.all
                     [ \_ ->
-                        builtWithOneBrick
+                        unselected
                             |> view
                             |> Query.fromHtml
                             |> Query.findAll [ Selector.attribute (Attr.attribute "data-shift-drag" "") ]
                             |> Query.count (Expect.equal 0)
                     , \_ ->
-                        dragging
+                        builtWithOneBrick
                             |> view
                             |> Query.fromHtml
                             |> Query.find [ Selector.attribute (Attr.attribute "data-shift-drag" "") ]
@@ -274,6 +277,42 @@ closeTests =
                             |> Query.find [ Selector.attribute (Attr.attribute "data-shift-drag" "") ]
                             |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "true") ]
                     , \_ -> Expect.equal False (Core.shiftHeld released.studio)
+                    ]
+                    ()
+        , test "on mobile (narrow window), opening the context ring replaces the bottom palette with the context toolbar" <|
+            \_ ->
+                let
+                    narrow =
+                        send (WindowResized 375 667) builtWithOneBrick
+
+                    opened =
+                        openRing narrow
+                in
+                Expect.all
+                    [ \_ ->
+                        narrow
+                            |> view
+                            |> Query.fromHtml
+                            |> Query.findAll [ Selector.attribute (Attr.attribute "role" "tablist") ]
+                            |> Query.count (Expect.equal 1)
+                    , \_ ->
+                        opened
+                            |> view
+                            |> Query.fromHtml
+                            |> Query.findAll [ Selector.attribute (Attr.attribute "role" "tablist") ]
+                            |> Query.count (Expect.equal 0)
+                    , \_ ->
+                        opened
+                            |> view
+                            |> Query.fromHtml
+                            |> Query.findAll [ Selector.attribute (Attr.attribute "data-context-ring" "") ]
+                            |> Query.count (Expect.equal 1)
+                    , \_ ->
+                        opened
+                            |> view
+                            |> Query.fromHtml
+                            |> Query.find [ Selector.attribute (Attr.attribute "data-shift-drag" "") ]
+                            |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "false") ]
                     ]
                     ()
         ]

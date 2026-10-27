@@ -1,6 +1,7 @@
 module Ring exposing
     ( Config
     , Rect
+    , mobileView
     , panelHeight
     , panelPosition
     , panelWidth
@@ -278,8 +279,8 @@ view config =
                 , Attr.style "flex-direction" "column"
                 , Attr.style "justify-content" "space-between"
                 , Attr.style "align-items" "center"
-                , Attr.style "background" "rgba(5, 19, 29, 0.92)"
-                , Attr.style "backdrop-filter" "blur(8px)"
+                , Attr.style "background" "rgba(5, 19, 29, 0.68)"
+                , Attr.style "backdrop-filter" "blur(6px)"
                 , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
                 , Attr.style "border-radius" "1rem"
                 , Attr.style "box-shadow" "0 20px 25px -5px rgba(0, 0, 0, 0.5)"
@@ -289,6 +290,35 @@ view config =
                 [ headerRow config
                 , mainControlsPod config
                 ]
+
+
+{-| The context toolbar on mobile, replacing the bottom palette while a part's
+context menu is open.
+-}
+mobileView : Config msg -> Html msg
+mobileView config =
+    div
+        [ Attr.attribute "role" "group"
+        , Attr.attribute "aria-label" "Part controls"
+        , Attr.attribute "data-context-ring" ""
+        , Attr.style "width" "100%"
+        , Attr.style "box-sizing" "border-box"
+        , Attr.style "padding" "0.5rem"
+        , Attr.style "display" "flex"
+        , Attr.style "flex-direction" "column"
+        , Attr.style "justify-content" "space-between"
+        , Attr.style "align-items" "center"
+        , Attr.style "gap" "0.375rem"
+        , Attr.style "background" "rgba(5, 19, 29, 0.82)"
+        , Attr.style "backdrop-filter" "blur(10px)"
+        , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
+        , Attr.style "border-radius" "1rem"
+        , Attr.style "box-shadow" "0 20px 25px -5px rgba(0, 0, 0, 0.5)"
+        , Attr.style "pointer-events" "auto"
+        ]
+        [ headerRow config
+        , mainControlsPod config
+        ]
 
 
 px : Float -> String
@@ -472,17 +502,17 @@ glueButton config =
         )
 
 
-{-| The move-step control: compact segmented pill with Stud, ½ stud, Bit.
+{-| The move-step control: three round icon buttons for Stud, ½ stud, Bit.
 -}
 stepRow : Config msg -> Html msg
 stepRow config =
     div
         [ Attr.attribute "role" "group"
         , Attr.attribute "aria-label" "Move step"
-        , Attr.style "display" "flex"
-        , Attr.style "flex" "1"
-        , Attr.style "gap" "2px"
-        , Attr.style "padding" "2px"
+        , Attr.style "display" "inline-flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "gap" "0.125rem"
+        , Attr.style "padding" "0.125rem"
         , Attr.style "border-radius" "9999px"
         , Attr.style "background" "rgba(255, 255, 255, 0.08)"
         ]
@@ -502,22 +532,21 @@ stepSegment config size =
         , Attr.title (Step.title size)
         , onClick (config.onStep size)
         , Focus.keepFocusOnCanvas config.noOp
-        , Attr.style "flex" "1"
-        , Attr.style "min-height" "2.75rem"
-        , Attr.style "padding" "0 0.25rem"
+        , Attr.style "width" "2.25rem"
+        , Attr.style "height" "2.25rem"
+        , Attr.style "min-width" "2.25rem"
+        , Attr.style "min-height" "2.25rem"
+        , Attr.style "padding" "0"
         , Attr.style "border" "none"
         , Attr.style "border-radius" "9999px"
         , Attr.style "background" (fill pressed)
         , Attr.style "color" (ink pressed)
-        , Attr.style "font-size" "0.75rem"
-        , Attr.style "font-weight" "700"
         , Attr.style "cursor" "pointer"
-        , Attr.style "white-space" "nowrap"
         , Attr.style "display" "flex"
         , Attr.style "align-items" "center"
         , Attr.style "justify-content" "center"
         ]
-        [ text (Step.label size) ]
+        [ Icon.featherSized 16 (Step.icon size) ]
 
 
 stepName : Step.StepSize -> String

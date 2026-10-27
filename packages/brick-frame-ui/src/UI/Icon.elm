@@ -101,6 +101,12 @@ featherSized size name =
                 "unlock" ->
                     FeatherIcons.unlock
 
+                "grid" ->
+                    FeatherIcons.grid
+
+                "columns" ->
+                    FeatherIcons.columns
+
                 _ ->
                     FeatherIcons.play
     in

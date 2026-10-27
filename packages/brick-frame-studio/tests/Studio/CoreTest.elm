@@ -1397,7 +1397,7 @@ emptyDragPanSuite =
         touchEmpty mode =
             let
                 pressed =
-                    send (Viewport.PointerTouchStart { id = 1, x = 10, y = 10 }) (Core.clearSelection (withMode mode))
+                    send (Viewport.PointerTouchStart { id = 1, x = 10, y = 10 }) (withMode mode)
             in
             ( pressed, send (Viewport.PointerTouchMove { id = 1, x = 70, y = 40 }) pressed )
 
@@ -1442,23 +1442,6 @@ emptyDragPanSuite =
             \_ -> orbits (touchEmpty (Core.DragPartsOrPan Core.OneFingerOrbits))
         , test "OneFingerPans: one finger on empty canvas pans" <|
             \_ -> pans (touchEmpty (Core.DragPartsOrPan Core.OneFingerPans))
-        , test "when a brick is selected, one finger on empty canvas moves the brick instead of the camera" <|
-            \_ ->
-                let
-                    before =
-                        withMode (Core.DragPartsOrPan Core.OneFingerPans)
-
-                    after =
-                        before
-                            |> send (Viewport.PointerTouchStart { id = 1, x = 10, y = 10 })
-                            |> send (Viewport.PointerTouchMove { id = 1, x = 110, y = 10 })
-                in
-                Expect.all
-                    [ \_ -> Expect.equal True (Core.isDragging after)
-                    , \_ -> Expect.equal before.viewport.camera.target after.viewport.camera.target
-                    , \_ -> Expect.notEqual (firstPosition before) (firstPosition after)
-                    ]
-                    ()
         , test "when a brick is selected, tapping empty canvas with one finger clears the selection" <|
             \_ ->
                 withMode (Core.DragPartsOrPan Core.OneFingerPans)
@@ -1607,7 +1590,7 @@ shiftFineSuite =
                         [ \m -> Expect.equal True (Core.shiftHeld m)
                         , xIs 37
                         ]
-        , test "when a brick is selected on touch, a second finger acts as Shift for 1 LDU bit-dragging" <|
+        , test "when dragging a brick on touch, a second finger acts as Shift for 1 LDU bit-dragging without magnetic snapping" <|
             \_ ->
                 let
                     base =
@@ -1620,12 +1603,12 @@ shiftFineSuite =
                     draggedWithSecondFinger =
                         base
                             |> send (Viewport.PointerTouchStart { id = 1, x = 400, y = 300 })
-                            |> (\m -> { m | altHeld = True })
                             |> send (Viewport.PointerTouchStart { id = 2, x = 100, y = 100 })
                             |> send (Viewport.PointerTouchMove { id = 1, x = Tuple.first targetScreen, y = Tuple.second targetScreen })
                 in
                 Expect.all
                     [ \m -> Expect.equal True (Core.shiftHeld m)
+                    , \m -> Expect.equal Nothing m.activeSnap
                     , \m ->
                         case firstPosition m of
                             Just pos ->
@@ -1635,6 +1618,33 @@ shiftFineSuite =
                                 Expect.fail "the part vanished"
                     ]
                     draggedWithSecondFinger
+        , test "fineMove (Bit step) disables magnetic snapping during drag" <|
+            \_ ->
+                let
+                    base =
+                        aimed partsOrPan
+                            |> Core.setGridStep 20
+                            |> Core.setFineMove True
+
+                    targetScreen =
+                        screenOf base (vec3 37 0 -52)
+
+                    dragged =
+                        base
+                            |> send (Viewport.MouseButtonDown 400 300 0 False False)
+                            |> send (Viewport.MouseMove (Tuple.first targetScreen) (Tuple.second targetScreen))
+                in
+                Expect.all
+                    [ \m -> Expect.equal Nothing m.activeSnap
+                    , \m ->
+                        case firstPosition m of
+                            Just pos ->
+                                Expect.within (Expect.Absolute 0.51) 37 (Vec3.getX pos)
+
+                            Nothing ->
+                                Expect.fail "the part vanished"
+                    ]
+                    dragged
         ]
 
 
