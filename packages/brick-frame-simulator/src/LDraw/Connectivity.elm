@@ -1693,6 +1693,113 @@ knownCatalogPart name =
                     [ { min = vec3 -4 0 -4, max = vec3 4 80 4 } ]
                 }
 
+        "87087" ->
+            -- Brick 1 x 1 with Stud on 1 Side (SNOT): the side stud faces -Z
+            Just (makeBrick 1 1 24 "87087.dat" |> withSideStuds [ ( vec3 0 10 -10, vec3 0 0 -1 ) ])
+
+        "4070" ->
+            -- Brick 1 x 1 with Headlight: the side stud sits recessed, its base at Z = -6
+            Just (makeBrick 1 1 24 "4070.dat" |> withSideStuds [ ( vec3 0 10 -6, vec3 0 0 -1 ) ])
+
+        "26604" ->
+            -- Brick 1 x 1 with Studs on Two Adjacent Sides
+            Just
+                (makeBrick 1 1 24 "26604.dat"
+                    |> withSideStuds [ ( vec3 0 10 -10, vec3 0 0 -1 ), ( vec3 10 10 0, vec3 1 0 0 ) ]
+                )
+
+        "11211" ->
+            -- Brick 1 x 2 with Two Studs on One Side
+            Just
+                (makeBrick 2 1 24 "11211.dat"
+                    |> withSideStuds [ ( vec3 -10 10 -10, vec3 0 0 -1 ), ( vec3 10 10 -10, vec3 0 0 -1 ) ]
+                )
+
+        "30414" ->
+            -- Brick 1 x 4 with Studs on Side
+            Just
+                (makeBrick 4 1 24 "30414.dat"
+                    |> withSideStuds (List.map (\x -> ( vec3 x 10 -10, vec3 0 0 -1 )) [ -30, -10, 10, 30 ])
+                )
+
+        "32952" ->
+            -- Brick 1 x 1 x 1 2/3 with Studs on 1 Side: two side studs, one above the other
+            Just
+                (makeBrick 1 1 40 "32952.dat"
+                    |> withSideStuds [ ( vec3 0 10 -10, vec3 0 0 -1 ), ( vec3 0 30 -10, vec3 0 0 -1 ) ]
+                )
+
+        "22885" ->
+            -- Brick 1 x 2 x 1 2/3 with Studs on 1 Side: a 2 x 2 grid of side studs
+            Just
+                (makeBrick 2 1 40 "22885.dat"
+                    |> withSideStuds
+                        (List.concatMap (\x -> [ ( vec3 x 10 -10, vec3 0 0 -1 ), ( vec3 x 30 -10, vec3 0 0 -1 ) ]) [ -10, 10 ])
+                )
+
+        "99781" ->
+            -- Bracket 1 x 2 - 1 x 2 Down: a 1 x 2 plate with a vertical plate hanging
+            -- below its front edge (Z -14 to -10), whose studs face -Z
+            Just
+                (makeBracket "99781.dat"
+                    { minY = -4, maxY = 20 }
+                    [ ( vec3 -10 10 -14, vec3 0 0 -1 ), ( vec3 10 10 -14, vec3 0 0 -1 ) ]
+                )
+
+        "99780" ->
+            -- Bracket 1 x 2 - 1 x 2 Up: the vertical plate rises above the front edge
+            Just
+                (makeBracket "99780.dat"
+                    { minY = -12, maxY = 8 }
+                    [ ( vec3 -10 -2 -14, vec3 0 0 -1 ), ( vec3 10 -2 -14, vec3 0 0 -1 ) ]
+                )
+
+        "99207" ->
+            -- Bracket 1 x 2 - 2 x 2 Up: a taller vertical plate with two rows of studs
+            Just
+                (makeBracket "99207.dat"
+                    { minY = -32, maxY = 8 }
+                    (List.concatMap (\y -> [ ( vec3 -10 y -14, vec3 0 0 -1 ), ( vec3 10 y -14, vec3 0 0 -1 ) ]) [ -2, -22 ])
+                )
+
+        "99206" ->
+            -- Plate 2 x 2 x 2/3 with Two Studs On Side and Two Raised: the raised
+            -- front row at Y = 0, the rear row at Y = 8, the side studs facing -Z, and
+            -- a 2 x 2 bottom (Z -10 to 30) 16 LDU down
+            Just
+                { part = "99206.dat"
+                , connections =
+                    [ studAt 1 (vec3 -10 0 0)
+                    , studAt 2 (vec3 10 0 0)
+                    , studAt 3 (vec3 -10 8 20)
+                    , studAt 4 (vec3 10 8 20)
+                    ]
+                        ++ List.indexedMap (\i ( x, z ) -> antiStudAt (100 + i) (vec3 x 16 z))
+                            [ ( -10, 0 ), ( 10, 0 ), ( -10, 20 ), ( 10, 20 ) ]
+                        ++ sideStudPoints [ ( vec3 -10 6 -10, vec3 0 0 -1 ), ( vec3 10 6 -10, vec3 0 0 -1 ) ]
+                , boundingBoxes = [ { min = vec3 -20 -4 -10, max = vec3 20 16 30 } ]
+                }
+
+        "3070b" ->
+            -- Tile 1 x 1 with Groove
+            Just (makeTile 1 1 "3070b.dat")
+
+        "3069b" ->
+            -- Tile 1 x 2 with Groove
+            Just (makeTile 2 1 "3069b.dat")
+
+        "3068b" ->
+            -- Tile 2 x 2 with Groove
+            Just (makeTile 2 2 "3068b.dat")
+
+        "2431" ->
+            -- Tile 1 x 4 with Groove
+            Just (makeTile 4 1 "2431.dat")
+
+        "6636" ->
+            -- Tile 1 x 6
+            Just (makeTile 6 1 "6636.dat")
+
         "14417" ->
             -- Plate 1 x 2 with Ball
             let
@@ -1744,6 +1851,91 @@ makeClipPlate pName =
             }
     in
     { base | connections = clip :: base.connections }
+
+
+{-| An upward stud (normal −Y in LDraw's Y-down space) at `position`.
+-}
+studAt : Int -> Vec3 -> ConnectionPoint
+studAt id position =
+    { id = id
+    , connType = Stud
+    , localPosition = position
+    , normal = vec3 0 -1 0
+    , tangent = vec3 1 0 0
+    }
+
+
+{-| A downward anti-stud (normal +Y) at `position`.
+-}
+antiStudAt : Int -> Vec3 -> ConnectionPoint
+antiStudAt id position =
+    { id = id
+    , connType = AntiStud
+    , localPosition = position
+    , normal = vec3 0 1 0
+    , tangent = vec3 1 0 0
+    }
+
+
+{-| Side studs (SNOT): each is the stud's base on the part's face and its outward
+normal. Ids start at 200 so they never clash with `makeBrick`'s.
+-}
+sideStudPoints : List ( Vec3, Vec3 ) -> List ConnectionPoint
+sideStudPoints studs =
+    List.indexedMap
+        (\idx ( position, normal ) ->
+            { id = 200 + idx
+            , connType = Stud
+            , localPosition = position
+            , normal = normal
+            , tangent = vec3 0 1 0
+            }
+        )
+        studs
+
+
+{-| A part with extra side studs (see `sideStudPoints`). Its box is unchanged:
+side studs protrude past the body, and `effectiveEnvelope` leaves them out anyway.
+-}
+withSideStuds : List ( Vec3, Vec3 ) -> PartConnectivity -> PartConnectivity
+withSideStuds studs base =
+    { base | connections = base.connections ++ sideStudPoints studs }
+
+
+{-| A tile: a plate's anti-studs underneath (8 LDU down) and no studs on top, so
+its box starts at Y = 0 with no stud protrusion.
+-}
+makeTile : Int -> Int -> String -> PartConnectivity
+makeTile length width partName =
+    let
+        plate =
+            makeBrick length width 8 partName
+
+        antiStuds =
+            List.filter (\c -> c.connType == AntiStud) plate.connections
+
+        box =
+            List.head plate.boundingBoxes
+                |> Maybe.map (\b -> { b | min = vec3 (Vec3.getX b.min) 0 (Vec3.getZ b.min) })
+                |> Maybe.withDefault { min = vec3 -10 0 -10, max = vec3 10 8 10 }
+    in
+    { plate | connections = antiStuds, boundingBoxes = [ box ] }
+
+
+{-| A 1 x 2 bracket: a 1 x 2 plate (studs at Y = 0, anti-studs at Y = 8) with a
+vertical plate along its front edge (Z −14 to −10) carrying `sideStuds`.
+`minY` and `maxY` are the vertical extent of the whole part.
+-}
+makeBracket : String -> { minY : Float, maxY : Float } -> List ( Vec3, Vec3 ) -> PartConnectivity
+makeBracket partName extent sideStuds =
+    let
+        plate =
+            makeBrick 2 1 8 partName
+    in
+    { plate
+        | connections = plate.connections ++ sideStudPoints sideStuds
+        , boundingBoxes = [ { min = vec3 -20 extent.minY -14, max = vec3 20 extent.maxY 10 } ]
+    }
 
 
 makeBrick : Int -> Int -> Float -> String -> PartConnectivity
