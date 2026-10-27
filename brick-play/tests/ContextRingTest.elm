@@ -590,8 +590,6 @@ layoutTests =
                         , "Move left (A)"
                         , "Move toward (S)"
                         , "Move right (D)"
-                        , "Move down (Q)"
-                        , "Move up (E)"
                         , "Stud step"
                         , "Half-stud step"
                         , "Bit step"
@@ -616,12 +614,12 @@ layoutTests =
             \_ ->
                 Ring.panelPosition
                     { part = screenBox 100 300 160 400, canvas = ( 1000, 800 ), avoid = [] }
-                    |> Expect.equal ( 172, 215 )
+                    |> Expect.equal ( 172, 254 )
         , test "the ring flips to the left of a part near the right edge" <|
             \_ ->
                 Ring.panelPosition
                     { part = screenBox 900 300 960 400, canvas = ( 1000, 800 ), avoid = [] }
-                    |> Expect.equal ( 668, 215 )
+                    |> Expect.equal ( 664, 254 )
         , test "the ring clamps inside the top of the canvas" <|
             \_ ->
                 Ring.panelPosition
@@ -631,7 +629,7 @@ layoutTests =
             \_ ->
                 Ring.panelPosition
                     { part = screenBox 100 780 160 800, canvas = ( 1000, 800 ), avoid = [] }
-                    |> Expect.equal ( 172, 522 )
+                    |> Expect.equal ( 172, 600 )
         , test "the ring moves above a part when the right side would cover the dock" <|
             \_ ->
                 let
@@ -640,7 +638,7 @@ layoutTests =
                 in
                 Ring.panelPosition
                     { part = screenBox 100 400 160 500, canvas = ( 1000, 800 ), avoid = [ dock ] }
-                    |> Expect.equal ( 20, 118 )
+                    |> Expect.equal ( 18, 196 )
         , test "the canvas centre projects to the centre of the canvas" <|
             \_ ->
                 let

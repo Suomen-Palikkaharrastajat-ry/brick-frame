@@ -12,15 +12,15 @@ module Ring exposing
 {-| The context ring: the controls that float beside a selected part in Brick
 Play. It opens on a double-click or double-tap of a part, and holds the part's
 Turn left, Turn right, Tip, Raise, Lower and Delete buttons, Glue (free building
-only), a W A S D Q E move pad, and the move-step control (`Step.StepSize`: Stud,
+only), a planar D-pad, and the move-step control (`Step.StepSize`: Stud,
 ½ stud, Bit).
 
-The ring is a cluster of 44 px round buttons. `panelPosition` places it beside the
-part's screen rectangle (its projected bounding box), 12 px to the right, flipped
-to the left, then above or below when neither side has room. It is kept inside the
-canvas and clear of the dock and camera globe when it can be. `screenPoint` and
-`screenRect` project render-space points with the camera, the same matrices the
-studio's outlines use. All are pure.
+The ring is a compact 224×192 px pod of 44 px touch buttons. `panelPosition`
+places it beside the part's screen rectangle (its projected bounding box), 12 px
+to the right, flipped to the left, then above or below when neither side has room.
+It is kept inside the canvas and clear of the dock and camera globe when it can be.
+`screenPoint` and `screenRect` project render-space points with the camera, the
+same matrices the studio's outlines use. All are pure.
 
 Every button is a real `<button>` with an `aria-label`, and its tooltip gives the
 shortcut. Buttons do not take focus on a mouse press (`UI.Focus.keepFocusOnCanvas`),
@@ -28,7 +28,7 @@ so the keyboard shortcuts keep working after a click on the ring.
 
 -}
 
-import Html exposing (Html, button, div, span, text)
+import Html exposing (Html, button, div, text)
 import Html.Attributes as Attr
 import Html.Events exposing (onClick)
 import Math.Matrix4 as Mat4
@@ -54,7 +54,7 @@ type alias Rect =
 
 `part` is the part's screen rectangle, `Nothing` while it is off screen (the ring
 then stays hidden). `canvas` is the canvas size in pixels, and `avoid` lists the
-rectangles the ring keeps clear of when it can (the dock and the camera globe).
+rect rectangles the ring keeps clear of when it can (the dock and the camera globe).
 `movable` is False when the selection is glued, and `glued` says whether it is.
 
 -}
@@ -81,14 +81,14 @@ type alias Config msg =
 -}
 panelWidth : Float
 panelWidth =
-    220
+    224
 
 
 {-| The ring's height in pixels, for keeping it inside the canvas.
 -}
 panelHeight : Float
 panelHeight =
-    270
+    192
 
 
 {-| The gap, in pixels, between a part's screen rectangle and the ring.
@@ -271,12 +271,13 @@ view config =
                 , Attr.style "left" (px left)
                 , Attr.style "top" (px top)
                 , Attr.style "width" (px panelWidth)
+                , Attr.style "height" (px panelHeight)
                 , Attr.style "box-sizing" "border-box"
-                , Attr.style "padding" "0.5rem"
+                , Attr.style "padding" "0.375rem"
                 , Attr.style "display" "flex"
                 , Attr.style "flex-direction" "column"
+                , Attr.style "justify-content" "space-between"
                 , Attr.style "align-items" "center"
-                , Attr.style "gap" "0.5rem"
                 , Attr.style "background" "rgba(5, 19, 29, 0.92)"
                 , Attr.style "backdrop-filter" "blur(8px)"
                 , Attr.style "border" "1px solid rgba(255, 255, 255, 0.15)"
@@ -285,9 +286,8 @@ view config =
                 , Attr.style "pointer-events" "auto"
                 , Attr.style "z-index" "12"
                 ]
-                [ actionRow config
-                , padRow config
-                , stepRow config
+                [ headerRow config
+                , mainControlsPod config
                 ]
 
 
@@ -296,40 +296,149 @@ px value =
     String.fromInt (round value) ++ "px"
 
 
-{-| The turn, tip, raise, lower, delete and glue buttons.
+{-| The top header row: step size selector pill and utility actions (Glue, Delete).
 -}
-actionRow : Config msg -> Html msg
-actionRow config =
+headerRow : Config msg -> Html msg
+headerRow config =
     div
         [ Attr.style "display" "flex"
-        , Attr.style "flex-wrap" "wrap"
-        , Attr.style "justify-content" "center"
-        , Attr.style "gap" "0.375rem"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "space-between"
+        , Attr.style "width" "100%"
+        , Attr.style "gap" "0.25rem"
         ]
-        ([ actionButton config (config.onTurn TurnLeft) "rotate-ccw" "Turn left" "←"
-         , actionButton config (config.onTurn TurnRight) "rotate-cw" "Turn right" "→"
-         , actionButton config (config.onTurn TipForward) "corner-right-down" "Tip" "↑"
-         , actionButton config config.onRaise "arrow-up" "Raise" "E"
-         , actionButton config config.onLower "arrow-down" "Lower" "Q"
-         , actionButton config config.onDelete "trash-2" "Delete" "Delete"
-         ]
-            ++ (if config.free then
-                    [ glueButton config ]
+        [ stepRow config
+        , utilityRow config
+        ]
 
-                else
-                    []
-               )
+
+{-| The utility actions: Glue toggle (free building only) and Delete.
+-}
+utilityRow : Config msg -> Html msg
+utilityRow config =
+    div
+        [ Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "gap" "0.25rem"
+        ]
+        ((if config.free then
+            [ glueButton config ]
+
+          else
+            []
+         )
+            ++ [ actionButton config config.onDelete "trash-2" "Delete" "Delete" ]
         )
+
+
+{-| The main 3-column controls pod: Elevation (left), Planar D-Pad (center),
+and Rotation (right).
+-}
+mainControlsPod : Config msg -> Html msg
+mainControlsPod config =
+    div
+        [ Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "space-between"
+        , Attr.style "width" "100%"
+        ]
+        [ elevationColumn config
+        , planarDPad config
+        , rotationColumn config
+        ]
+
+
+{-| Left elevation column: Raise (chevrons-up) and Lower (chevrons-down).
+-}
+elevationColumn : Config msg -> Html msg
+elevationColumn config =
+    div
+        [ Attr.attribute "role" "group"
+        , Attr.attribute "aria-label" "Elevation controls"
+        , Attr.style "display" "flex"
+        , Attr.style "flex-direction" "column"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "center"
+        , Attr.style "gap" "0.5rem"
+        , Attr.style "width" "2.75rem"
+        ]
+        [ actionButton config config.onRaise "chevrons-up" "Raise" "E"
+        , actionButton config config.onLower "chevrons-down" "Lower" "Q"
+        ]
+
+
+{-| Center planar D-pad for ground movement: Away (W), Left (A), Toward (S), Right (D).
+-}
+planarDPad : Config msg -> Html msg
+planarDPad config =
+    div
+        [ Attr.attribute "role" "group"
+        , Attr.attribute "aria-label" "Move the part"
+        , Attr.style "display" "grid"
+        , Attr.style "grid-template-columns" "repeat(2, 2.75rem)"
+        , Attr.style "grid-template-rows" "repeat(3, 2.75rem)"
+        , Attr.style "justify-items" "center"
+        , Attr.style "align-items" "center"
+        , Attr.style "width" "5.5rem"
+        , Attr.style "height" "8.25rem"
+        ]
+        [ div [ Attr.style "grid-column" "1 / span 2" ]
+            [ dPadKey config Away "chevron-up" "Move away (W)" "Move away (W)" ]
+        , div [ Attr.style "grid-column" "1", Attr.style "grid-row" "2" ]
+            [ dPadKey config Left "chevron-left" "Move left (A)" "Move left (A)" ]
+        , div [ Attr.style "grid-column" "2", Attr.style "grid-row" "2" ]
+            [ dPadKey config Right "chevron-right" "Move right (D)" "Move right (D)" ]
+        , div [ Attr.style "grid-column" "1 / span 2", Attr.style "grid-row" "3" ]
+            [ dPadKey config Toward "chevron-down" "Move toward (S)" "Move toward (S)" ]
+        ]
+
+
+dPadKey : Config msg -> NudgeDirection -> String -> String -> String -> Html msg
+dPadKey config direction icon label tooltip =
+    roundButton
+        { noOp = config.noOp
+        , enabled = config.movable
+        , onPress = config.onMove direction
+        , label = label
+        , tooltip = tooltip
+        , pressed = Nothing
+        }
+        (Icon.featherSized 18 icon)
+
+
+{-| Right rotation column: Turn left (rotate-ccw), Turn right (rotate-cw), and Tip (corner-right-down).
+-}
+rotationColumn : Config msg -> Html msg
+rotationColumn config =
+    div
+        [ Attr.attribute "role" "group"
+        , Attr.attribute "aria-label" "Rotation controls"
+        , Attr.style "display" "flex"
+        , Attr.style "flex-direction" "column"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "space-between"
+        , Attr.style "width" "2.75rem"
+        , Attr.style "height" "8.25rem"
+        ]
+        [ actionButton config (config.onTurn TurnLeft) "rotate-ccw" "Turn left" "←"
+        , actionButton config (config.onTurn TurnRight) "rotate-cw" "Turn right" "→"
+        , actionButtonWithTooltip config (config.onTurn TipForward) "corner-right-down" "Tip" "Tip forward (↑)"
+        ]
 
 
 actionButton : Config msg -> msg -> String -> String -> String -> Html msg
 actionButton config msg icon label shortcut =
+    actionButtonWithTooltip config msg icon label (label ++ " (" ++ shortcut ++ ")")
+
+
+actionButtonWithTooltip : Config msg -> msg -> String -> String -> String -> Html msg
+actionButtonWithTooltip config msg icon label tooltip =
     roundButton
         { noOp = config.noOp
         , enabled = config.movable
         , onPress = msg
         , label = label
-        , tooltip = label ++ " (" ++ shortcut ++ ")"
+        , tooltip = tooltip
         , pressed = Nothing
         }
         (Icon.featherSized 18 icon)
@@ -363,40 +472,7 @@ glueButton config =
         )
 
 
-{-| The WASD and QE pad: top row Q W E, bottom row A S D.
--}
-padRow : Config msg -> Html msg
-padRow config =
-    div
-        [ Attr.attribute "role" "group"
-        , Attr.attribute "aria-label" "Move the part"
-        , Attr.style "display" "grid"
-        , Attr.style "grid-template-columns" "repeat(3, 2.75rem)"
-        , Attr.style "gap" "0.375rem"
-        ]
-        [ padKey config Down "Move down" "Q"
-        , padKey config Away "Move away" "W"
-        , padKey config Up "Move up" "E"
-        , padKey config Left "Move left" "A"
-        , padKey config Toward "Move toward" "S"
-        , padKey config Right "Move right" "D"
-        ]
-
-
-padKey : Config msg -> NudgeDirection -> String -> String -> Html msg
-padKey config direction name key =
-    roundButton
-        { noOp = config.noOp
-        , enabled = config.movable
-        , onPress = config.onMove direction
-        , label = name ++ " (" ++ key ++ ")"
-        , tooltip = name ++ " (" ++ key ++ ")"
-        , pressed = Nothing
-        }
-        (span [ Attr.attribute "aria-hidden" "true", Attr.style "font-weight" "700" ] [ text key ])
-
-
-{-| The move-step control: three segments, one pressed.
+{-| The move-step control: compact segmented pill with Stud, ½ stud, Bit.
 -}
 stepRow : Config msg -> Html msg
 stepRow config =
@@ -404,6 +480,7 @@ stepRow config =
         [ Attr.attribute "role" "group"
         , Attr.attribute "aria-label" "Move step"
         , Attr.style "display" "flex"
+        , Attr.style "flex" "1"
         , Attr.style "gap" "2px"
         , Attr.style "padding" "2px"
         , Attr.style "border-radius" "9999px"
@@ -425,16 +502,20 @@ stepSegment config size =
         , Attr.title (Step.title size)
         , onClick (config.onStep size)
         , Focus.keepFocusOnCanvas config.noOp
-        , Attr.style "min-width" "4.25rem"
+        , Attr.style "flex" "1"
         , Attr.style "min-height" "2.75rem"
-        , Attr.style "padding" "0 0.5rem"
+        , Attr.style "padding" "0 0.25rem"
         , Attr.style "border" "none"
         , Attr.style "border-radius" "9999px"
         , Attr.style "background" (fill pressed)
         , Attr.style "color" (ink pressed)
-        , Attr.style "font-size" "0.8125rem"
+        , Attr.style "font-size" "0.75rem"
         , Attr.style "font-weight" "700"
         , Attr.style "cursor" "pointer"
+        , Attr.style "white-space" "nowrap"
+        , Attr.style "display" "flex"
+        , Attr.style "align-items" "center"
+        , Attr.style "justify-content" "center"
         ]
         [ text (Step.label size) ]
 

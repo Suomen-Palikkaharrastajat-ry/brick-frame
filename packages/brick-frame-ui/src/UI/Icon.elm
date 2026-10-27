@@ -26,6 +26,12 @@ featherSized size name =
                 "chevron-down" ->
                     FeatherIcons.chevronDown
 
+                "chevrons-up" ->
+                    FeatherIcons.chevronsUp
+
+                "chevrons-down" ->
+                    FeatherIcons.chevronsDown
+
                 "chevron-left" ->
                     FeatherIcons.chevronLeft
 
