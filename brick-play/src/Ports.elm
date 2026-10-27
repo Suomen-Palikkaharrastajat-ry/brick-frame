@@ -19,6 +19,7 @@ port module Ports exposing
 pipeline (`initThumbnails` in `packages/brick-frame-viewport/runtime/thumbnail-pipeline.js`).
 -}
 
+import Bytes exposing (Bytes)
 import Json.Encode
 
 
@@ -49,14 +50,14 @@ unknown). Parts that cannot be rendered send nothing.
 port thumbnailLoaded : ({ file : String, color : Int, url : String, title : String } -> msg) -> Sub msg
 
 
-{-| Update the browser URL hash.
+{-| Update the browser URL hash with a binary payload.
 -}
-port setUrlHash : String -> Cmd msg
+port setUrlHash : List Int -> Cmd msg
 
 
-{-| Copy text to the system clipboard.
+{-| Copy binary link payload to the system clipboard (compressed as #b/<base64url> by JS).
 -}
-port copyToClipboard : String -> Cmd msg
+port copyToClipboard : List Int -> Cmd msg
 
 
 {-| Ask the offline path tracer for a 1920 × 1080 render. The value is the

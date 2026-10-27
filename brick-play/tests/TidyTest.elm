@@ -255,6 +255,7 @@ flagsFor hash =
     { ldrawBase = "/ldraw"
     , ldrawFallbackBase = ""
     , initialHash = hash
+    , initialBytes = Nothing
     , supportsPointerEvents = True
     , hintSeen = False
     , coarsePointer = False

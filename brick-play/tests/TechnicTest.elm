@@ -24,6 +24,7 @@ import Studio.Core as Core
 import Studio.DragPlane as DragPlane
 import Studio.Edit as Edit exposing (NewPart)
 import Studio.GearFeedback as GearFeedback
+import Studio.HashPayload as HashPayload
 import Studio.Shortcuts exposing (TurnDirection(..))
 import Technic.Animation as Animation
 import Technic.Catalog as Catalog exposing (Category(..))
@@ -827,6 +828,7 @@ testFlags =
     { ldrawBase = "/ldraw"
     , ldrawFallbackBase = ""
     , initialHash = ""
+    , initialBytes = Nothing
     , supportsPointerEvents = True
     , hintSeen = False
     , coarsePointer = False
@@ -1360,11 +1362,16 @@ sharingAndToastTests =
                     hash =
                         shareHash start
                 in
-                Expect.all
-                    [ \h -> Expect.equal True (String.startsWith "parts=" h)
-                    , \h -> Expect.equal False (String.contains "model=" h)
-                    ]
-                    hash
+                case HashPayload.decodeBytes hash of
+                    Just payload ->
+                        Expect.all
+                            [ \p -> Expect.equal (Just start.inventory) p.kit
+                            , \p -> Expect.equal 0 (List.length (Document.mainPlacements p.document))
+                            ]
+                            payload
+
+                    Nothing ->
+                        Expect.fail "Failed to decode shareHash payload"
         ]
 
 
@@ -1597,18 +1604,29 @@ technicTests =
                     link =
                         shareHash withGears
                 in
-                Expect.all
-                    [ \_ -> Expect.equal False (String.contains "model=" link)
-                    , \_ -> Expect.equal True (String.contains "parts=3647.dat%3A7%3A1%2C3648.dat%3A7%3A1" link)
-                    ]
-                    ()
+                case HashPayload.decodeBytes link of
+                    Just payload ->
+                        Expect.all
+                            [ \p -> Expect.equal HashPayload.Puzzle p.mode
+                            , \p -> Expect.equal (Just [ { part = "3647.dat", color = 7, count = 1 }, { part = "3648.dat", color = 7, count = 1 } ]) p.kit
+                            , \p -> Expect.equal 0 (List.length (Document.mainPlacements p.document))
+                            ]
+                            payload
+
+                    Nothing ->
+                        Expect.fail "Failed to decode link"
         , test "a Technic link keeps its kit as parts=, and its share keeps that kit" <|
             \_ ->
                 let
                     kitLink =
                         Tuple.first (init { testFlags | initialHash = "#model=" ++ Url.percentEncode pair8x24 ++ "&parts=3648.dat%3A7%3A1" })
                 in
-                Expect.equal True (String.contains "parts=3648.dat%3A7%3A1" (shareHash kitLink))
+                case HashPayload.decodeBytes (shareHash kitLink) of
+                    Just payload ->
+                        Expect.equal (Just [ { part = "3648.dat", color = 7, count = 1 } ]) payload.kit
+
+                    Nothing ->
+                        Expect.fail "Failed to decode kitLink payload"
         , test "a gear added from the catalog turns the alignment on and goes on the axle line" <|
             \_ ->
                 let

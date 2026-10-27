@@ -688,6 +688,7 @@ flagsFor hash hintSeen coarse =
     { ldrawBase = "/ldraw"
     , ldrawFallbackBase = ""
     , initialHash = hash
+    , initialBytes = Nothing
     , supportsPointerEvents = True
     , hintSeen = hintSeen
     , coarsePointer = coarse

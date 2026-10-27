@@ -2,6 +2,7 @@ import './main.css'
 import { initBricksRuntime } from '../packages/brick-frame-viewport/runtime/initBricksRuntime.js'
 import { initSnapshots } from '../packages/brick-frame-viewport/runtime/snapshot.js'
 import { initThumbnails } from '../packages/brick-frame-viewport/runtime/thumbnail-pipeline.js'
+import { encodeHash, toUint8Array } from '../packages/brick-frame-viewport/runtime/url-hash-codec.js'
 import { Elm } from './src/Main.elm'
 
 const siteRoot = new URL(import.meta.env.VITE_SITE_ROOT ?? '../', window.location.href).href
@@ -68,7 +69,10 @@ const runtime = initBricksRuntime({
 runtime.app?.ports?.rememberHintSeen?.subscribe(rememberHintSeen)
 
 if (runtime.app?.ports?.copyToClipboard) {
-  runtime.app.ports.copyToClipboard.subscribe((text) => {
+  runtime.app.ports.copyToClipboard.subscribe((data) => {
+    const text = typeof data === 'string'
+      ? data
+      : encodeHash(toUint8Array(data))
     const toCopy = text.startsWith('#')
       ? new URL(text, window.location.href).href
       : text

@@ -14,6 +14,7 @@ import Link
 import Main exposing (Flags, Model, Msg(..), hashFor, helpRows, init, remainingCount, remainingForItem, shareHash, update, view)
 import Set
 import Studio.Core as Core
+import Studio.HashPayload as HashPayload
 import Studio.PartIndex as PartIndex
 import Studio.Shortcuts exposing (TurnDirection(..))
 import Studio.UrlPayload as UrlPayload
@@ -45,6 +46,21 @@ flagsFor hash =
     { ldrawBase = "/ldraw"
     , ldrawFallbackBase = ""
     , initialHash = hash
+    , initialBytes = Nothing
+    , supportsPointerEvents = True
+    , hintSeen = False
+    , coarsePointer = False
+    }
+
+
+{-| Flags for a binary payload.
+-}
+flagsForBytes : List Int -> Flags
+flagsForBytes bytes =
+    { ldrawBase = "/ldraw"
+    , ldrawFallbackBase = ""
+    , initialHash = ""
+    , initialBytes = Just bytes
     , supportsPointerEvents = True
     , hintSeen = False
     , coarsePointer = False
@@ -56,6 +72,13 @@ flagsFor hash =
 open : String -> Model
 open hash =
     Tuple.first (init (flagsFor hash))
+
+
+{-| The model opened from binary payload bytes.
+-}
+openBytes : List Int -> Model
+openBytes bytes =
+    Tuple.first (init (flagsForBytes bytes))
 
 
 {-| The model with one more free part added (and selected, as a dock tap does).
@@ -453,25 +476,23 @@ shareTests =
     describe "Share links"
         [ test "a free build shares a puzzle: glued parts stay, the rest are counts grouped and summed" <|
             \_ ->
-                let
-                    payload =
-                        UrlPayload.decodeHash (shareHash freeBuild)
+                case HashPayload.decodeBytes (shareHash freeBuild) of
+                    Just payload ->
+                        Expect.all
+                            [ \_ -> Expect.equal HashPayload.Puzzle payload.mode
+                            , \_ -> Expect.equal (Just [ { part = "3001.dat", color = 4, count = 3 }, { part = "3001.dat", color = 14, count = 2 } ]) payload.kit
+                            , \_ -> Expect.equal 1 (List.length (Document.placements payload.document))
+                            , \_ -> Expect.equal 1 (Set.size (Document.gluedIds payload.document))
+                            ]
+                            ()
 
-                    shared =
-                        Document.parse (Maybe.withDefault "" payload.modelText)
-                in
-                Expect.all
-                    [ \_ -> Expect.equal False payload.free
-                    , \_ -> Expect.equal [ { part = "3001.dat", color = 4, count = 3 }, { part = "3001.dat", color = 14, count = 2 } ] payload.parts
-                    , \_ -> Expect.equal 1 (List.length (Document.placements shared))
-                    , \_ -> Expect.equal 1 (Set.size (Document.gluedIds shared))
-                    ]
-                    ()
+                    Nothing ->
+                        Expect.fail "Failed to decode shareHash payload"
         , test "the shared free build opens as a puzzle: glued part locked, kit counted without it" <|
             \_ ->
                 let
                     puzzle =
-                        open (shareHash freeBuild)
+                        openBytes (shareHash freeBuild)
                 in
                 Expect.all
                     [ \m -> Expect.equal False m.free
@@ -492,7 +513,7 @@ shareTests =
                             |> Tuple.first
 
                     reopened =
-                        open (shareHash board)
+                        openBytes (shareHash board)
 
                     summary m =
                         ( remainingForItem m kit, List.length (placementIds m), gluedIds m )
@@ -509,7 +530,7 @@ shareTests =
             \_ ->
                 let
                     reopened =
-                        open (Link.freeHash freeBuild.studio.document)
+                        openBytes (Link.freeHash freeBuild.studio.document)
                 in
                 Expect.all
                     [ \m -> Expect.equal True m.free
@@ -552,7 +573,7 @@ shareTests =
 {-| The hash an update writes (`hashFor`, what `updateApp` sends to the address
 bar), with the model the update reached.
 -}
-written : Msg -> Model -> ( Maybe String, Model )
+written : Msg -> Model -> ( Maybe (List Int), Model )
 written msg before =
     let
         after =
@@ -564,7 +585,7 @@ written msg before =
 {-| Asserts a free-building update wrote the hash of the board it reached, and
 that the hash opens to a board with as many parts.
 -}
-expectFreeHash : ( Maybe String, Model ) -> Expect.Expectation
+expectFreeHash : ( Maybe (List Int), Model ) -> Expect.Expectation
 expectFreeHash ( result, model ) =
     case result of
         Nothing ->
@@ -573,7 +594,7 @@ expectFreeHash ( result, model ) =
         Just hash ->
             Expect.all
                 [ \h -> Expect.equal (Link.freeHash model.studio.document) h
-                , \h -> Expect.equal (List.length (placementIds model)) (List.length (placementIds (open h)))
+                , \h -> Expect.equal (List.length (placementIds model)) (List.length (placementIds (openBytes h)))
                 ]
                 hash
 

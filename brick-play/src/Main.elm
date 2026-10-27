@@ -80,6 +80,7 @@ import Array
 import Browser
 import Browser.Dom
 import Browser.Events
+import Bytes exposing (Bytes)
 import Data
 import Dict exposing (Dict)
 import EmbeddedParts
@@ -109,6 +110,7 @@ import Studio.Colours as Colours
 import Studio.Core as Core
 import Studio.GearFeedback as GearFeedback
 import Studio.Gizmo as Gizmo
+import Studio.HashPayload as HashPayload
 import Studio.Health as Health
 import Studio.PartIndex as PartIndex
 import Studio.PartSearch as PartSearch
@@ -139,6 +141,7 @@ type alias Flags =
     { ldrawBase : String
     , ldrawFallbackBase : String
     , initialHash : String
+    , initialBytes : Maybe (List Int)
     , supportsPointerEvents : Bool
     , hintSeen : Bool
     , coarsePointer : Bool
@@ -303,30 +306,54 @@ type Msg
 init : Flags -> ( Model, Cmd Msg )
 init flags =
     let
-        payload =
-            UrlPayload.decodeHash flags.initialHash
+        ( initialDoc, free, inventory ) =
+            case flags.initialBytes |> Maybe.andThen HashPayload.decodeBytes of
+                Just binaryPayload ->
+                    let
+                        isFree =
+                            binaryPayload.mode == HashPayload.FreeBuilding
 
-        initialDoc =
-            case payload.modelText of
-                Just text ->
-                    Document.parse text
+                        inv =
+                            if isFree then
+                                []
+
+                            else
+                                case binaryPayload.kit of
+                                    Just k ->
+                                        k
+
+                                    Nothing ->
+                                        defaultInventory
+                    in
+                    ( binaryPayload.document, isFree, inv )
 
                 Nothing ->
-                    Document.empty
+                    let
+                        payload =
+                            UrlPayload.decodeHash flags.initialHash
 
-        -- No hash, or `free=1`, is free building; any other hash is a puzzle.
-        free =
-            payload.free || String.isEmpty (String.trim (String.replace "#" "" flags.initialHash))
+                        doc =
+                            case payload.modelText of
+                                Just text ->
+                                    Document.parse text
 
-        inventory =
-            if free then
-                []
+                                Nothing ->
+                                    Document.empty
 
-            else if payload.partsListed then
-                payload.parts
+                        isFree =
+                            payload.free || String.isEmpty (String.trim (String.replace "#" "" flags.initialHash))
 
-            else
-                defaultInventory
+                        inv =
+                            if isFree then
+                                []
+
+                            else if payload.partsListed then
+                                payload.parts
+
+                            else
+                                defaultInventory
+                    in
+                    ( doc, isFree, inv )
 
         config =
             { ldrawBase = flags.ldrawBase
@@ -597,10 +624,10 @@ remainingCount model =
     List.sum (List.map (remainingForItem model) model.inventory)
 
 
-{-| The hash the address bar keeps for the build (see `Link`): the whole board
+{-| The binary payload the address bar keeps for the build (see `Link`): the whole board
 with its glue while free building, else the puzzle with its kit.
 -}
-liveHash : Model -> String
+liveHash : Model -> List Int
 liveHash model =
     if model.free then
         Link.freeHash model.studio.document
@@ -612,7 +639,7 @@ liveHash model =
 {-| The link Share link copies. A puzzle keeps the current state. A free build
 shares a puzzle: its glued parts stay on the board, and the rest become the kit.
 -}
-shareHash : Model -> String
+shareHash : Model -> List Int
 shareHash model =
     if model.free then
         Link.freeShareHash model.studio.document
@@ -627,7 +654,7 @@ compares the models rather than reading the studio's events, so an edit that
 emits no `DocumentChanged` (or a new one that forgets to) cannot leave the
 address bar behind.
 -}
-hashFor : Model -> Model -> Maybe String
+hashFor : Model -> Model -> Maybe (List Int)
 hashFor before after =
     if before.studio.document /= after.studio.document || before.free /= after.free || before.inventory /= after.inventory then
         Just (liveHash after)
@@ -1367,7 +1394,7 @@ step msg model =
                 , toastCounter = nextId
               }
             , Cmd.batch
-                [ Ports.copyToClipboard ("#" ++ hash)
+                [ Ports.copyToClipboard hash
                 , Process.sleep 3000 |> Task.perform (\_ -> DismissToast nextId)
                 ]
             )

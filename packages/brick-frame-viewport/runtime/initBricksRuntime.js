@@ -1,4 +1,5 @@
 import { unzipSync, inflateSync } from 'fflate'
+import { encodeHash, decodeHash, isBinaryHash, toUint8Array } from './url-hash-codec.js'
 import GeometryWorker from '../geometry-worker.js?worker'
 import geometryWorkerSource from '../geometry-worker.js?raw'
 
@@ -638,6 +639,18 @@ export function initBricksRuntime(options) {
   const defaultModelNeedsJsLoader =
     loadModelInJs || defaultModelExtension === '.io' || defaultModelExtension === null
 
+  let initialBytes = null
+  if (isBinaryHash(initialHash)) {
+    try {
+      const decoded = decodeHash(initialHash)
+      if (decoded) {
+        initialBytes = Array.from(decoded)
+      }
+    } catch (_) {
+      // Ignore corrupted binary hash
+    }
+  }
+
   const app = elm.init({
     node,
     flags: {
@@ -645,6 +658,7 @@ export function initBricksRuntime(options) {
       ldrawFallbackBase,
       defaultModelUrl: defaultModelNeedsJsLoader ? '' : String(defaultModel ?? ''),
       initialHash,
+      initialBytes: initialBytes ?? null,
       maxRpm: sanitizedMaxRpm,
       uiMode: normalizeMode(mode),
       controlsEnabled: Boolean(controlsEnabled),
@@ -941,8 +955,17 @@ export function initBricksRuntime(options) {
       }
     }
 
-    subscribePort('setUrlHash', (hash) => {
-      const normalized = String(hash ?? '')
+    subscribePort('setUrlHash', (payload) => {
+      let hashString
+      if (typeof payload === 'string') {
+        hashString = payload
+      } else if (payload) {
+        const uint8 = toUint8Array(payload)
+        hashString = encodeHash(uint8)
+      } else {
+        hashString = ''
+      }
+      const normalized = String(hashString ?? '')
       pendingHash = normalized.startsWith('#') ? normalized : `#${normalized}`
       if (hashFrame !== null) return
       hashFrame = setTimeout(flushHash, 16)

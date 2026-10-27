@@ -6,11 +6,13 @@ module PlayTest exposing (suite)
 import Dict
 import Expect
 import Html.Attributes as Attr
+import LDraw.Document as Document
 import Main exposing (Flags, Model, Msg(..), helpRows, init, kitItemName, remainingCount, shareHash, thumbnailRequests, update, view, viewToast)
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (vec3)
 import Set
 import Studio.Core as Core
+import Studio.HashPayload as HashPayload
 import Studio.Shortcuts exposing (TurnDirection(..))
 import Test exposing (Test, describe, test)
 import Test.Html.Event as Event
@@ -512,6 +514,7 @@ testFlags =
     { ldrawBase = "/ldraw"
     , ldrawFallbackBase = ""
     , initialHash = "#model="
+    , initialBytes = Nothing
     , supportsPointerEvents = True
     , hintSeen = False
     , coarsePointer = False
@@ -692,17 +695,22 @@ sharingAndToastTests =
                         [ Query.has [ Selector.attribute (Attr.attribute "role" "status") ]
                         , Query.has [ Selector.text "Link copied to clipboard!" ]
                         ]
-        , test "shareHash returns parts=... when no placements exist" <|
+        , test "shareHash returns binary kit payload when no placements exist" <|
             \_ ->
                 let
                     hash =
                         shareHash start
                 in
-                Expect.all
-                    [ \h -> Expect.equal True (String.startsWith "parts=" h)
-                    , \h -> Expect.equal False (String.contains "model=" h)
-                    ]
-                    hash
+                case HashPayload.decodeBytes hash of
+                    Just payload ->
+                        Expect.all
+                            [ \p -> Expect.equal (Just start.inventory) p.kit
+                            , \p -> Expect.equal 0 (List.length (Document.mainPlacements p.document))
+                            ]
+                            payload
+
+                    Nothing ->
+                        Expect.fail "Failed to decode shareHash payload"
         ]
 
 
