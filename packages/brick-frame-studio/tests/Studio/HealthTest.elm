@@ -169,6 +169,25 @@ misalignmentTests =
             \_ ->
                 lines [ brick "3005.dat" 5 -80 0 ]
                     |> (\doc -> Expect.equal [] (Health.check noParts doc Set.empty))
+        , test "a tipped loose brick on the ground is not reported as misaligned" <|
+            \_ ->
+                -- 3005 turned 90° on X: resting on ground with side on floor, studs facing side
+                lines [ "1 14 0 -10 0 1 0 0 0 0 -1 0 1 0 3005.dat" ]
+                    |> (\doc -> Expect.equal [] (Health.check noParts doc Set.empty))
+        , test "a 1 x 1 tile snapped on the side stud of an 87087 is healthy (neither misaligned nor overlapping)" <|
+            \_ ->
+                let
+                    tileMat =
+                        Mat4.mul (Mat4.makeTranslate3 10 -14 -8) (Mat4.makeRotate (pi / 2) (Vec3.vec3 1 0 0))
+
+                    doc =
+                        Document.empty
+                            |> Document.addPlacement "" { part = "87087.dat", color = 14, matrix = Mat4.makeTranslate3 10 -24 10 }
+                            |> Tuple.first
+                            |> Document.addPlacement "" { part = "3070b.dat", color = 15, matrix = tileMat }
+                            |> Tuple.first
+                in
+                Expect.equal [] (Health.check noParts doc Set.empty)
         ]
 
 

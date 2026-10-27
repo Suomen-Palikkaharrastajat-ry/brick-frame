@@ -17,6 +17,7 @@ module LDraw.Connectivity exposing
     , isCompatible
     , isSnapColliding
     , isStudded
+    , isUpright
     , knownCatalogPart
     , makeAxle
     , makeGear
@@ -852,35 +853,105 @@ toOBB box matrix =
 
 
 {-| Effective collision envelope that excludes external stud protrusions (height = 4 LDU),
-preventing false collisions when studs enter compatible cavities.
+preventing false collisions when studs enter compatible cavities or side-stud attachments.
 -}
 effectiveEnvelope : BoundingBox3D -> List ConnectionPoint -> BoundingBox3D
 effectiveEnvelope box connections =
     let
-        hasTopStuds =
-            List.any
+        studs =
+            List.filterMap
                 (\c ->
                     case c.connType of
                         Stud ->
-                            Vec3.getY c.normal < -0.7
+                            Just ( c.localPosition, c.normal )
 
                         _ ->
-                            False
+                            Nothing
                 )
                 connections
 
-        minPt =
-            box.min
-
-        newMinY =
-            if hasTopStuds && Vec3.getY minPt < -0.1 then
-                0
+        trimMin studBase faceVal =
+            if faceVal < studBase - 0.1 && (studBase - faceVal) <= 4.5 then
+                studBase
 
             else
-                Vec3.getY minPt
+                faceVal
+
+        trimMax studBase faceVal =
+            if faceVal > studBase + 0.1 && (faceVal - studBase) <= 4.5 then
+                studBase
+
+            else
+                faceVal
+
+        minYStuds =
+            List.filter (\( _, n ) -> Vec3.getY n < -0.7) studs |> List.map (\( p, _ ) -> Vec3.getY p)
+
+        maxYStuds =
+            List.filter (\( _, n ) -> Vec3.getY n > 0.7) studs |> List.map (\( p, _ ) -> Vec3.getY p)
+
+        minXStuds =
+            List.filter (\( _, n ) -> Vec3.getX n < -0.7) studs |> List.map (\( p, _ ) -> Vec3.getX p)
+
+        maxXStuds =
+            List.filter (\( _, n ) -> Vec3.getX n > 0.7) studs |> List.map (\( p, _ ) -> Vec3.getX p)
+
+        minZStuds =
+            List.filter (\( _, n ) -> Vec3.getZ n < -0.7) studs |> List.map (\( p, _ ) -> Vec3.getZ p)
+
+        maxZStuds =
+            List.filter (\( _, n ) -> Vec3.getZ n > 0.7) studs |> List.map (\( p, _ ) -> Vec3.getZ p)
+
+        newMinY =
+            case minYStuds of
+                [] ->
+                    Vec3.getY box.min
+
+                bases ->
+                    trimMin (List.foldl max -1.0e9 bases) (Vec3.getY box.min)
+
+        newMaxY =
+            case maxYStuds of
+                [] ->
+                    Vec3.getY box.max
+
+                bases ->
+                    trimMax (List.foldl min 1.0e9 bases) (Vec3.getY box.max)
+
+        newMinX =
+            case minXStuds of
+                [] ->
+                    Vec3.getX box.min
+
+                bases ->
+                    trimMin (List.foldl max -1.0e9 bases) (Vec3.getX box.min)
+
+        newMaxX =
+            case maxXStuds of
+                [] ->
+                    Vec3.getX box.max
+
+                bases ->
+                    trimMax (List.foldl min 1.0e9 bases) (Vec3.getX box.max)
+
+        newMinZ =
+            case minZStuds of
+                [] ->
+                    Vec3.getZ box.min
+
+                bases ->
+                    trimMin (List.foldl max -1.0e9 bases) (Vec3.getZ box.min)
+
+        newMaxZ =
+            case maxZStuds of
+                [] ->
+                    Vec3.getZ box.max
+
+                bases ->
+                    trimMax (List.foldl min 1.0e9 bases) (Vec3.getZ box.max)
     in
-    { min = vec3 (Vec3.getX minPt) newMinY (Vec3.getZ minPt)
-    , max = box.max
+    { min = vec3 newMinX newMinY newMinZ
+    , max = vec3 newMaxX newMaxY newMaxZ
     }
 
 
@@ -1256,20 +1327,69 @@ inferBounds points =
 
         first :: rest ->
             let
-                folder pt ( minV, maxV ) =
+                pointExtents pt =
                     let
                         p =
                             pt.localPosition
-                    in
-                    ( vec3 (min (Vec3.getX minV) (Vec3.getX p)) (min (Vec3.getY minV) (Vec3.getY p)) (min (Vec3.getZ minV) (Vec3.getZ p))
-                    , vec3 (max (Vec3.getX maxV) (Vec3.getX p)) (max (Vec3.getY maxV) (Vec3.getY p)) (max (Vec3.getZ maxV) (Vec3.getZ p))
-                    )
 
-                ( minP, maxP ) =
-                    List.foldl folder ( first.localPosition, first.localPosition ) rest
+                        n =
+                            pt.normal
+
+                        padX =
+                            if abs (Vec3.getX n) > 0.7 then
+                                if Vec3.getX n < 0 then
+                                    ( Vec3.getX p - 4, Vec3.getX p )
+
+                                else
+                                    ( Vec3.getX p, Vec3.getX p + 4 )
+
+                            else
+                                ( Vec3.getX p - 10, Vec3.getX p + 10 )
+
+                        padY =
+                            if abs (Vec3.getY n) > 0.7 then
+                                if Vec3.getY n < 0 then
+                                    ( Vec3.getY p - 4, Vec3.getY p + 24 )
+
+                                else
+                                    ( Vec3.getY p - 24, Vec3.getY p )
+
+                            else
+                                ( Vec3.getY p - 10, Vec3.getY p + 10 )
+
+                        padZ =
+                            if abs (Vec3.getZ n) > 0.7 then
+                                if Vec3.getZ n < 0 then
+                                    ( Vec3.getZ p - 4, Vec3.getZ p )
+
+                                else
+                                    ( Vec3.getZ p, Vec3.getZ p + 4 )
+
+                            else
+                                ( Vec3.getZ p - 10, Vec3.getZ p + 10 )
+                    in
+                    { minX = Tuple.first padX
+                    , maxX = Tuple.second padX
+                    , minY = Tuple.first padY
+                    , maxY = Tuple.second padY
+                    , minZ = Tuple.first padZ
+                    , maxZ = Tuple.second padZ
+                    }
+
+                combine e1 e2 =
+                    { minX = min e1.minX e2.minX
+                    , maxX = max e1.maxX e2.maxX
+                    , minY = min e1.minY e2.minY
+                    , maxY = max e1.maxY e2.maxY
+                    , minZ = min e1.minZ e2.minZ
+                    , maxZ = max e1.maxZ e2.maxZ
+                    }
+
+                extents =
+                    List.foldl (\pt acc -> combine (pointExtents pt) acc) (pointExtents first) rest
             in
-            { min = vec3 (Vec3.getX minP - 10) -4 (Vec3.getZ minP - 10)
-            , max = vec3 (Vec3.getX maxP + 10) 24 (Vec3.getZ maxP + 10)
+            { min = vec3 extents.minX extents.minY extents.minZ
+            , max = vec3 extents.maxX extents.maxY extents.maxZ
             }
 
 
@@ -1280,6 +1400,31 @@ none.
 isStudded : PartConnectivity -> Bool
 isStudded conn =
     List.any isStudPoint conn.connections
+
+
+{-| Whether a part is upright: true when it has at least one up-facing stud
+(normal Y < −0.7 in LDraw) or down-facing anti-stud (normal Y > 0.7) after `matrix`.
+Used by build health and restud to skip stud-lattice rules for tipped parts.
+-}
+isUpright : PartConnectivity -> Mat4 -> Bool
+isUpright conn matrix =
+    List.any
+        (\point ->
+            let
+                worldNormY =
+                    Vec3.getY (transformDirection matrix point.normal)
+            in
+            case point.connType of
+                Stud ->
+                    worldNormY < -0.7
+
+                AntiStud ->
+                    worldNormY > 0.7
+
+                _ ->
+                    False
+        )
+        conn.connections
 
 
 isStudPoint : ConnectionPoint -> Bool
@@ -1316,7 +1461,10 @@ studOffset conn matrix =
 
         studs =
             conn.connections
-                |> List.filter isStudPoint
+                |> List.filter
+                    (\point ->
+                        point.connType == Stud && Vec3.getY (transformDirection matrix point.normal) < -0.7
+                    )
                 |> List.map (\point -> Vec3.sub (Mat4.transform matrix point.localPosition) origin)
 
         offsetAlong get =
@@ -1780,13 +1928,31 @@ knownCatalogPart name =
                 , boundingBoxes = [ { min = vec3 -20 -4 -10, max = vec3 20 16 30 } ]
                 }
 
+        "3070" ->
+            Just (makeTile 1 1 "3070.dat")
+
+        "3070a" ->
+            Just (makeTile 1 1 "3070a.dat")
+
         "3070b" ->
             -- Tile 1 x 1 with Groove
             Just (makeTile 1 1 "3070b.dat")
 
+        "3069" ->
+            Just (makeTile 2 1 "3069.dat")
+
+        "3069a" ->
+            Just (makeTile 2 1 "3069a.dat")
+
         "3069b" ->
             -- Tile 1 x 2 with Groove
             Just (makeTile 2 1 "3069b.dat")
+
+        "3068" ->
+            Just (makeTile 2 2 "3068.dat")
+
+        "3068a" ->
+            Just (makeTile 2 2 "3068a.dat")
 
         "3068b" ->
             -- Tile 2 x 2 with Groove
@@ -1799,6 +1965,10 @@ knownCatalogPart name =
         "6636" ->
             -- Tile 1 x 6
             Just (makeTile 6 1 "6636.dat")
+
+        "87079" ->
+            -- Tile 2 x 4 with Groove
+            Just (makeTile 4 2 "87079.dat")
 
         "14417" ->
             -- Plate 1 x 2 with Ball

@@ -180,6 +180,22 @@ falls back to the placement whose centre is nearest the ray within 35% of its bo
 (`axleHoleFraction`). This covers a gear's empty axle hole, so pressing on it drags the
 gear instead of panning. Click selection (`pickSource`) keeps the strict triangle test.
 
+#### SNOT (side studs)
+
+When dragging a single part, the drag tests for nearby sideways-facing studs or anti-studs
+(`Studio.SideSnap.targetsNearRay`) within a 16 LDU reach of the cursor ray. If the pointer
+passes close to a side stud (such as the side studs on headlight brick `4070.dat`, stud-on-side
+brick `87087.dat`, or angle bracket `99781.dat`):
+1. `SideSnap.approachMatrix` computes an orientation that automatically reorients (tips 90°)
+   the dragged part so its anti-stud face faces the side stud with opposite normal.
+2. `Connectivity.solveSnapCandidates` tests connection alignment within the snap tolerance.
+3. If an opposing stud/anti-stud pair aligns without collision, the dragged part magnets onto
+   the side stud and holds until the cursor moves beyond the reach radius.
+
+When releasing or dragging away from the side stud, standard upward-facing stud snapping and ground
+restudding take over. Restudding (`restudDelta`) runs only on upright parts (`Connectivity.isUpright`),
+preserving the tipped orientation of SNOT elements.
+
 ### Follow the clicked part
 
 An explicit click or tap that selects a part (also a part pressed and released
@@ -390,18 +406,21 @@ another brick").
 misaligned when it connects to nothing and is not where studs put it:
 
 - A part **connects** when one of its anti-studs lies within 0.5 LDU of a stud
-  of another part. An intentional offset such as a jumper plate's is therefore
-  healthy.
+  of another part with opposing normals (`Vec3.dot antiNorm studNorm < -0.7`).
+  An intentional offset such as a jumper plate's is therefore healthy.
 - A part that **rests on the ground** (its bottom at Y 0) is off when its origin is
   off the stud lattice: X and Z on the lattice for its rotation
-  (`Connectivity.studOffset`, mod 20).
+  (`Connectivity.studOffset`, mod 20). Only upright parts (`Connectivity.isUpright`)
+  are checked; tipped or sideways SNOT parts are exempt from the upright lattice rule.
 - A part that **sits on studs** has a support: a stud of another part at its
   anti-stud height, within its footprint plus 10 LDU. Without one the part is
   floating, and it is not reported. Tidy up never drops a part.
 
 **Overlaps.** Two parts overlap when their effective boxes (the bounds without the
-stud protrusions, `Connectivity.effectiveEnvelope`) intersect by more than 1 LDU.
-Touching faces do not count. Catalog parts use the catalog's box; other parts use
+stud protrusions, `Connectivity.effectiveEnvelope`, trimmed across all six axes for
+opposing stud faces) intersect by more than 1 LDU. Touching faces do not count.
+Parts that share an opposing stud-to-anti-stud connection (`studJoined`) are exempt.
+Catalog parts use the catalog's box; other parts use
 the bounds of their loaded geometry, sub-files included. A part whose geometry has
 not arrived is left out until it does. A Technic axle or pin is not an overlap
 with the part it connects to: a hole, or a gear's hub, that lies within 1 LDU of

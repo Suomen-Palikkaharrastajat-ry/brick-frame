@@ -109,6 +109,7 @@ import Studio.Gizmo as Gizmo exposing (ArcHandle, DragHandle(..), Handle)
 import Studio.Health as Health
 import Studio.Overlay as Overlay
 import Studio.Shortcuts as StudioShortcuts exposing (Tool(..))
+import Studio.SideSnap as SideSnap
 import Studio.Transform as Transform
 import Viewport
 import Viewport.Framing exposing (ViewPreset(..))
@@ -1227,7 +1228,7 @@ restudDelta model doc ids =
                         conn =
                             Connectivity.extractPartConnectivity p.part (resolvedLines model)
                     in
-                    if Connectivity.isStudded conn then
+                    if Connectivity.isStudded conn && Connectivity.isUpright conn p.matrix then
                         Just ( conn, p )
 
                     else
@@ -2765,16 +2766,65 @@ movePlaneDrag initialDrag grab ( x, y ) model =
                                     List.map (Connectivity.transformPoint targetP.matrix targetP.id) pConn.connections
                                 )
 
+                    cursorRay =
+                        Pick.screenRay model.viewport.camera model.viewport.width model.viewport.height x y
+                            |> Maybe.map (\( rOrigin, rDir ) -> { origin = DragPlane.toLDraw rOrigin, direction = DragPlane.toLDraw rDir })
+
+                    sideReach =
+                        case model.activeSnap of
+                            Just snap ->
+                                if abs (Vec3.getY snap.targetWorldNormal) < 0.3 then
+                                    24.0
+
+                                else
+                                    16.0
+
+                            Nothing ->
+                                16.0
+
+                    maybeSideSnap =
+                        case cursorRay of
+                            Just ray ->
+                                let
+                                    sideTargets =
+                                        SideSnap.targetsNearRay ray sideReach targetWorldPoints
+
+                                    tryTarget target =
+                                        case SideSnap.approachMatrix leadP.matrix leadConn.connections target of
+                                            Just approachMat ->
+                                                Connectivity.solveSnapCandidates
+                                                    model.snapDistance
+                                                    model.snapRotationStep
+                                                    approachMat
+                                                    leadConn.connections
+                                                    [ target ]
+                                                    |> List.filter isValidSnap
+                                                    |> List.head
+
+                                            Nothing ->
+                                                Nothing
+                                in
+                                List.filterMap tryTarget sideTargets
+                                    |> List.head
+
+                            Nothing ->
+                                Nothing
+
                     maybeSnap =
-                        Connectivity.solveSnapWithHysteresisAndPredicate
-                            isValidSnap
-                            model.snapDistance
-                            (model.snapDistance * 1.5)
-                            model.activeSnap
-                            model.snapRotationStep
-                            leadSurfaceMatrix
-                            leadConn.connections
-                            targetWorldPoints
+                        case maybeSideSnap of
+                            Just sideSnap ->
+                                Just sideSnap
+
+                            Nothing ->
+                                Connectivity.solveSnapWithHysteresisAndPredicate
+                                    isValidSnap
+                                    model.snapDistance
+                                    (model.snapDistance * 1.5)
+                                    model.activeSnap
+                                    model.snapRotationStep
+                                    leadSurfaceMatrix
+                                    leadConn.connections
+                                    targetWorldPoints
                 in
                 case maybeSnap of
                     Just snap ->

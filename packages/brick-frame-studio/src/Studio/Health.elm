@@ -95,8 +95,8 @@ type alias Item =
     , conn : PartConnectivity
     , box : Box
     , obb : OBB
-    , studs : List Vec3
-    , antis : List Vec3
+    , studs : List ( Vec3, Vec3 )
+    , antis : List ( Vec3, Vec3 )
     , glued : Bool
     , studRuled : Bool
     }
@@ -464,21 +464,28 @@ isAntiStud connType =
 -- ── Stud rule ───────────────────────────────────────────────────────────────
 
 
-worldPoints : (ConnectionType -> Bool) -> Item -> List Vec3
+worldPoints : (ConnectionType -> Bool) -> Item -> List ( Vec3, Vec3 )
 worldPoints keep item =
     item.conn.connections
         |> List.filter (\point -> keep point.connType)
-        |> List.map (\point -> (Connectivity.transformPoint item.matrix item.id point).worldPosition)
+        |> List.map
+            (\point ->
+                let
+                    world =
+                        Connectivity.transformPoint item.matrix item.id point
+                in
+                ( world.worldPosition, world.worldNormal )
+            )
 
 
 studsOf : Item -> List Vec3
 studsOf item =
-    item.studs
+    List.map Tuple.first item.studs
 
 
 antiStudsOf : Item -> List Vec3
 antiStudsOf item =
-    item.antis
+    List.map Tuple.first item.antis
 
 
 {-| The bottom of the box (the largest Y, as LDraw's Y points down) is on the ground.
@@ -505,17 +512,27 @@ latticeOk item =
         <= coincideTolerance
 
 
-{-| Whether one of the part's anti-studs sits on a stud of another part.
+{-| Whether one of the part's anti-studs sits on a stud of another part, with
+opposing normals (dot antiNormal studNormal < −0.7).
 -}
 connects : Item -> List Item -> Bool
 connects item others =
     let
-        studs =
-            List.concatMap studsOf others
+        otherStuds =
+            List.concatMap .studs others
     in
     List.any
-        (\anti -> List.any (\stud -> distance anti stud <= coincideTolerance) studs)
-        (antiStudsOf item)
+        (\( antiPos, antiNorm ) ->
+            List.any
+                (\( studPos, studNorm ) ->
+                    distance antiPos studPos
+                        <= coincideTolerance
+                        && Vec3.dot antiNorm studNorm
+                        < -0.7
+                )
+                otherStuds
+        )
+        item.antis
 
 
 {-| The height the part's anti-studs sit at: the lowest of them (largest Y).
@@ -568,6 +585,7 @@ inFootprint box point =
 isMisaligned : Item -> List Item -> Bool
 isMisaligned item others =
     item.studRuled
+        && Connectivity.isUpright item.conn item.matrix
         && not (connects item others)
         && (if restsOnGround item then
                 not (latticeOk item)
@@ -720,7 +738,17 @@ overlapPairs list =
 
 overlaps : Item -> Item -> Bool
 overlaps a b =
-    Connectivity.testOBB overlapTolerance a.obb b.obb && not (technicJoined a b)
+    Connectivity.testOBB overlapTolerance a.obb b.obb
+        && not (technicJoined a b)
+        && not (studJoined a b)
+
+
+{-| Whether a stud of one part connects with an anti-stud of the other, or vice-versa.
+Exempts connected parts whose geometry boxes might slightly overlap studs.
+-}
+studJoined : Item -> Item -> Bool
+studJoined a b =
+    connects a [ b ] || connects b [ a ]
 
 
 {-| Whether a Technic point of one part is threaded on, or coincides with, a

@@ -2097,4 +2097,17 @@ magneticSnapCollisionSuite =
                             |> (\( m, _, _ ) -> m)
                 in
                 Expect.equal [] (documentCollisions moved)
+        , test "dragging a 1x1 tile over a 1x1 brick snaps on top" <|
+            \_ ->
+                let
+                    pair =
+                        grabLeadSnapping (vec3 60 -8 0)
+                            (loadedParts [ ( "3070b.dat", vec3 60 -8 0 ), ( "3005.dat", vec3 0 -24 0 ) ])
+
+                    moved =
+                        pair
+                            |> moveTo (screenAt pair (vec3 0 8 0))
+                            |> (\( m, _, _ ) -> m)
+                in
+                Expect.equal (Just (vec3 0 -32 0)) (firstPosition moved)
         ]

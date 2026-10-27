@@ -391,6 +391,37 @@ extractionTests =
                         List.filter (\p -> knownCatalogPart p == Nothing) partsToCheck
                 in
                 Expect.equal [] missing
+        , test "87087 has 1 up stud, 1 side stud facing -Z, and 1 anti-stud; 3070b has 1 anti-stud and no studs" <|
+            \_ ->
+                case ( knownCatalogPart "87087.dat", knownCatalogPart "3070b.dat" ) of
+                    ( Just snot87087, Just tile1x1 ) ->
+                        let
+                            upStuds =
+                                List.filter (\c -> c.connType == Stud && Vec3.getY c.normal < -0.7) snot87087.connections
+
+                            sideStuds =
+                                List.filter (\c -> c.connType == Stud && Vec3.getZ c.normal < -0.7) snot87087.connections
+
+                            antiStuds87087 =
+                                List.filter (\c -> c.connType == AntiStud) snot87087.connections
+
+                            tileStuds =
+                                List.filter (\c -> c.connType == Stud) tile1x1.connections
+
+                            tileAntiStuds =
+                                List.filter (\c -> c.connType == AntiStud) tile1x1.connections
+                        in
+                        Expect.all
+                            [ \_ -> Expect.equal 1 (List.length upStuds)
+                            , \_ -> Expect.equal 1 (List.length sideStuds)
+                            , \_ -> Expect.equal 1 (List.length antiStuds87087)
+                            , \_ -> Expect.equal 0 (List.length tileStuds)
+                            , \_ -> Expect.equal 1 (List.length tileAntiStuds)
+                            ]
+                            ()
+
+                    _ ->
+                        Expect.fail "87087.dat or 3070b.dat not found in catalog"
         ]
 
 
@@ -426,6 +457,8 @@ studLatticeTests =
                     |> Expect.equal { x = 10, z = 0 }
         , test "the window 60592 (2 x 1 studs) is offset 0 on X and 10 on Z" <|
             \_ -> offsetOf "60592.dat" Mat4.identity |> Expect.equal { x = 0, z = 10 }
+        , test "the SNOT brick 87087 with side stud counts only its up-facing stud: { x = 10, z = 10 }" <|
+            \_ -> offsetOf "87087.dat" Mat4.identity |> Expect.equal { x = 10, z = 10 }
         , test "Technic parts (no stud points) are never offset" <|
             \_ ->
                 [ "32524.dat", "3705.dat", "3648.dat", "3647.dat", "6590.dat" ]
@@ -704,6 +737,104 @@ snapSolverTests =
 
                     _ ->
                         Expect.fail "Catalog parts 3024.dat or 3022.dat not found"
+        , test "1x1 tile dragging near 1x1 brick snaps on top and isSnapColliding is False" <|
+            \_ ->
+                case ( knownCatalogPart "3070b.dat", knownCatalogPart "3005.dat" ) of
+                    ( Just tile1x1, Just brick1x1 ) ->
+                        let
+                            targetMatrix =
+                                Mat4.makeTranslate3 0 -24 0
+
+                            targetWorldPoints =
+                                List.map (Connectivity.transformPoint targetMatrix 1) brick1x1.connections
+
+                            hoverMatrix =
+                                Mat4.makeTranslate3 0 -30 0
+
+                            maybeSnap =
+                                solveSnap 12.0 0 hoverMatrix tile1x1.connections targetWorldPoints
+                        in
+                        case maybeSnap of
+                            Just snap ->
+                                let
+                                    snappedOrigin =
+                                        Mat4.transform snap.snapMatrix (vec3 0 0 0)
+
+                                    tileBox =
+                                        List.head tile1x1.boundingBoxes
+                                            |> Maybe.withDefault { min = vec3 -10 0 -10, max = vec3 10 8 10 }
+                                            |> (\b -> effectiveEnvelope b tile1x1.connections)
+
+                                    brickBox =
+                                        List.head brick1x1.boundingBoxes
+                                            |> Maybe.withDefault { min = vec3 -10 -4 -10, max = vec3 10 24 10 }
+                                            |> (\b -> effectiveEnvelope b brick1x1.connections)
+
+                                    colliding =
+                                        isSnapColliding 0.5 2 hoverMatrix [ ( 2, hoverMatrix, tileBox ) ] [ ( 1, targetMatrix, brickBox ) ] snap
+                                in
+                                Expect.all
+                                    [ \_ -> Expect.equal -32 (round (Vec3.getY snappedOrigin))
+                                    , \_ -> Expect.equal False colliding
+                                    ]
+                                    ()
+
+                            Nothing ->
+                                Expect.fail "Tile snap candidate not found"
+
+                    _ ->
+                        Expect.fail "3070b.dat or 3005.dat not found in catalog"
+        , test "solveSnap with an upright 3070b near the 87087 side stud returns a matrix with the tile's down axis along +Z (auto-tip)" <|
+            \_ ->
+                case ( knownCatalogPart "3070b.dat", knownCatalogPart "87087.dat" ) of
+                    ( Just tile1x1, Just snot87087 ) ->
+                        let
+                            targetMatrix =
+                                Mat4.makeTranslate3 0 -24 0
+
+                            sideStud =
+                                snot87087.connections
+                                    |> List.filter (\c -> c.connType == Stud && Vec3.getZ c.normal < -0.7)
+                                    |> List.map (Connectivity.transformPoint targetMatrix 1)
+
+                            -- Hovering upright in front of the side stud at (0, -14, -18)
+                            hoverMatrix =
+                                Mat4.makeTranslate3 0 -14 -18
+
+                            maybeSnap =
+                                solveSnap 12.0 0 hoverMatrix tile1x1.connections sideStud
+                        in
+                        case maybeSnap of
+                            Just snap ->
+                                let
+                                    -- Down direction of the tile (local (0, 1, 0)) transformed to world
+                                    downDir =
+                                        Connectivity.transformDirection snap.snapMatrix (vec3 0 1 0)
+
+                                    tileBox =
+                                        List.head tile1x1.boundingBoxes
+                                            |> Maybe.withDefault { min = vec3 -10 0 -10, max = vec3 10 8 10 }
+                                            |> (\b -> effectiveEnvelope b tile1x1.connections)
+
+                                    snotBox =
+                                        List.head snot87087.boundingBoxes
+                                            |> Maybe.withDefault { min = vec3 -10 -4 -10, max = vec3 10 24 10 }
+                                            |> (\b -> effectiveEnvelope b snot87087.connections)
+
+                                    colliding =
+                                        isSnapColliding 0.5 2 hoverMatrix [ ( 2, hoverMatrix, tileBox ) ] [ ( 1, targetMatrix, snotBox ) ] snap
+                                in
+                                Expect.all
+                                    [ \_ -> Expect.greaterThan 0.7 (Vec3.getZ downDir)
+                                    , \_ -> Expect.equal False colliding
+                                    ]
+                                    ()
+
+                            Nothing ->
+                                Expect.fail "SNOT side-stud snap candidate not found"
+
+                    _ ->
+                        Expect.fail "3070b.dat or 87087.dat not found in catalog"
         ]
 
 

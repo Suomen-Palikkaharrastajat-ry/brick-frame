@@ -133,6 +133,28 @@ Twin stone piers set 80 LDU apart (clear span between $X = -20$ and $X = 20$). T
 
 ---
 
+### 4. SNOT Stud-on-Side Bracket
+
+A starter foundation with a locked Red 1×1 Brick with Stud on 1 Side (`87087.dat`). The builder's dock provides 1×1 tiles (`3070b.dat`) in Yellow and Blue to attach sideways onto the side stud, demonstrating the automatic 90° orientation snapping.
+
+#### Pre-placed Starter Model (LDraw)
+```ldraw
+0 !PALIKKA GLUED
+1 4 10 -24 10 1 0 0 0 1 0 0 0 1 87087.dat
+```
+
+#### Kit Inventory
+- `3070b.dat:14:2` — 2× Tile 1×1 with Groove Yellow
+- `3070b.dat:1:2` — 2× Tile 1×1 with Groove Blue
+
+#### URLs
+- **Production**:  
+  [`https://kehys.palikkaharrastajat.fi/play#model=0%20!PALIKKA%20GLUED%0A1%204%2010%20-24%2010%201%200%200%200%201%200%200%200%201%2087087.dat&parts=3070b.dat%3A14%3A2%2C3070b.dat%3A1%3A2`](https://kehys.palikkaharrastajat.fi/play#model=0%20!PALIKKA%20GLUED%0A1%204%2010%20-24%2010%201%200%200%200%201%200%200%200%201%2087087.dat&parts=3070b.dat%3A14%3A2%2C3070b.dat%3A1%3A2)
+- **Local Dev**:  
+  [`http://localhost:8181/#model=0%20!PALIKKA%20GLUED%0A1%204%2010%20-24%2010%201%200%200%200%201%200%200%200%201%2087087.dat&parts=3070b.dat%3A14%3A2%2C3070b.dat%3A1%3A2`](http://localhost:8181/#model=0%20!PALIKKA%20GLUED%0A1%204%2010%20-24%2010%201%200%200%200%201%200%200%200%201%2087087.dat&parts=3070b.dat%3A14%3A2%2C3070b.dat%3A1%3A2)
+
+---
+
 ## Brick Play Technic Examples
 
 Production Base URL: `https://kehys.palikkaharrastajat.fi/play`  

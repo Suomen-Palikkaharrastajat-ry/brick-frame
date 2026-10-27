@@ -36,6 +36,7 @@ type Tab
     = BricksTab
     | PlatesTab
     | SlopesTab
+    | BracketsTab
     | TechnicTab
 
 
@@ -43,7 +44,7 @@ type Tab
 -}
 tabs : List Tab
 tabs =
-    [ BricksTab, PlatesTab, SlopesTab, TechnicTab ]
+    [ BricksTab, PlatesTab, SlopesTab, BracketsTab, TechnicTab ]
 
 
 {-| The label of a dock tab.
@@ -59,6 +60,9 @@ tabLabel tab =
 
         SlopesTab ->
             "Slopes & tiles"
+
+        BracketsTab ->
+            "Brackets & SNOT"
 
         TechnicTab ->
             "Technic"
@@ -106,6 +110,20 @@ entriesFor tab =
             , entry "3068b.dat" "Tile 2 x 2" "2 x 2 tile with groove"
             , entry "2431.dat" "Tile 1 x 4" "1 x 4 tile with groove"
             , entry "6636.dat" "Tile 1 x 6" "1 x 6 tile"
+            ]
+
+        BracketsTab ->
+            [ entry "87087.dat" "Brick 1 x 1 with Stud on 1 Side" "1 x 1 brick with side stud"
+            , entry "4070.dat" "Brick 1 x 1 with Headlight" "1 x 1 headlight brick"
+            , entry "26604.dat" "Brick 1 x 1 with Studs on 2 Sides" "1 x 1 brick with two side studs"
+            , entry "11211.dat" "Brick 1 x 2 with Studs on Side" "1 x 2 brick with two side studs"
+            , entry "30414.dat" "Brick 1 x 4 with Studs on Side" "1 x 4 brick with four side studs"
+            , entry "32952.dat" "Brick 1 x 1 x 1 2/3 with Studs on 1 Side" "1 x 1 x 1 2/3 brick with two side studs"
+            , entry "22885.dat" "Brick 1 x 2 x 1 2/3 with Studs on 1 Side" "1 x 2 x 1 2/3 brick with four side studs"
+            , entry "99781.dat" "Bracket 1 x 2 - 1 x 2 Down" "1 x 2 down bracket"
+            , entry "99780.dat" "Bracket 1 x 2 - 1 x 2 Up" "1 x 2 up bracket"
+            , entry "99207.dat" "Bracket 1 x 2 - 2 x 2 Up" "1 x 2 - 2 x 2 up bracket"
+            , entry "99206.dat" "Plate 2 x 2 x 2/3 with Two Studs On Side" "2 x 2 plate with two side studs"
             ]
 
         TechnicTab ->
