@@ -628,6 +628,127 @@ suite =
                         ]
                         ()
             ]
+        , describe "two-finger touch gestures"
+            [ test "when two fingers rotate beyond the 5-degree deadzone, the camera azimuth rotates accordingly" <|
+                \_ ->
+                    let
+                        p1 =
+                            { id = 1, x = 100, y = 100 }
+
+                        p2 =
+                            { id = 2, x = 200, y = 100 }
+
+                        started =
+                            idle
+                                |> update (PointerTouchStart p1)
+                                |> Tuple.first
+                                |> update (PointerTouchStart p2)
+                                |> Tuple.first
+
+                        initialAzimuth =
+                            started.camera.azimuth
+
+                        -- Rotate p2 by 3 degrees (below the 5-degree deadzone)
+                        p2SmallRotate =
+                            { id = 2
+                            , x = 100 + 100 * cos (degrees 3)
+                            , y = 100 + 100 * sin (degrees 3)
+                            }
+
+                        withinDeadzone =
+                            started
+                                |> update (PointerTouchMove p2SmallRotate)
+                                |> Tuple.first
+
+                        -- Rotate p2 by 15 degrees (beyond the 5-degree deadzone)
+                        p2LargeRotate =
+                            { id = 2
+                            , x = 100 + 100 * cos (degrees 15)
+                            , y = 100 + 100 * sin (degrees 15)
+                            }
+
+                        beyondDeadzone =
+                            withinDeadzone
+                                |> update (PointerTouchMove p2LargeRotate)
+                                |> Tuple.first
+                    in
+                    Expect.all
+                        [ \_ -> Expect.within (Expect.Absolute 1.0e-6) initialAzimuth withinDeadzone.camera.azimuth
+                        , \_ -> Expect.greaterThan 1.0e-4 (abs (initialAzimuth - beyondDeadzone.camera.azimuth))
+                        ]
+                        ()
+            , test "pure pinch (scaling distance without twisting angle) zooms without rotating camera azimuth" <|
+                \_ ->
+                    let
+                        p1 =
+                            { id = 1, x = 100, y = 100 }
+
+                        p2 =
+                            { id = 2, x = 200, y = 100 }
+
+                        started =
+                            idle
+                                |> update (PointerTouchStart p1)
+                                |> Tuple.first
+                                |> update (PointerTouchStart p2)
+                                |> Tuple.first
+
+                        initialAzimuth =
+                            started.camera.azimuth
+
+                        initialDistance =
+                            started.camera.distance
+
+                        -- Spread fingers apart by 40px (distance: 100 -> 140, past 12px deadzone)
+                        -- keeping y = 100 so angle remains 0
+                        pinched =
+                            started
+                                |> update (PointerTouchMove { id = 1, x = 80, y = 100 })
+                                |> Tuple.first
+                                |> update (PointerTouchMove { id = 2, x = 220, y = 100 })
+                                |> Tuple.first
+                    in
+                    Expect.all
+                        [ \_ -> Expect.within (Expect.Absolute 1.0e-6) initialAzimuth pinched.camera.azimuth
+                        , \_ -> Expect.greaterThan pinched.camera.distance initialDistance
+                        ]
+                        ()
+            , test "pure pan (moving both touches in parallel without twisting) pans without rotating azimuth" <|
+                \_ ->
+                    let
+                        p1 =
+                            { id = 1, x = 100, y = 100 }
+
+                        p2 =
+                            { id = 2, x = 200, y = 100 }
+
+                        started =
+                            idle
+                                |> update (PointerTouchStart p1)
+                                |> Tuple.first
+                                |> update (PointerTouchStart p2)
+                                |> Tuple.first
+
+                        initialAzimuth =
+                            started.camera.azimuth
+
+                        initialTarget =
+                            started.camera.target
+
+                        -- Shift both touches by (+30, +40)
+                        panned =
+                            started
+                                |> update (PointerTouchMove { id = 1, x = 130, y = 140 })
+                                |> Tuple.first
+                                |> update (PointerTouchMove { id = 2, x = 230, y = 140 })
+                                |> Tuple.first
+                    in
+                    Expect.all
+                        [ \_ -> Expect.within (Expect.Absolute 1.0e-6) initialAzimuth panned.camera.azimuth
+                        , \_ -> Expect.notEqual initialTarget panned.camera.target
+                        ]
+                        ()
+            ]
         , describe "keyboard"
             [ test "a plain key press is handed to the host and held" <|
                 \_ ->

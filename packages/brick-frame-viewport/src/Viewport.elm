@@ -151,6 +151,9 @@ drag is treated as pure pan until the fingers have deliberately changed
 separation, after which zoom stays engaged for the rest of the gesture. Without
 it, ordinary finger jitter during a pan bled into the zoom level.
 
+Similarly, `startAngle` and `rotateEngaged` implement the rotation dead-zone:
+rotation stays disengaged until the twist exceeds `pinchRotateDeadZone`.
+
 -}
 type alias PinchState =
     { idA : Int
@@ -160,6 +163,9 @@ type alias PinchState =
     , midY : Float
     , startDistance : Float
     , zoomEngaged : Bool
+    , angle : Float
+    , startAngle : Float
+    , rotateEngaged : Bool
     }
 
 
@@ -169,6 +175,14 @@ gesture starts zooming as well as panning.
 pinchZoomDeadZone : Float
 pinchZoomDeadZone =
     12.0
+
+
+{-| How far the fingers must twist, in radians, before a two-finger gesture
+starts rotating the camera.
+-}
+pinchRotateDeadZone : Float
+pinchRotateDeadZone =
+    degrees 5
 
 
 type HeldControl
@@ -1519,10 +1533,21 @@ advanceTouchGesture touches model =
                         ( midX, midY ) =
                             touchMidpoint a b
 
+                        newAngle =
+                            touchAngle a b
+
+                        deltaAngle =
+                            normalizeAngle (newAngle - pinch.angle)
+
                         zoomEngaged =
                             pinch.zoomEngaged
                                 || abs (newDistance - pinch.startDistance)
                                 > pinchZoomDeadZone
+
+                        rotateEngaged =
+                            pinch.rotateEngaged
+                                || abs (normalizeAngle (newAngle - pinch.startAngle))
+                                > pinchRotateDeadZone
 
                         -- Pan first, so the pixels-to-world scale is taken at a
                         -- single distance for the whole frame.
@@ -1535,9 +1560,16 @@ advanceTouchGesture touches model =
 
                             else
                                 cameraAfterPan
+
+                        cameraAfterRotate =
+                            if rotateEngaged then
+                                Navigation.applyLook -deltaAngle 0 cameraAfterZoom
+
+                            else
+                                cameraAfterZoom
                     in
                     { model
-                        | camera = cameraAfterZoom
+                        | camera = cameraAfterRotate
                         , touchGesture =
                             PinchGesture
                                 { pinch
@@ -1545,6 +1577,8 @@ advanceTouchGesture touches model =
                                     , midX = midX
                                     , midY = midY
                                     , zoomEngaged = zoomEngaged
+                                    , angle = newAngle
+                                    , rotateEngaged = rotateEngaged
                                 }
                         , cameraMode = CameraManual
                     }
@@ -1635,8 +1669,30 @@ touchMidpoint p1 p2 =
     )
 
 
+{-| Compute the angle, in radians, between two touch points.
+-}
+touchAngle : TouchPoint -> TouchPoint -> Float
+touchAngle p1 p2 =
+    atan2 (p2.y - p1.y) (p2.x - p1.x)
+
+
+{-| Fold an angle delta into the range `(-pi, pi]`.
+-}
+normalizeAngle : Float -> Float
+normalizeAngle delta =
+    if delta > pi then
+        delta - (2 * pi)
+
+    else if delta < -pi then
+        delta + (2 * pi)
+
+    else
+        delta
+
+
 {-| Start a two-finger gesture as pure pan; zoom engages once the fingers move
-past `pinchZoomDeadZone`.
+past `pinchZoomDeadZone`, and rotation engages once they twist past
+`pinchRotateDeadZone`.
 -}
 beginPinch : TouchPoint -> TouchPoint -> PinchState
 beginPinch p1 p2 =
@@ -1646,6 +1702,9 @@ beginPinch p1 p2 =
 
         ( midX, midY ) =
             touchMidpoint p1 p2
+
+        angle =
+            touchAngle p1 p2
     in
     { idA = p1.id
     , idB = p2.id
@@ -1654,6 +1713,9 @@ beginPinch p1 p2 =
     , midY = midY
     , startDistance = distance
     , zoomEngaged = False
+    , angle = angle
+    , startAngle = angle
+    , rotateEngaged = False
     }
 
 
