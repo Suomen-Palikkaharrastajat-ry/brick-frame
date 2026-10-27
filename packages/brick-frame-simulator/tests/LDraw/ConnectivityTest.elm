@@ -668,6 +668,38 @@ snapSolverTests =
 
                     Nothing ->
                         Expect.fail "Axle snap into beam pin hole failed"
+        , test "1x1 plate dragging near 2x2 plate on ground snaps on top (Y = -16) not below (Y = 0)" <|
+            \_ ->
+                case ( knownCatalogPart "3024.dat", knownCatalogPart "3022.dat" ) of
+                    ( Just plate1x1, Just plate2x2 ) ->
+                        let
+                            targetMatrix =
+                                Mat4.makeTranslate3 0 -8 0
+
+                            targetWorldPoints =
+                                List.map (Connectivity.transformPoint targetMatrix 1) plate2x2.connections
+
+                            -- Hovering along ground near the (10, -8, 10) stud position
+                            hoverMatrix =
+                                Mat4.makeTranslate3 10 -8 10
+                        in
+                        case solveSnap 12.0 0 hoverMatrix plate1x1.connections targetWorldPoints of
+                            Just snap ->
+                                let
+                                    snappedOrigin =
+                                        Mat4.transform snap.snapMatrix (vec3 0 0 0)
+                                in
+                                Expect.all
+                                    [ \_ -> Expect.equal -16 (round (Vec3.getY snappedOrigin))
+                                    , \_ -> Expect.notEqual 0 (round (Vec3.getY snappedOrigin))
+                                    ]
+                                    ()
+
+                            Nothing ->
+                                Expect.fail "Snap candidate was not found"
+
+                    _ ->
+                        Expect.fail "Catalog parts 3024.dat or 3022.dat not found"
         ]
 
 

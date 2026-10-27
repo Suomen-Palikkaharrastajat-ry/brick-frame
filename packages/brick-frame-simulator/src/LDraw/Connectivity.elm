@@ -382,6 +382,13 @@ solveSnap :
     -> Maybe SnapCandidate
 solveSnap maxDist rotationIndex currentMatrix draggedPoints targetPoints =
     let
+        accessibleTargetPoints =
+            List.filter
+                (\tp ->
+                    not (tp.connType == AntiStud && Vec3.getY tp.worldPosition >= -0.01 && Vec3.getY tp.worldNormal > 0.7)
+                )
+                targetPoints
+
         evalPair draggedLocal targetWorld =
             if not (isCompatible draggedLocal.connType targetWorld.connType) then
                 Nothing
@@ -416,28 +423,57 @@ solveSnap maxDist rotationIndex currentMatrix draggedPoints targetPoints =
                             snapMat =
                                 computeSnapMatrix rotationIndex draggedLocal targetWorld desiredNormal
 
-                            guide =
-                                makeGuide draggedLocal.connType targetWorld.worldPosition targetWorld.worldNormal False
+                            originY =
+                                Vec3.getY (Mat4.transform snapMat (vec3 0 0 0))
 
-                            score =
-                                dist + (1.0 - cosAngle) * 5.0
+                            draggedY =
+                                Vec3.getY (Mat4.transform snapMat draggedLocal.localPosition)
+
+                            isPenetratingGround =
+                                if Vec3.getY targetWorld.worldPosition <= 0.5 then
+                                    originY
+                                        > 0.5
+                                        || draggedY
+                                        > 0.5
+                                        || List.any (\pt -> Vec3.getY (Mat4.transform snapMat pt.localPosition) > 0.5) draggedPoints
+
+                                else
+                                    False
                         in
-                        Just
-                            ( score
-                            , { draggedPoint = draggedLocal
-                              , targetPoint = targetWorld
-                              , targetPlacementId = targetWorld.placementId
-                              , targetWorldPosition = targetWorld.worldPosition
-                              , targetWorldNormal = targetWorld.worldNormal
-                              , snapMatrix = snapMat
-                              , distance = dist
-                              , guide = guide
-                              }
-                            )
+                        if isPenetratingGround then
+                            Nothing
+
+                        else
+                            let
+                                bias =
+                                    if draggedLocal.connType == AntiStud && targetWorld.connType == Stud then
+                                        -0.5
+
+                                    else
+                                        0.0
+
+                                score =
+                                    dist + (1.0 - cosAngle) * 5.0 + bias
+
+                                guide =
+                                    makeGuide draggedLocal.connType targetWorld.worldPosition targetWorld.worldNormal False
+                            in
+                            Just
+                                ( score
+                                , { draggedPoint = draggedLocal
+                                  , targetPoint = targetWorld
+                                  , targetPlacementId = targetWorld.placementId
+                                  , targetWorldPosition = targetWorld.worldPosition
+                                  , targetWorldNormal = targetWorld.worldNormal
+                                  , snapMatrix = snapMat
+                                  , distance = dist
+                                  , guide = guide
+                                  }
+                                )
 
         candidates =
             draggedPoints
-                |> List.concatMap (\d -> List.filterMap (evalPair d) targetPoints)
+                |> List.concatMap (\d -> List.filterMap (evalPair d) accessibleTargetPoints)
                 |> List.sortBy Tuple.first
     in
     List.head candidates |> Maybe.map Tuple.second
