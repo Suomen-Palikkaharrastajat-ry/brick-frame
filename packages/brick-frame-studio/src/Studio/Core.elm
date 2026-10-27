@@ -622,8 +622,8 @@ fineMove model =
 `vertical` LDU up or down. Also sets the body-drag grid to `horizontal`, so a
 drag and a nudge agree; a half-stud step therefore gives a 10 LDU drag grid.
 
-Fine moves (`setFineMove`, or Shift held on a key) still take 1 LDU whatever the
-steps are. Without `setNudgeSteps` the nudges follow the grid: `gridStep` sideways,
+Fine mode (`setFineMove`) takes 1 LDU whatever the steps are; Shift held on a key
+moves a half-stud (10 LDU sideways, 8 LDU up or down). Without `setNudgeSteps` the nudges follow the grid: `gridStep` sideways,
 and 8 LDU up or down (or the grid when that is finer).
 
 -}
@@ -2026,15 +2026,21 @@ nudgeDelta model (StudioShortcuts.Nudge nudge) =
                 model.nudgeSteps
 
         horizontal =
-            if nudge.fine || model.fineMove then
+            if model.fineMove then
                 1
+
+            else if nudge.fine then
+                10
 
             else
                 steps.horizontal
 
         vertical =
-            if nudge.fine || model.fineMove then
+            if model.fineMove then
                 1
+
+            else if nudge.fine then
+                8
 
             else
                 steps.vertical

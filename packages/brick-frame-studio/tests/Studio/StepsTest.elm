@@ -72,14 +72,29 @@ stepSuite =
                     , \_ -> Expect.equal (vec3 0 -1 0) (moveOf StudioShortcuts.Up False model)
                     ]
                     ()
-        , test "Shift (a fine nudge) forces 1 LDU whatever the steps are" <|
+        , test "Shift (a fine nudge) moves a half-stud whatever the steps are" <|
             \_ ->
                 let
                     model =
                         bricks [ vec3 0 -24 0 ] |> Core.setNudgeSteps { horizontal = 20, vertical = 24 }
                 in
                 Expect.all
-                    [ \_ -> Expect.equal (vec3 1 0 0) (moveOf StudioShortcuts.Right True model)
+                    [ \_ -> Expect.equal (vec3 10 0 0) (moveOf StudioShortcuts.Right True model)
+                    , \_ -> Expect.equal (vec3 0 -8 0) (moveOf StudioShortcuts.Up True model)
+                    ]
+                    ()
+        , test "Core.setFineMove True forces 1 LDU whatever the steps are" <|
+            \_ ->
+                let
+                    model =
+                        bricks [ vec3 0 -24 0 ]
+                            |> Core.setNudgeSteps { horizontal = 20, vertical = 24 }
+                            |> Core.setFineMove True
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (vec3 1 0 0) (moveOf StudioShortcuts.Right False model)
+                    , \_ -> Expect.equal (vec3 0 -1 0) (moveOf StudioShortcuts.Up False model)
+                    , \_ -> Expect.equal (vec3 1 0 0) (moveOf StudioShortcuts.Right True model)
                     , \_ -> Expect.equal (vec3 0 -1 0) (moveOf StudioShortcuts.Up True model)
                     ]
                     ()

@@ -395,13 +395,17 @@ stepTests =
                     , \_ -> Expect.equal True (Core.fineMove base.studio)
                     ]
                     ()
-        , test "Shift forces a bit step on a key, whatever the step is" <|
+        , test "Shift moves a half-stud on a key, whatever the step is" <|
             \_ ->
                 let
                     base =
                         atAzimuth 0 builtWithOneBrick |> send (SetStepSize Step.Stud)
                 in
-                Expect.equal (vec3 1 0 0) (delta (pressShift "d" base) base)
+                Expect.all
+                    [ \_ -> Expect.equal (vec3 10 0 0) (delta (pressShift "d" base) base)
+                    , \_ -> Expect.equal (vec3 0 -8 0) (delta (pressShift "e" base) base)
+                    ]
+                    ()
         , test "the choice persists across selections" <|
             \_ ->
                 let

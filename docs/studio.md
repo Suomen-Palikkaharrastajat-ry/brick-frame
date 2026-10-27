@@ -289,8 +289,8 @@ mode (below) adds the gear chrome to the same view.
   deliberate half-stud offset) and Bit (1 LDU on every axis). `Step.apply` writes it
   to the studio with `Core.setNudgeSteps` (which also sets the body-drag grid to the
   sideways step) and `Core.setFineMove` (on for Bit). Keys, the pad and body drags
-  all follow it, and the choice persists across selections. Shift is a temporary
-  Bit for a key or a drag.
+  all follow it, and the choice persists across selections. Shift on a key is a
+  temporary half-stud step, and on a body drag a temporary Bit (1 LDU).
 - **Keys with a part selected.** W and S move it away from and toward the camera,
   A and D to its left and right, Q lowers and E raises it. The direction is the
   camera's azimuth snapped to the nearest world X or Z axis (the studio's

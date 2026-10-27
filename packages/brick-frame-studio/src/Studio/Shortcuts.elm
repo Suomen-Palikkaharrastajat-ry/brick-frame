@@ -64,8 +64,8 @@ type Action
 
 
 {-| A keyboard move of the selection, relative to the view: `Right` is towards
-the right of the screen, `Away` into it, `Up` against gravity. `fine` moves one
-LDU instead of the grid step.
+the right of the screen, `Away` into it, `Up` against gravity. `fine` moves a
+half-stud (10 LDU sideways, 8 LDU up/down) instead of the grid step.
 -}
 type Nudge
     = Nudge { direction : NudgeDirection, fine : Bool }
@@ -96,8 +96,8 @@ type TurnDirection
 
 
 {-| A keyboard edit of the selection: a move, or a turn. `fortyFive` on a turn
-means 45° instead of the rotate step; on a move, `fine` means 1 LDU instead of
-the grid step.
+means 45° instead of the rotate step; on a move, `fine` means a half-stud
+(10 LDU sideways, 8 LDU up/down) instead of the grid step.
 -}
 type EditKey
     = MoveBy Nudge
@@ -263,7 +263,7 @@ Ctrl, Cmd and Alt chords are left to the browser and to `actionFor`.
   - `←` / `→` turn it about the vertical axis.
   - `↑` / `↓` tip it forward / backward about the ground axis most aligned with
     the screen's horizontal.
-  - `Shift` makes a move 1 LDU and a turn 45°.
+  - `Shift` makes a move a half-stud (10 LDU sideways, 8 LDU up/down) and a turn 45°.
 
 -}
 editKeyFor : Context -> KeyEvent -> Maybe EditKey
@@ -436,8 +436,8 @@ helpRows =
         , ( "Wheel while dragging", "Raise / lower the part: 8 LDU a notch (Shift: one brick, 24 LDU; Alt: 1 LDU)" )
         , ( "Right click mid-drag", "Cancel the drag" )
         , ( "Click a part", "The view slides to centre it and orbits around it; Fit view (F) recentres" )
-        , ( "W A S D", "Move away / left / toward / right (Shift: 1 LDU)" )
-        , ( "Q / PgDn  ·  E / PgUp", "Lower / raise the selection (Shift: 1 LDU)" )
+        , ( "W A S D", "Move away / left / toward / right (Shift: half-stud, 10 LDU)" )
+        , ( "Q / PgDn  ·  E / PgUp", "Lower / raise the selection (Shift: 1 plate, 8 LDU)" )
         , ( "← →", "Turn about the vertical axis (Shift: 45°)" )
         , ( "↑ ↓", "Tip forward / back (Shift: 45°)" )
         , ( "X Y Z", "Turn the selection (Shift: the other way)" )
