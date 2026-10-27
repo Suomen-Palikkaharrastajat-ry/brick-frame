@@ -89,9 +89,10 @@ import Free.Catalog as FreeCatalog
 import Gear.Placements as Placements
 import Html exposing (Html, button, div, h1, h2, header, input, li, p, span, text, ul)
 import Html.Attributes as Attr
-import Html.Events exposing (onClick, onFocus, onInput)
+import Html.Events exposing (onClick, onFocus, onInput, preventDefaultOn)
 import Html.Keyed as Keyed
 import Http
+import Json.Decode as Decode
 import LDraw.Colors as Colors
 import LDraw.Document as Document
 import LDraw.Writer
@@ -193,7 +194,7 @@ type alias Model =
     , tidyOpen : Bool
     , stepSize : Step.StepSize
     , ringPart : Maybe Int
-    , lastTap : Maybe { x : Float, y : Float, millis : Int }
+    , lastTap : Maybe { x : Float, y : Float, millis : Int, part : Maybe Int }
     , hintSeen : Bool
     , coarsePointer : Bool
     , hint : Maybe Int
@@ -265,6 +266,7 @@ type Msg
     | LowerSelection
     | MoveSelection StudioShortcuts.NudgeDirection
     | SetStepSize Step.StepSize
+    | ToggleDragShift
     | OpenRing Int
     | CloseRing
     | SelectNeighbour Bool
@@ -947,16 +949,24 @@ the Tidy up preview or the menu opens.
 -}
 ringClosed : Model -> Model
 ringClosed model =
-    case model.ringPart of
-        Just id ->
-            if model.tidyOpen || model.menuOpen || partDragged model || Set.toList model.studio.selection /= [ id ] then
-                { model | ringPart = Nothing }
+    let
+        clearedTap =
+            if partDragged model then
+                { model | lastTap = Nothing }
 
             else
                 model
+    in
+    case clearedTap.ringPart of
+        Just id ->
+            if clearedTap.tidyOpen || clearedTap.menuOpen || partDragged clearedTap || Set.toList clearedTap.studio.selection /= [ id ] then
+                { clearedTap | ringPart = Nothing }
+
+            else
+                clearedTap
 
         Nothing ->
-            model
+            clearedTap
 
 
 {-| Brings the derived state in line with what a message just did. A changed
@@ -995,8 +1005,15 @@ settle before after =
 
             else
                 rested
+
+        unshifted =
+            if before.studio.drag /= Nothing && checked.studio.drag == Nothing && Core.shiftHeld checked.studio then
+                { checked | studio = Core.setShiftHeld False checked.studio }
+
+            else
+                checked
     in
-    withTechnicSettings (ringClosed checked)
+    withTechnicSettings (ringClosed unshifted)
 
 
 {-| The Tidy up plan for the studio's document: what `Studio.Health` would move.
@@ -1198,6 +1215,11 @@ step msg model =
 
         SetStepSize size ->
             ( { model | stepSize = size, studio = Step.apply size model.studio }
+            , Cmd.none
+            )
+
+        ToggleDragShift ->
+            ( { model | studio = Core.setShiftHeld (not (Core.shiftHeld model.studio)) model.studio }
             , Cmd.none
             )
 
@@ -1480,12 +1502,20 @@ canvas opens nothing.
 -}
 openRingAt : Float -> Float -> Model -> ( Model, Cmd Msg )
 openRingAt x y model =
-    case Viewport.pickSource x y model.studio.viewport of
+    case pickedAt x y model of
         Just id ->
             openRing id model
 
         Nothing ->
             ( model, Cmd.none )
+
+
+{-| Which part is under a canvas point, including a gear's axle hole.
+-}
+pickedAt : Float -> Float -> Model -> Maybe Int
+pickedAt x y model =
+    Viewport.pickBodyPoint x y model.studio.viewport
+        |> Maybe.map .source
 
 
 {-| Open the ring on a part: the part becomes the explicit selection, and the
@@ -1521,7 +1551,9 @@ openRing id model =
 
 
 {-| Two taps close in time and place are a double-tap: the second opens the ring
-on the part it lands on. Taps arrive with their time in milliseconds (`TapTimed`).
+on the part it lands on (or the part the first tap hit, if the camera glided it
+toward the centre between the two taps). Taps arrive with their time in
+milliseconds (`TapTimed`).
 -}
 tapTimed : Float -> Float -> Int -> Model -> ( Model, Cmd Msg )
 tapTimed x y millis model =
@@ -1532,13 +1564,31 @@ tapTimed x y millis model =
                 <= doubleTapMillis
                 && ((x - previous.x) ^ 2 + (y - previous.y) ^ 2 <= doubleTapPixels ^ 2)
 
+        hitPart =
+            case pickedAt x y model of
+                Just id ->
+                    Just id
+
+                Nothing ->
+                    case Set.toList model.studio.selection of
+                        [ id ] ->
+                            Just id
+
+                        _ ->
+                            Nothing
+
         here =
-            Just { x = x, y = y, millis = millis }
+            Just { x = x, y = y, millis = millis, part = hitPart }
     in
     case model.lastTap of
         Just previous ->
             if isDouble previous then
-                openRingAt x y { model | lastTap = Nothing }
+                case previous.part of
+                    Just id ->
+                        openRing id { model | lastTap = Nothing }
+
+                    Nothing ->
+                        openRingAt x y { model | lastTap = Nothing }
 
             else
                 ( { model | lastTap = here }, Cmd.none )
@@ -2250,6 +2300,7 @@ bottomArea model =
             text ""
         , tidyRow model
         , hintRow model
+        , shiftDragRow model
         , touchLabel model
         , if isNarrow model then
             narrowRow model
@@ -2257,6 +2308,78 @@ bottomArea model =
           else
             viewDock model
         ]
+
+
+{-| The Shift toggle pill shown while a brick is being dragged: tapping or
+holding it switches the active drag to 1-LDU bit-dragging.
+-}
+shiftDragRow : Model -> Html Msg
+shiftDragRow model =
+    if not (Core.isDragging model.studio) then
+        text ""
+
+    else
+        let
+            active =
+                Core.shiftHeld model.studio || Core.fineMove model.studio
+        in
+        div
+            [ Attr.style "display" "flex"
+            , Attr.style "justify-content" "center"
+            , Attr.style "max-width" "100%"
+            ]
+            [ button
+                [ onClick ToggleDragShift
+                , preventDefaultOn "touchstart" (Decode.succeed ( ToggleDragShift, True ))
+                , Attr.attribute "data-shift-drag" ""
+                , Attr.attribute "aria-label" "Shift (bit-drag)"
+                , Attr.attribute "aria-pressed"
+                    (if active then
+                        "true"
+
+                     else
+                        "false"
+                    )
+                , Attr.title "Shift: drag by 1 LDU (bit-dragging)"
+                , Attr.class "touch-target"
+                , Attr.style "pointer-events" "auto"
+                , Attr.style "display" "inline-flex"
+                , Attr.style "align-items" "center"
+                , Attr.style "gap" "0.375rem"
+                , Attr.style "min-height" "2.75rem"
+                , Attr.style "padding" "0.375rem 0.875rem"
+                , Attr.style "border-radius" "9999px"
+                , Attr.style "border"
+                    (if active then
+                        "1px solid var(--color-brand-yellow)"
+
+                     else
+                        "1px solid rgba(255, 255, 255, 0.25)"
+                    )
+                , Attr.style "background"
+                    (if active then
+                        "var(--color-brand-yellow)"
+
+                     else
+                        "rgba(5, 19, 29, 0.85)"
+                    )
+                , Attr.style "color"
+                    (if active then
+                        "var(--color-brand)"
+
+                     else
+                        "var(--color-text-on-dark)"
+                    )
+                , Attr.style "backdrop-filter" "blur(8px)"
+                , Attr.style "font-family" "var(--font-sans)"
+                , Attr.style "font-size" "0.8125rem"
+                , Attr.style "font-weight" "700"
+                , Attr.style "cursor" "pointer"
+                ]
+                [ Icon.featherSized 16 "arrow-up"
+                , span [] [ text "Shift · Bit" ]
+                ]
+            ]
 
 
 {-| The narrow bottom row: the dock (or the camera globe) and the toggle between

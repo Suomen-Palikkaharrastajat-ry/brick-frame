@@ -53,6 +53,18 @@
     font-family: var(--font-sans);
     touch-action: none;
     overscroll-behavior: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  input,
+  textarea,
+  [contenteditable]:not([contenteditable="false"]) {
+    -webkit-touch-callout: default;
+    -webkit-user-select: text;
+    user-select: text;
   }
 }
 

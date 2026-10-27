@@ -9,6 +9,7 @@ import Expect
 import Gear.Detect as Detect
 import Gear.Phase as Phase
 import Gear.Types exposing (GearInstance)
+import LDraw.Connectivity as Connectivity
 import LDraw.Document as Document
 import LDraw.Parser as Parser
 import LDraw.Resolve exposing (PartStatus(..))
@@ -402,6 +403,7 @@ suite =
         , shiftFineSuite
         , restingSuite
         , latticeSuite
+        , magneticSnapCollisionSuite
         ]
 
 
@@ -1395,7 +1397,7 @@ emptyDragPanSuite =
         touchEmpty mode =
             let
                 pressed =
-                    send (Viewport.PointerTouchStart { id = 1, x = 10, y = 10 }) (withMode mode)
+                    send (Viewport.PointerTouchStart { id = 1, x = 10, y = 10 }) (Core.clearSelection (withMode mode))
             in
             ( pressed, send (Viewport.PointerTouchMove { id = 1, x = 70, y = 40 }) pressed )
 
@@ -1440,6 +1442,30 @@ emptyDragPanSuite =
             \_ -> orbits (touchEmpty (Core.DragPartsOrPan Core.OneFingerOrbits))
         , test "OneFingerPans: one finger on empty canvas pans" <|
             \_ -> pans (touchEmpty (Core.DragPartsOrPan Core.OneFingerPans))
+        , test "when a brick is selected, one finger on empty canvas moves the brick instead of the camera" <|
+            \_ ->
+                let
+                    before =
+                        withMode (Core.DragPartsOrPan Core.OneFingerPans)
+
+                    after =
+                        before
+                            |> send (Viewport.PointerTouchStart { id = 1, x = 10, y = 10 })
+                            |> send (Viewport.PointerTouchMove { id = 1, x = 110, y = 10 })
+                in
+                Expect.all
+                    [ \_ -> Expect.equal True (Core.isDragging after)
+                    , \_ -> Expect.equal before.viewport.camera.target after.viewport.camera.target
+                    , \_ -> Expect.notEqual (firstPosition before) (firstPosition after)
+                    ]
+                    ()
+        , test "when a brick is selected, tapping empty canvas with one finger clears the selection" <|
+            \_ ->
+                withMode (Core.DragPartsOrPan Core.OneFingerPans)
+                    |> send (Viewport.PointerTouchStart { id = 1, x = 10, y = 10 })
+                    |> send (Viewport.PointerTouchEnd 1)
+                    |> Core.hasSelection
+                    |> Expect.equal False
         ]
 
 
@@ -1573,6 +1599,42 @@ shiftFineSuite =
                     , \_ -> Expect.equal Set.empty (clicked base)
                     ]
                     ()
+        , test "setShiftHeld toggles shiftHeld and switches an active drag to 1 LDU" <|
+            \_ ->
+                grabbed partsOrPan
+                    |> Core.setShiftHeld True
+                    |> Expect.all
+                        [ \m -> Expect.equal True (Core.shiftHeld m)
+                        , xIs 37
+                        ]
+        , test "when a brick is selected on touch, a second finger acts as Shift for 1 LDU bit-dragging" <|
+            \_ ->
+                let
+                    base =
+                        aimed (Core.DragPartsOrPan Core.OneFingerPans)
+                            |> Core.setGridStep 20
+
+                    targetScreen =
+                        screenOf base (vec3 37 0 -52)
+
+                    draggedWithSecondFinger =
+                        base
+                            |> send (Viewport.PointerTouchStart { id = 1, x = 400, y = 300 })
+                            |> (\m -> { m | altHeld = True })
+                            |> send (Viewport.PointerTouchStart { id = 2, x = 100, y = 100 })
+                            |> send (Viewport.PointerTouchMove { id = 1, x = Tuple.first targetScreen, y = Tuple.second targetScreen })
+                in
+                Expect.all
+                    [ \m -> Expect.equal True (Core.shiftHeld m)
+                    , \m ->
+                        case firstPosition m of
+                            Just pos ->
+                                Expect.within (Expect.Absolute 0.51) 37 (Vec3.getX pos)
+
+                            Nothing ->
+                                Expect.fail "the part vanished"
+                    ]
+                    draggedWithSecondFinger
         ]
 
 
@@ -1882,4 +1944,147 @@ latticeSuite =
                                 )
                 in
                 Expect.equal True (List.member arcTurned (List.map Just keyboardTurns))
+        ]
+
+
+{-| Like `grabLead`, but with `altHeld = False` so magnetic snapping is active.
+-}
+grabLeadSnapping : Vec3 -> Core.Model -> Core.Model
+grabLeadSnapping lead model =
+    let
+        firstId =
+            Document.placements model.document |> List.head |> Maybe.map .id |> Maybe.withDefault 0
+
+        grab =
+            Gizmo.toRender lead
+
+        vp =
+            model.viewport
+
+        cam =
+            vp.camera
+    in
+    { model
+        | viewport = Viewport.captureDrag { vp | camera = { cam | target = grab }, mousePressed = True }
+        , selection = Set.singleton firstId
+        , altHeld = False
+        , drag =
+            Just
+                { kind = PlaneDrag grab
+                , plane = Nothing
+                , ids = [ firstId ]
+                , start = ( 400, 300 )
+                , lastPoint = ( 400, 300 )
+                , original = model.document
+                , amount = 0
+                , elevationOffset = 0
+                , axisLock = Nothing
+                , modeAnchor = ( 400, 300 )
+                , baseElevation = 0
+                , shiftToggle = Nothing
+                }
+    }
+
+
+{-| Magnetic snapping must never place regular bricks inside each other.
+-}
+magneticSnapCollisionSuite : Test
+magneticSnapCollisionSuite =
+    let
+        screenAt model point =
+            Gizmo.project model.viewport.camera model.viewport.width model.viewport.height point
+                |> Maybe.withDefault ( -1, -1 )
+
+        documentCollisions model =
+            let
+                resolveLines name =
+                    case Dict.get name model.viewport.partCache of
+                        Just (Loaded lines) ->
+                            Just lines
+
+                        _ ->
+                            Nothing
+
+                effectiveBoxOf placement =
+                    let
+                        pConn =
+                            Connectivity.extractPartConnectivity placement.part resolveLines
+
+                        rawBox =
+                            List.head pConn.boundingBoxes
+                                |> Maybe.withDefault { min = vec3 -10 -4 -10, max = vec3 10 24 10 }
+                    in
+                    Connectivity.effectiveEnvelope rawBox pConn.connections
+
+                boxes =
+                    Document.placements model.document
+                        |> List.map (\p -> ( p.id, p.matrix, effectiveBoxOf p ))
+            in
+            Connectivity.checkCollisions 0.5 boxes boxes
+    in
+    describe "magnetic snapping collision avoidance during drags"
+        [ test "dragging a 2x4 near a two-brick stack does not snap inside the stack" <|
+            \_ ->
+                let
+                    -- Bottom brick 1 at (0, -24, 0), top brick 2 at (0, -48, 0). Dragged brick 3 at (60, -24, 0).
+                    stackModel =
+                        grabLeadSnapping (vec3 60 -24 0)
+                            (loadedParts
+                                [ ( "3001.dat", vec3 60 -24 0 )
+                                , ( "3001.dat", vec3 0 -48 0 )
+                                , ( "3001.dat", vec3 0 -24 0 )
+                                ]
+                            )
+
+                    -- Drag towards the stack at (10, -24, 0)
+                    moved =
+                        stackModel
+                            |> moveTo (screenAt stackModel (vec3 10 24 0))
+                            |> (\( m, _, _ ) -> m)
+                in
+                Expect.all
+                    [ \m -> Expect.equal [] (documentCollisions m)
+                    , \m -> Expect.equal False (List.member (Just (vec3 0 -48 0)) [ firstPosition m ])
+                    ]
+                    moved
+        , test "dragging a 2x4 near a half-covered brick does not snap inside the covering brick" <|
+            \_ ->
+                let
+                    -- Base brick 1 at (0, -24, 0), 1x2 brick 2 at (20, -48, 0) covering right 2 studs.
+                    -- Dragged 2x4 brick 3 at (60, -24, 0).
+                    halfCoveredModel =
+                        grabLeadSnapping (vec3 60 -24 0)
+                            (loadedParts
+                                [ ( "3001.dat", vec3 60 -24 0 )
+                                , ( "3004.dat", vec3 20 -48 0 )
+                                , ( "3001.dat", vec3 0 -24 0 )
+                                ]
+                            )
+
+                    -- Drag over base brick towards (0, -48, 0)
+                    moved =
+                        halfCoveredModel
+                            |> moveTo (screenAt halfCoveredModel (vec3 0 24 0))
+                            |> (\( m, _, _ ) -> m)
+                in
+                Expect.equal [] (documentCollisions moved)
+        , test "dragging a brick near an adjacent ground brick does not snap inside the neighbour" <|
+            \_ ->
+                let
+                    -- Neighbour brick at (0, -24, 0). Dragged brick at (60, -24, 0).
+                    adjacentModel =
+                        grabLeadSnapping (vec3 60 -24 0)
+                            (loadedParts
+                                [ ( "3001.dat", vec3 60 -24 0 )
+                                , ( "3001.dat", vec3 0 -24 0 )
+                                ]
+                            )
+
+                    -- Drag towards neighbour at (20, -24, 0) where a full 2x4 would overlap
+                    moved =
+                        adjacentModel
+                            |> moveTo (screenAt adjacentModel (vec3 20 24 0))
+                            |> (\( m, _, _ ) -> m)
+                in
+                Expect.equal [] (documentCollisions moved)
         ]

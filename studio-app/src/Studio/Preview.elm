@@ -354,6 +354,9 @@ handleEvent event ( model, cmds ) =
         Viewport.LoadFailed _ ->
             ( model, cmds )
 
+        Viewport.TouchShiftChanged _ ->
+            ( model, cmds )
+
 
 {-| Make the gear under a point the motor.
 -}

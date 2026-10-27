@@ -524,6 +524,24 @@ suite =
                         , \_ -> Expect.equal [ DragEnded 90 40 ] upEvents
                         ]
                         ()
+            , test "a captured finger press released without dragging also reports Tapped" <|
+                \_ ->
+                    let
+                        ( down, _ ) =
+                            update (PointerTouchStart { id = 1, x = 30, y = 40 }) idle
+
+                        ( wiggled, wiggleEvents ) =
+                            Viewport.captureDrag down
+                                |> update (PointerTouchMove { id = 1, x = 32, y = 41 })
+
+                        ( _, upEvents ) =
+                            update (PointerTouchEnd 1) wiggled
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [] wiggleEvents
+                        , \_ -> Expect.equal [ DragEnded 32 41, Tapped 32 41 ] upEvents
+                        ]
+                        ()
             , test "a second finger ends a capture and becomes a camera gesture" <|
                 \_ ->
                     let
@@ -537,6 +555,38 @@ suite =
                             [ \( _, events ) -> Expect.equal [ DragEnded 30 40 ] events
                             , \( m, _ ) -> Expect.equal False m.captured
                             ]
+            , test "with setSecondFingerShift, a second finger toggles TouchShiftChanged while the first finger keeps dragging" <|
+                \_ ->
+                    let
+                        captured =
+                            idle
+                                |> Viewport.setSecondFingerShift True
+                                |> update (PointerTouchStart { id = 1, x = 30, y = 40 })
+                                |> Tuple.first
+                                |> Viewport.captureDrag
+
+                        ( withSecond, down2Events ) =
+                            update (PointerTouchStart { id = 2, x = 200, y = 200 }) captured
+
+                        ( moved, moveEvents ) =
+                            update (PointerTouchMove { id = 1, x = 60, y = 40 }) withSecond
+
+                        ( afterSecondUp, up2Events ) =
+                            update (PointerTouchEnd 2) moved
+
+                        ( released, up1Events ) =
+                            update (PointerTouchEnd 1) afterSecondUp
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ TouchShiftChanged True ] down2Events
+                        , \_ -> Expect.equal True withSecond.captured
+                        , \_ -> Expect.equal [ DragMoved 60 40 ] moveEvents
+                        , \_ -> Expect.equal [ TouchShiftChanged False ] up2Events
+                        , \_ -> Expect.equal True afterSecondUp.captured
+                        , \_ -> Expect.equal [ DragEnded 60 40 ] up1Events
+                        , \_ -> Expect.equal False released.captured
+                        ]
+                        ()
             ]
         , describe "panCurrentGesture"
             [ test "a plain left drag turned into a pan moves the target, not the angle" <|

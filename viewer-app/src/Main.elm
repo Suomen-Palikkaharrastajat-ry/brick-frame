@@ -522,6 +522,9 @@ handleViewportEvent event ( model, cmds ) =
         Viewport.DragCancelled ->
             ( model, cmds )
 
+        Viewport.TouchShiftChanged _ ->
+            ( model, cmds )
+
         Viewport.WheelScrolled _ ->
             ( model, cmds )
 

@@ -16,6 +16,7 @@ import LDraw.Connectivity as Connectivity
         , effectiveEnvelope
         , extractConnections
         , isCompatible
+        , isSnapColliding
         , isStudded
         , knownCatalogPart
         , makeAxle
@@ -23,7 +24,10 @@ import LDraw.Connectivity as Connectivity
         , snapEnterDistance
         , snapReleaseDistance
         , solveSnap
+        , solveSnapCandidates
         , solveSnapWithHysteresis
+        , solveSnapWithHysteresisAndPredicate
+        , solveSnapWithPredicate
         , studOffset
         , testOBB
         , toOBB
@@ -868,5 +872,300 @@ collisionSATTests =
                             solveSnapWithHysteresis snapEnterDistance snapReleaseDistance activeSnap 0 rotatedMatrix [ draggedPt ] [ targetPt ]
                     in
                     Expect.equal Nothing result
+            ]
+        , describe "collision-aware snapping and isSnapColliding"
+            [ test "properly stacked 2x4 brick on another 2x4 brick does not collide (isSnapColliding = False)" <|
+                \_ ->
+                    let
+                        brickA =
+                            -- Base 2x4 brick at origin Y=0 (body Y in [0, 24], top studs at Y=0)
+                            { id = 1
+                            , matrix = Mat4.identity
+                            , box = { min = vec3 -40 0 -10, max = vec3 40 24 10 }
+                            }
+
+                        draggedBrickB =
+                            -- Dragged 2x4 brick
+                            { id = 2
+                            , matrix = Mat4.makeTranslate3 0 -24 0
+                            , box = { min = vec3 -40 0 -10, max = vec3 40 24 10 }
+                            }
+
+                        targetStud =
+                            { placementId = 1
+                            , pointId = 1
+                            , connType = Stud
+                            , worldPosition = vec3 -30 0 -10
+                            , worldNormal = vec3 0 -1 0
+                            , worldTangent = vec3 1 0 0
+                            }
+
+                        draggedAntiStud =
+                            { id = 101
+                            , connType = AntiStud
+                            , localPosition = vec3 -30 24 -10
+                            , normal = vec3 0 1 0
+                            , tangent = vec3 1 0 0
+                            }
+
+                        maybeSnap =
+                            solveSnap 12.0 0 (Mat4.makeTranslate3 0 -22 0) [ draggedAntiStud ] [ targetStud ]
+                    in
+                    case maybeSnap of
+                        Just snap ->
+                            let
+                                colliding =
+                                    isSnapColliding 0.5 draggedBrickB.id draggedBrickB.matrix [ ( draggedBrickB.id, draggedBrickB.matrix, draggedBrickB.box ) ] [ ( brickA.id, brickA.matrix, brickA.box ) ] snap
+                            in
+                            Expect.equal False colliding
+
+                        Nothing ->
+                            Expect.fail "Expected snap candidate"
+            , test "snapping brick inside another brick returns isSnapColliding = True" <|
+                \_ ->
+                    let
+                        brickA =
+                            -- Brick 1 at origin Y=0 (Y in [0, 24])
+                            { id = 1
+                            , matrix = Mat4.identity
+                            , box = { min = vec3 -40 0 -10, max = vec3 40 24 10 }
+                            }
+
+                        brickB =
+                            -- Brick 2 stacked on Brick 1 (Y in [-24, 0])
+                            { id = 2
+                            , matrix = Mat4.makeTranslate3 0 -24 0
+                            , box = { min = vec3 -40 0 -10, max = vec3 40 24 10 }
+                            }
+
+                        draggedBrickC =
+                            { id = 3
+                            , matrix = Mat4.makeTranslate3 5 -20 5
+                            , box = { min = vec3 -40 0 -10, max = vec3 40 24 10 }
+                            }
+
+                        -- Covered stud on Brick 1 at Y=0 pointing up
+                        coveredStud =
+                            { placementId = 1
+                            , pointId = 1
+                            , connType = Stud
+                            , worldPosition = vec3 0 0 0
+                            , worldNormal = vec3 0 -1 0
+                            , worldTangent = vec3 1 0 0
+                            }
+
+                        draggedAntiStud =
+                            { id = 101
+                            , connType = AntiStud
+                            , localPosition = vec3 0 24 0
+                            , normal = vec3 0 1 0
+                            , tangent = vec3 1 0 0
+                            }
+
+                        maybeSnap =
+                            solveSnap 12.0 0 (Mat4.makeTranslate3 0 -20 0) [ draggedAntiStud ] [ coveredStud ]
+                    in
+                    case maybeSnap of
+                        Just snap ->
+                            let
+                                -- snapMatrix places Brick C at Y in [-24, 0], which is occupied by Brick B!
+                                colliding =
+                                    isSnapColliding 0.5 draggedBrickC.id draggedBrickC.matrix [ ( draggedBrickC.id, draggedBrickC.matrix, draggedBrickC.box ) ] [ ( brickA.id, brickA.matrix, brickA.box ), ( brickB.id, brickB.matrix, brickB.box ) ] snap
+                            in
+                            Expect.equal True colliding
+
+                        Nothing ->
+                            Expect.fail "Expected snap candidate"
+            , test "solveSnapWithPredicate falls back to second candidate when closest candidate collides" <|
+                \_ ->
+                    let
+                        brickOccupied =
+                            -- Occupies X in [0, 40], Y in [-24, 0]
+                            ( 1, Mat4.makeTranslate3 20 -24 0, { min = vec3 -20 0 -10, max = vec3 20 24 10 } )
+
+                        dragged =
+                            -- 1x2 brick
+                            ( 2, Mat4.makeTranslate3 8 -20 0, { min = vec3 -10 0 -10, max = vec3 10 24 10 } )
+
+                        -- Candidate 1: at X = 10 (closer, distance ~ 2 LDU, but collides with brickOccupied at X in [0, 40])
+                        targetStud1 =
+                            { placementId = 3
+                            , pointId = 1
+                            , connType = Stud
+                            , worldPosition = vec3 10 0 0
+                            , worldNormal = vec3 0 -1 0
+                            , worldTangent = vec3 1 0 0
+                            }
+
+                        -- Candidate 2: at X = -10 (farther, distance ~ 18 LDU from X=8, open space, no collision)
+                        targetStud2 =
+                            { placementId = 3
+                            , pointId = 2
+                            , connType = Stud
+                            , worldPosition = vec3 -10 0 0
+                            , worldNormal = vec3 0 -1 0
+                            , worldTangent = vec3 1 0 0
+                            }
+
+                        draggedAntiStud =
+                            { id = 101
+                            , connType = AntiStud
+                            , localPosition = vec3 0 24 0
+                            , normal = vec3 0 1 0
+                            , tangent = vec3 1 0 0
+                            }
+
+                        currentHover =
+                            Mat4.makeTranslate3 8 -20 0
+
+                        predicate snap =
+                            not (isSnapColliding 0.5 2 currentHover [ dragged ] [ brickOccupied ] snap)
+
+                        result =
+                            solveSnapWithPredicate predicate 24.0 0 currentHover [ draggedAntiStud ] [ targetStud1, targetStud2 ]
+                    in
+                    case result of
+                        Just snap ->
+                            -- The solver skipped colliding targetStud1 and picked targetStud2!
+                            Expect.equal 2 snap.targetPoint.pointId
+
+                        Nothing ->
+                            Expect.fail "Expected non-colliding candidate to be chosen"
+            , test "solveSnapWithPredicate returns Nothing when all candidates collide" <|
+                \_ ->
+                    let
+                        brickOccupied =
+                            ( 1, Mat4.makeTranslate3 0 -24 0, { min = vec3 -20 0 -10, max = vec3 20 24 10 } )
+
+                        dragged =
+                            ( 2, Mat4.makeTranslate3 0 -20 0, { min = vec3 -10 0 -10, max = vec3 10 24 10 } )
+
+                        targetStud1 =
+                            { placementId = 3
+                            , pointId = 1
+                            , connType = Stud
+                            , worldPosition = vec3 0 0 0
+                            , worldNormal = vec3 0 -1 0
+                            , worldTangent = vec3 1 0 0
+                            }
+
+                        draggedAntiStud =
+                            { id = 101
+                            , connType = AntiStud
+                            , localPosition = vec3 0 24 0
+                            , normal = vec3 0 1 0
+                            , tangent = vec3 1 0 0
+                            }
+
+                        currentHover =
+                            Mat4.makeTranslate3 0 -20 0
+
+                        predicate snap =
+                            not (isSnapColliding 0.5 2 currentHover [ dragged ] [ brickOccupied ] snap)
+
+                        result =
+                            solveSnapWithPredicate predicate 24.0 0 currentHover [ draggedAntiStud ] [ targetStud1 ]
+                    in
+                    Expect.equal Nothing result
+            , test "isSnapColliding allows Technic pin lead part to insert into hole of targetPlacementId" <|
+                \_ ->
+                    let
+                        beamTarget =
+                            -- Target beam placementId = 10
+                            { id = 10
+                            , matrix = Mat4.identity
+                            , box = { min = vec3 -10 -10 -50, max = vec3 10 10 50 }
+                            }
+
+                        draggedPin =
+                            -- Dragged pin placementId = 20
+                            { id = 20
+                            , matrix = Mat4.makeTranslate3 0 0 -8
+                            , box = { min = vec3 -5 -5 -10, max = vec3 5 5 10 }
+                            }
+
+                        holeTarget =
+                            { placementId = 10
+                            , pointId = 1
+                            , connType = TechnicPinFemale { length = 10.0 }
+                            , worldPosition = vec3 0 0 0
+                            , worldNormal = vec3 0 0 1
+                            , worldTangent = vec3 1 0 0
+                            }
+
+                        pinConn =
+                            { id = 1
+                            , connType = TechnicPinMale { length = 10.0, friction = True }
+                            , localPosition = vec3 0 0 10
+                            , normal = vec3 0 0 1
+                            , tangent = vec3 1 0 0
+                            }
+
+                        maybeSnap =
+                            solveSnap 12.0 0 (Mat4.makeTranslate3 0 0 -8) [ pinConn ] [ holeTarget ]
+                    in
+                    case maybeSnap of
+                        Just snap ->
+                            let
+                                colliding =
+                                    isSnapColliding 0.5 draggedPin.id draggedPin.matrix [ ( draggedPin.id, draggedPin.matrix, draggedPin.box ) ] [ ( beamTarget.id, beamTarget.matrix, beamTarget.box ) ] snap
+                            in
+                            Expect.equal False colliding
+
+                        Nothing ->
+                            Expect.fail "Expected snap candidate for Technic pin"
+            , test "isSnapColliding flags collision if follower part in multi-part drag collides with targetPlacementId" <|
+                \_ ->
+                    let
+                        beamTarget =
+                            -- Target beam placementId = 10, extends from Z in [-50, 50]
+                            { id = 10
+                            , matrix = Mat4.identity
+                            , box = { min = vec3 -10 -10 -50, max = vec3 10 10 50 }
+                            }
+
+                        leadPin =
+                            { id = 20
+                            , matrix = Mat4.identity
+                            , box = { min = vec3 -5 -5 -10, max = vec3 5 5 10 }
+                            }
+
+                        -- Follower part is offset by Z = 10, placing it inside beamTarget's box!
+                        followerPart =
+                            { id = 21
+                            , matrix = Mat4.makeTranslate3 0 0 10
+                            , box = { min = vec3 -10 -10 -10, max = vec3 10 10 10 }
+                            }
+
+                        holeTarget =
+                            { placementId = 10
+                            , pointId = 1
+                            , connType = TechnicPinFemale { length = 10.0 }
+                            , worldPosition = vec3 0 0 0
+                            , worldNormal = vec3 0 0 1
+                            , worldTangent = vec3 1 0 0
+                            }
+
+                        pinConn =
+                            { id = 1
+                            , connType = TechnicPinMale { length = 10.0, friction = True }
+                            , localPosition = vec3 0 0 0
+                            , normal = vec3 0 0 1
+                            , tangent = vec3 1 0 0
+                            }
+
+                        maybeSnap =
+                            solveSnap 12.0 0 Mat4.identity [ pinConn ] [ holeTarget ]
+                    in
+                    case maybeSnap of
+                        Just snap ->
+                            let
+                                colliding =
+                                    isSnapColliding 0.5 leadPin.id leadPin.matrix [ ( leadPin.id, leadPin.matrix, leadPin.box ), ( followerPart.id, followerPart.matrix, followerPart.box ) ] [ ( beamTarget.id, beamTarget.matrix, beamTarget.box ) ] snap
+                            in
+                            Expect.equal True colliding
+
+                        Nothing ->
+                            Expect.fail "Expected snap candidate"
             ]
         ]

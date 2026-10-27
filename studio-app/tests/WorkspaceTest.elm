@@ -2402,6 +2402,71 @@ snappingSuite =
                     , \m -> Expect.equal (Set.fromList [ 0, 1 ]) m.collidingPlacements
                     ]
                     afterEndDrag
+        , test "magnetic snapping in movePlaneDrag rejects candidate that places brick inside another brick" <|
+            \_ ->
+                let
+                    ( docStacked, _ ) =
+                        Edit.apply
+                            (Edit.Add
+                                [ { part = "3001.dat", color = 4, matrix = Mat4.identity }
+                                , { part = "3001.dat", color = 14, matrix = Mat4.makeTranslate3 0 -24 0 }
+                                , { part = "3001.dat", color = 1, matrix = Mat4.makeTranslate3 60 -24 0 }
+                                ]
+                            )
+                            start.document
+
+                    mInit =
+                        { start | document = docStacked, snapDistance = 24.0, collisionMode = CollisionStrict }
+
+                    dragState =
+                        { kind = Gizmo.PlaneDrag (vec3 60 -24 0)
+                        , plane = Nothing
+                        , ids = [ 2 ]
+                        , start = ( 400, 300 )
+                        , lastPoint = ( 400, 300 )
+                        , original = docStacked
+                        , amount = 0
+                        , elevationOffset = 0.0
+                        , axisLock = Nothing
+                        , modeAnchor = ( 400, 300 )
+                        , baseElevation = 0.0
+                        , shiftToggle = Nothing
+                        }
+
+                    mDragging =
+                        { mInit | drag = Just dragState }
+
+                    ( moved, _ ) =
+                        Workspace.update (ViewportMsg (Viewport.MouseMove 405 300)) mDragging
+                in
+                case moved.activeSnap of
+                    Just snap ->
+                        let
+                            leadOrig =
+                                Document.getPlacement 2 docStacked
+                                    |> Maybe.withDefault { id = 2, part = "3001.dat", fileText = "3001.dat", color = 1, matrix = Mat4.makeTranslate3 60 -24 0, extra = [] }
+
+                            pConn =
+                                Connectivity.extractPartConnectivity "3001.dat" (\_ -> Nothing)
+
+                            rawBox =
+                                List.head pConn.boundingBoxes |> Maybe.withDefault { min = vec3 -10 -4 -10, max = vec3 10 24 10 }
+
+                            box =
+                                Connectivity.effectiveEnvelope rawBox pConn.connections
+
+                            sceneBoxes =
+                                [ ( 0, Mat4.identity, box )
+                                , ( 1, Mat4.makeTranslate3 0 -24 0, box )
+                                ]
+
+                            colliding =
+                                Connectivity.isSnapColliding 0.5 2 leadOrig.matrix [ ( 2, leadOrig.matrix, box ) ] sceneBoxes snap
+                        in
+                        Expect.equal False colliding
+
+                    Nothing ->
+                        Expect.pass
         , test "Alt key press during drag immediately moves drag to non-snapped state" <|
             \_ ->
                 let

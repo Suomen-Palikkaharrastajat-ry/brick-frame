@@ -30,6 +30,7 @@ module Viewport exposing
     , setCanvasOrigin
     , setHiddenSources
     , setRenderQuality
+    , setSecondFingerShift
     , setShiftPressGrabs
     , setSpacePan
     , snapshotRequest
@@ -224,6 +225,7 @@ type alias Model =
     , pressButton : Int
     , pressToggle : Bool
     , pressShift : Bool
+    , secondFingerShift : Bool
     , shiftPressGrabs : Bool
     , spacePan : Bool
     , loadingProgressPct : Float
@@ -350,6 +352,7 @@ init config =
       , pressButton = 0
       , pressToggle = False
       , pressShift = False
+      , secondFingerShift = False
       , shiftPressGrabs = False
       , spacePan = False
       , loadingProgressPct = 0.0
@@ -485,6 +488,7 @@ type Event
     | DragMoved Float Float
     | DragEnded Float Float
     | DragCancelled
+    | TouchShiftChanged Bool
     | WheelScrolled Float
     | LoadStarted
     | PartsReady
@@ -1284,29 +1288,63 @@ handlePartResult name result model =
 
 
 {-| Fingers went down. One finger starts a press the host may capture; a second
-finger ends any capture and becomes a camera gesture.
+finger ends any capture and becomes a camera gesture, unless `secondFingerShift`
+is on, in which case the second finger counts as Shift while the first finger
+continues the press/drag.
 -}
 touchesDown : Dict Int TouchPoint -> Model -> ( Model, Cmd Msg, List Event )
 touchesDown touches model =
     let
         list =
             touchesFromDict touches
-
-        begun =
-            beginTouchGesture list { model | activeTouches = touches }
     in
     case list of
         [ p ] ->
+            let
+                begun =
+                    beginTouchGesture list { model | activeTouches = touches, pressShift = False }
+            in
             ( { begun | lastPointer = ( p.x, p.y ) }, Cmd.none, [ PressStarted p.x p.y ] )
 
-        _ :: _ :: _ ->
-            if model.captured then
-                ( { begun | captured = False }, Cmd.none, [ DragEnded (Tuple.first model.lastPointer) (Tuple.second model.lastPointer) ] )
+        p1 :: _ :: _ ->
+            if model.secondFingerShift then
+                case model.touchGesture of
+                    SingleTouchGesture _ ->
+                        ( { model | activeTouches = touches, pressShift = True }
+                        , Cmd.none
+                        , if model.pressShift then
+                            []
+
+                          else
+                            [ TouchShiftChanged True ]
+                        )
+
+                    _ ->
+                        let
+                            begun =
+                                beginTouchGesture [ p1 ] { model | activeTouches = touches, pressShift = True }
+                        in
+                        ( { begun | lastPointer = ( p1.x, p1.y ) }
+                        , Cmd.none
+                        , [ PressStarted p1.x p1.y, TouchShiftChanged True ]
+                        )
 
             else
-                ( begun, Cmd.none, [] )
+                let
+                    begun =
+                        beginTouchGesture list { model | activeTouches = touches, pressShift = False }
+                in
+                if model.captured then
+                    ( { begun | captured = False }, Cmd.none, [ DragEnded (Tuple.first model.lastPointer) (Tuple.second model.lastPointer) ] )
+
+                else
+                    ( begun, Cmd.none, [] )
 
         [] ->
+            let
+                begun =
+                    beginTouchGesture list { model | activeTouches = touches, pressShift = False }
+            in
             ( begun, Cmd.none, [] )
 
 
@@ -1317,10 +1355,42 @@ touchesMoved touches model =
             touchesFromDict touches
     in
     case ( model.captured, list ) of
-        ( True, p :: _ ) ->
-            ( { model | activeTouches = touches, lastPointer = ( p.x, p.y ) }
+        ( True, first :: _ ) ->
+            let
+                p =
+                    case model.touchGesture of
+                        SingleTouchGesture touchId ->
+                            findTouch touchId list |> Maybe.withDefault first
+
+                        _ ->
+                            first
+
+                ( lx, ly ) =
+                    model.lastPointer
+
+                travel =
+                    case model.touchGesture of
+                        SingleTouchGesture _ ->
+                            model.dragTravel + sqrt (((p.x - lx) * (p.x - lx)) + ((p.y - ly) * (p.y - ly)))
+
+                        _ ->
+                            model.dragTravel
+
+                events =
+                    case model.touchGesture of
+                        SingleTouchGesture _ ->
+                            if travel >= tapSlop then
+                                [ DragMoved p.x p.y ]
+
+                            else
+                                []
+
+                        _ ->
+                            [ DragMoved p.x p.y ]
+            in
+            ( { model | activeTouches = touches, dragTravel = travel, lastPointer = ( p.x, p.y ) }
             , Cmd.none
-            , [ DragMoved p.x p.y ]
+            , events
             )
 
         ( False, [ p ] ) ->
@@ -1347,16 +1417,13 @@ touchesMoved touches model =
 
 
 {-| Fingers came up. A captured gesture ends with them; a one-finger gesture that
-barely moved is a tap.
+barely moved is a tap (even when the press was captured on a part).
 -}
 touchesUp : Dict Int TouchPoint -> Model -> ( Model, Cmd Msg, List Event )
 touchesUp touches model =
     let
         list =
             touchesFromDict touches
-
-        ended =
-            endTouchGesture list { model | activeTouches = touches }
 
         ( x, y ) =
             model.lastPointer
@@ -1374,13 +1441,85 @@ touchesUp touches model =
                    )
     in
     if model.captured then
-        ( { ended | captured = False }, Cmd.none, [ DragEnded x y ] )
+        case list of
+            [] ->
+                let
+                    ended =
+                        endTouchGesture [] { model | activeTouches = touches, pressShift = False }
 
-    else if wasTap then
-        ( ended, Cmd.none, [ Tapped x y, CameraSettled ] )
+                    shiftOff =
+                        if model.pressShift then
+                            [ TouchShiftChanged False ]
+
+                        else
+                            []
+
+                    endEvents =
+                        if wasTap then
+                            [ DragEnded x y, Tapped x y ]
+
+                        else
+                            [ DragEnded x y ]
+                in
+                ( { ended | captured = False }
+                , Cmd.none
+                , endEvents ++ shiftOff
+                )
+
+            p1 :: rest ->
+                let
+                    keepId =
+                        case model.touchGesture of
+                            SingleTouchGesture id ->
+                                if List.any (\t -> t.id == id) list then
+                                    id
+
+                                else
+                                    p1.id
+
+                            _ ->
+                                p1.id
+
+                    activePoint =
+                        findTouch keepId list |> Maybe.withDefault p1
+
+                    stillShifted =
+                        not (List.isEmpty rest)
+
+                    shiftEvents =
+                        if model.pressShift && not stillShifted then
+                            [ TouchShiftChanged False ]
+
+                        else
+                            []
+                in
+                ( { model
+                    | activeTouches = touches
+                    , touchGesture = SingleTouchGesture keepId
+                    , lastPointer = ( activePoint.x, activePoint.y )
+                    , pressShift = stillShifted
+                  }
+                , Cmd.none
+                , shiftEvents
+                )
 
     else
-        ( ended, Cmd.none, [ CameraSettled ] )
+        let
+            ended =
+                endTouchGesture list { model | activeTouches = touches, pressShift = False }
+
+            shiftOff =
+                if model.pressShift && List.length list < 2 then
+                    [ TouchShiftChanged False ]
+
+                else
+                    []
+        in
+        if wasTap then
+            ( ended, Cmd.none, shiftOff ++ [ Tapped x y, CameraSettled ] )
+
+        else
+            ( ended, Cmd.none, shiftOff ++ [ CameraSettled ] )
 
 
 {-| How far, in pixels, a finger may wander and still count as a tap.
@@ -1388,6 +1527,14 @@ touchesUp touches model =
 tapSlop : Float
 tapSlop =
     8.0
+
+
+{-| When on, a second finger on the canvas counts as Shift (`TouchShiftChanged`)
+instead of ending a captured drag and starting a two-finger camera gesture.
+-}
+setSecondFingerShift : Bool -> Model -> Model
+setSecondFingerShift enabled model =
+    { model | secondFingerShift = enabled }
 
 
 {-| Let a Shift + left press on empty canvas or on a part reach the host as
@@ -3180,6 +3327,9 @@ view config model =
          , Attr.style "width" "100%"
          , Attr.style "height" "100%"
          , Attr.style "touch-action" "none"
+         , Attr.style "user-select" "none"
+         , Attr.style "-webkit-user-select" "none"
+         , Attr.style "-webkit-touch-callout" "none"
          , Html.Events.preventDefaultOn "mousedown"
             (Decode.map6
                 (\origin clientX clientY button shift accel ->

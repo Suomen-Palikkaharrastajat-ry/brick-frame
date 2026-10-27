@@ -2236,6 +2236,30 @@ placeArmedPart part ( x, y ) model =
                     otherPlacements =
                         Document.placementsOf model.context.activeSubmodel model.document
 
+                    effectiveBoxOf placement =
+                        let
+                            pConn =
+                                Connectivity.extractPartConnectivity placement.part resolveLines
+
+                            pRawBox =
+                                List.head pConn.boundingBoxes
+                                    |> Maybe.withDefault { min = vec3 -10 -4 -10, max = vec3 10 24 10 }
+                        in
+                        Connectivity.effectiveEnvelope pRawBox pConn.connections
+
+                    sceneBoxes =
+                        List.map (\p -> ( p.id, p.matrix, effectiveBoxOf p )) otherPlacements
+
+                    newPartBox =
+                        box
+
+                    isValidSnap snap =
+                        if model.collisionMode == Connectivity.CollisionOff then
+                            True
+
+                        else
+                            not (Connectivity.isSnapColliding 0.5 0 surfaceMatrix [ ( 0, surfaceMatrix, newPartBox ) ] sceneBoxes snap)
+
                     targetWorldPoints =
                         otherPlacements
                             |> List.concatMap
@@ -2252,7 +2276,8 @@ placeArmedPart part ( x, y ) model =
                             Nothing
 
                         else
-                            Connectivity.solveSnap
+                            Connectivity.solveSnapWithPredicate
+                                isValidSnap
                                 Connectivity.snapEnterDistance
                                 model.snapRotationStep
                                 surfaceMatrix
@@ -3330,6 +3355,9 @@ handleEvent event ( model, cmds ) =
         Viewport.LoadFailed _ ->
             ( model, cmds )
 
+        Viewport.TouchShiftChanged shift ->
+            ( { model | shiftHeld = shift }, cmds )
+
 
 {-| A Shift press on a part that was released without moving: the click
 `select` would have made, toggling the part in the selection from before the press.
@@ -4026,6 +4054,16 @@ movePlaneDrag initialDrag grab ( x, y ) model =
                 sceneBoxes =
                     List.map (\p -> ( p.id, p.matrix, effectiveBoxOf p )) otherPlacements
 
+                draggedOrigBoxes =
+                    List.map (\p -> ( p.id, p.matrix, effectiveBoxOf p )) originalPlacements
+
+                isValidSnap snap =
+                    if model.collisionMode == Connectivity.CollisionOff then
+                        True
+
+                    else
+                        not (Connectivity.isSnapColliding 0.5 leadP.id leadP.matrix draggedOrigBoxes sceneBoxes snap)
+
                 currentDraggedPlacements =
                     drag.ids
                         |> List.filterMap (\id -> Document.getPlacement id gizmoMovedDoc)
@@ -4071,7 +4109,8 @@ movePlaneDrag initialDrag grab ( x, y ) model =
                                 )
 
                     maybeSnap =
-                        Connectivity.solveSnapWithHysteresis
+                        Connectivity.solveSnapWithHysteresisAndPredicate
+                            isValidSnap
                             model.snapDistance
                             (model.snapDistance * 1.5)
                             model.activeSnap
@@ -4093,25 +4132,12 @@ movePlaneDrag initialDrag grab ( x, y ) model =
                             ( snappedDoc, _ ) =
                                 Edit.apply (SetMatrix draggedSnapUpdates) baseDoc
 
-                            snappedDraggedPlacements =
-                                drag.ids
-                                    |> List.filterMap (\id -> Document.getPlacement id snappedDoc)
-
-                            draggedBoxes =
-                                List.map (\p -> ( p.id, p.matrix, effectiveBoxOf p )) snappedDraggedPlacements
-
-                            activeSceneBoxes =
-                                sceneBoxes
-                                    |> List.filter (\( id, _, _ ) -> id /= snap.targetPlacementId)
-
-                            collidingPairs =
-                                Connectivity.checkCollisions 0.5 draggedBoxes activeSceneBoxes
-
                             isColliding =
-                                not (List.isEmpty collidingPairs)
+                                if model.collisionMode == Connectivity.CollisionOff then
+                                    Connectivity.isSnapColliding 0.5 leadP.id leadP.matrix draggedOrigBoxes sceneBoxes snap
 
-                            collidingIds =
-                                Set.fromList (List.map Tuple.first collidingPairs)
+                                else
+                                    False
 
                             guideWithCol =
                                 Connectivity.setGuideColliding isColliding snap.guide
@@ -4124,12 +4150,7 @@ movePlaneDrag initialDrag grab ( x, y ) model =
                                 | document = snappedDoc
                                 , drag = Just { drag | amount = 0, lastPoint = ( x, y ), elevationOffset = currentElevationOffset }
                                 , activeSnap = Just finalCandidate
-                                , collidingPlacements =
-                                    if model.collisionMode == Connectivity.CollisionOff then
-                                        Set.empty
-
-                                    else
-                                        collidingIds
+                                , collidingPlacements = Set.empty
                             }
 
                     Nothing ->
@@ -4240,6 +4261,13 @@ applyDragDelta drag amount point delta model =
         draggedPlacements =
             drag.ids
                 |> List.filterMap (\id -> Document.getPlacement id gizmoMovedDoc)
+
+        originalPlacements =
+            drag.ids
+                |> List.filterMap (\id -> Document.getPlacement id drag.original)
+
+        draggedOrigBoxes =
+            List.map (\p -> ( p.id, p.matrix, effectiveBoxOf p )) originalPlacements
     in
     if model.altHeld || model.snapDistance <= 0 then
         let
@@ -4272,6 +4300,10 @@ applyDragDelta drag amount point delta model =
         case draggedPlacements of
             leadPlacement :: _ ->
                 let
+                    leadOrig =
+                        Document.getPlacement leadPlacement.id drag.original
+                            |> Maybe.withDefault leadPlacement
+
                     targetWorldPoints =
                         otherPlacements
                             |> List.concatMap
@@ -4286,8 +4318,16 @@ applyDragDelta drag amount point delta model =
                     leadConn =
                         Connectivity.extractPartConnectivity leadPlacement.part resolveLines
 
+                    isValidSnap snap =
+                        if model.collisionMode == Connectivity.CollisionOff then
+                            True
+
+                        else
+                            not (Connectivity.isSnapColliding 0.5 leadOrig.id leadOrig.matrix draggedOrigBoxes sceneBoxes snap)
+
                     maybeSnap =
-                        Connectivity.solveSnapWithHysteresis
+                        Connectivity.solveSnapWithHysteresisAndPredicate
+                            isValidSnap
                             model.snapDistance
                             (model.snapDistance * 1.5)
                             model.activeSnap
@@ -4299,43 +4339,22 @@ applyDragDelta drag amount point delta model =
                 case maybeSnap of
                     Just snap ->
                         let
-                            leadOrig =
-                                Document.getPlacement leadPlacement.id drag.original
-                                    |> Maybe.withDefault leadPlacement
-
                             deltaMat =
                                 Mat4.mul snap.snapMatrix (Connectivity.invertRigid leadOrig.matrix)
 
                             draggedUpdates =
-                                draggedPlacements
-                                    |> List.filterMap
-                                        (\p ->
-                                            Document.getPlacement p.id drag.original
-                                                |> Maybe.map (\origP -> ( p.id, Mat4.mul deltaMat origP.matrix ))
-                                        )
+                                originalPlacements
+                                    |> List.map (\p -> ( p.id, Mat4.mul deltaMat p.matrix ))
 
                             ( snappedDoc, _ ) =
                                 Edit.apply (SetMatrix draggedUpdates) drag.original
 
-                            snappedDraggedPlacements =
-                                drag.ids
-                                    |> List.filterMap (\id -> Document.getPlacement id snappedDoc)
-
-                            draggedBoxes =
-                                List.map (\p -> ( p.id, p.matrix, effectiveBoxOf p )) snappedDraggedPlacements
-
-                            activeSceneBoxes =
-                                sceneBoxes
-                                    |> List.filter (\( id, _, _ ) -> id /= snap.targetPlacementId)
-
-                            collidingPairs =
-                                Connectivity.checkCollisions 0.5 draggedBoxes activeSceneBoxes
-
                             isColliding =
-                                not (List.isEmpty collidingPairs)
+                                if model.collisionMode == Connectivity.CollisionOff then
+                                    Connectivity.isSnapColliding 0.5 leadOrig.id leadOrig.matrix draggedOrigBoxes sceneBoxes snap
 
-                            collidingIds =
-                                Set.fromList (List.map Tuple.first collidingPairs)
+                                else
+                                    False
 
                             guideWithCol =
                                 Connectivity.setGuideColliding isColliding snap.guide
@@ -4348,12 +4367,7 @@ applyDragDelta drag amount point delta model =
                                 | document = snappedDoc
                                 , drag = Just { drag | amount = amount, lastPoint = point }
                                 , activeSnap = Just finalCandidate
-                                , collidingPlacements =
-                                    if model.collisionMode == Connectivity.CollisionOff then
-                                        Set.empty
-
-                                    else
-                                        collidingIds
+                                , collidingPlacements = Set.empty
                             }
 
                     Nothing ->

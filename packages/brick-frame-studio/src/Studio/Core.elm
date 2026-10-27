@@ -29,6 +29,7 @@ module Studio.Core exposing
     , getPlacements
     , hasSelection
     , init
+    , isDragging
     , isGlued
     , lowerSelected
     , partBox
@@ -58,8 +59,10 @@ module Studio.Core exposing
     , setPreview
     , setRenderQuality
     , setRotateStep
+    , setShiftHeld
     , setSnapDistance
     , setTool
+    , shiftHeld
     , subscriptions
     , turnSelected
     , undo
@@ -455,14 +458,14 @@ selectAll model =
             List.map .id (Document.placements model.document)
                 |> Set.fromList
     in
-    { model | selection = allIds }
+    syncTouchShiftMode { model | selection = allIds }
 
 
 {-| Clear the current selection.
 -}
 clearSelection : Model -> Model
 clearSelection model =
-    { model | selection = Set.empty }
+    syncTouchShiftMode { model | selection = Set.empty }
 
 
 {-| The placements in the order Tab walks them: bottom to top (by origin height),
@@ -552,7 +555,7 @@ selectNeighbour { backwards } model =
                     selection =
                         Set.singleton id
                 in
-                ( pivotOnSelection { model | selection = selection }
+                ( syncTouchShiftMode (pivotOnSelection { model | selection = selection })
                 , Cmd.none
                 , [ SelectionChanged selection ]
                 )
@@ -565,17 +568,33 @@ selectNeighbour { backwards } model =
 -}
 setTool : Tool -> Model -> Model
 setTool tool model =
-    { model | tool = tool, drag = Nothing }
+    syncTouchShiftMode { model | tool = tool, drag = Nothing }
 
 
 {-| Change what a drag on the canvas does.
 -}
 setDragMode : DragMode -> Model -> Model
 setDragMode mode model =
-    { model
-        | dragMode = mode
-        , viewport = Viewport.setShiftPressGrabs (dragModeGrabsWithShift mode) model.viewport
-    }
+    syncTouchShiftMode
+        { model
+            | dragMode = mode
+            , viewport = Viewport.setShiftPressGrabs (dragModeGrabsWithShift mode) model.viewport
+        }
+
+
+{-| Keep the viewport's `secondFingerShift` flag in sync with the selection and
+active drag in `DragPartsOrPan` mode: when a movable part is selected (or being
+dragged), a second finger on the screen acts as Shift for 1-LDU bit-dragging;
+when no movable part is selected, two fingers zoom, pan, and orbit the camera.
+-}
+syncTouchShiftMode : Model -> Model
+syncTouchShiftMode model =
+    let
+        active =
+            dragModeGrabsWithShift model.dragMode
+                && (not (Set.isEmpty (movableSelection model)) || model.drag /= Nothing)
+    in
+    { model | viewport = Viewport.setSecondFingerShift active model.viewport }
 
 
 {-| Whether a body drag on the horizontal working plane settles the parts onto
@@ -623,6 +642,39 @@ setFineMove on model =
 fineMove : Model -> Bool
 fineMove model =
     model.fineMove
+
+
+{-| Set whether Shift is held (e.g. from a touch Shift toggle during a drag).
+While on in `DragPartsOrPan` mode, body drags move on the 1 LDU grid.
+-}
+setShiftHeld : Bool -> Model -> Model
+setShiftHeld on model =
+    let
+        next =
+            { model | shiftHeld = on }
+    in
+    case next.drag of
+        Just drag ->
+            case drag.kind of
+                PlaneDrag _ ->
+                    let
+                        ( moved, _, _ ) =
+                            moveDrag drag drag.lastPoint next
+                    in
+                    moved
+
+                _ ->
+                    next
+
+        Nothing ->
+            next
+
+
+{-| Whether Shift is currently held (by keyboard, second finger, or host toggle).
+-}
+shiftHeld : Model -> Bool
+shiftHeld model =
+    model.shiftHeld
 
 
 {-| The move steps of keyboard nudges and host moves: `horizontal` LDU sideways
@@ -761,7 +813,7 @@ resetDocument doc model =
         ( finalModel, extraCmds, emittedEvents ) =
             handleViewportEvents events ( nextModel, [], [ DocumentChanged nextModel.document, SelectionChanged Set.empty ] )
     in
-    ( finalModel
+    ( syncTouchShiftMode finalModel
     , Cmd.batch (Cmd.map ViewportMsg viewportCmd :: extraCmds)
     , emittedEvents
     )
@@ -827,7 +879,7 @@ setGlued glued model =
             ( finalModel, extraCmds, emittedEvents ) =
                 handleViewportEvents events ( nextModel, [], [ DocumentChanged nextModel.document ] )
         in
-        ( finalModel
+        ( syncTouchShiftMode finalModel
         , Cmd.batch (Cmd.map ViewportMsg viewportCmd :: extraCmds)
         , emittedEvents
         )
@@ -989,7 +1041,7 @@ deleteSelection model =
             ( finalModel, extraCmds, emittedEvents ) =
                 handleViewportEvents events ( nextModel, [], [ DocumentChanged nextModel.document, SelectionChanged remaining ] )
         in
-        ( finalModel
+        ( syncTouchShiftMode finalModel
         , Cmd.batch (Cmd.map ViewportMsg viewportCmd :: extraCmds)
         , emittedEvents
         )
@@ -999,7 +1051,11 @@ deleteSelection model =
 -}
 undo : Model -> ( Model, Cmd Msg, List Event )
 undo model =
-    undoInner model
+    let
+        ( m, cmd, evs ) =
+            undoInner model
+    in
+    ( syncTouchShiftMode m, cmd, evs )
 
 
 undoInner : Model -> ( Model, Cmd Msg, List Event )
@@ -1046,7 +1102,11 @@ undoInner model =
 -}
 redo : Model -> ( Model, Cmd Msg, List Event )
 redo model =
-    redoInner model
+    let
+        ( m, cmd, evs ) =
+            redoInner model
+    in
+    ( syncTouchShiftMode m, cmd, evs )
 
 
 redoInner : Model -> ( Model, Cmd Msg, List Event )
@@ -1289,7 +1349,7 @@ addPartAt partFile color matrix model =
         ( finalModel, extraCmds, emittedEvents ) =
             handleViewportEvents events ( nextModel, [], [ DocumentChanged nextModel.document, SelectionChanged newSelection ] )
     in
-    ( fitAddedPart finalModel
+    ( syncTouchShiftMode (fitAddedPart finalModel)
     , Cmd.batch (Cmd.map ViewportMsg viewportCmd :: extraCmds)
     , emittedEvents
     )
@@ -1591,7 +1651,11 @@ selectionPivot selection centre model =
 -}
 update : Msg -> Model -> ( Model, Cmd Msg, List Event )
 update msg model =
-    updateInner msg model
+    let
+        ( nextModel, cmd, events ) =
+            updateInner msg model
+    in
+    ( syncTouchShiftMode nextModel, cmd, events )
 
 
 updateInner : Msg -> Model -> ( Model, Cmd Msg, List Event )
@@ -1884,6 +1948,8 @@ passToViewport keyEvent model =
     )
 
 
+{-| Whether a drag is currently in progress.
+-}
 isDragging : Model -> Bool
 isDragging model =
     case model.drag of
@@ -1904,15 +1970,19 @@ cancelDrag : Model -> ( Model, Cmd Msg, List Event )
 cancelDrag model =
     case model.drag of
         Just drag ->
-            syncDocumentLive
-                { model
-                    | document = drag.original
-                    , drag = Nothing
-                    , activeSnap = Nothing
-                    , collidingPlacements = Set.empty
-                    , inFlightRotationStep = 0
-                    , snapRotationStep = 0
-                }
+            let
+                ( synced, cmd, evs ) =
+                    syncDocumentLive
+                        { model
+                            | document = drag.original
+                            , drag = Nothing
+                            , activeSnap = Nothing
+                            , collidingPlacements = Set.empty
+                            , inFlightRotationStep = 0
+                            , snapRotationStep = 0
+                        }
+            in
+            ( syncTouchShiftMode synced, cmd, evs )
 
         Nothing ->
             ( clearSelection model
@@ -2152,15 +2222,19 @@ handleViewportEvent event ( model, cmds, outEvents ) =
 
         Viewport.Tapped x y ->
             let
+                picked =
+                    Viewport.pickBodyPoint x y model.viewport
+                        |> Maybe.map .source
+
                 newSel =
-                    case Viewport.pickSource x y model.viewport of
+                    case picked of
                         Just id ->
                             Set.singleton id
 
                         Nothing ->
                             Set.empty
             in
-            ( pivotOnPicked (Viewport.pickSource x y model.viewport) { model | selection = newSel }
+            ( pivotOnPicked picked { model | selection = newSel }
             , cmds
             , outEvents ++ [ SelectionChanged newSel, TappedAt x y ]
             )
@@ -2302,6 +2376,20 @@ handleViewportEvent event ( model, cmds, outEvents ) =
                 Nothing ->
                     ( model, cmds, outEvents )
 
+        Viewport.TouchShiftChanged held ->
+            let
+                nextModel =
+                    { model | shiftHeld = held }
+
+                ( refreshed, refreshCmd, refreshEvents ) =
+                    if held then
+                        refreshPlaneDrag nextModel
+
+                    else
+                        ( nextModel, Cmd.none, [] )
+            in
+            ( refreshed, cmds ++ [ refreshCmd ], outEvents ++ refreshEvents )
+
         _ ->
             ( model, cmds, outEvents )
 
@@ -2383,34 +2471,89 @@ grabPart ( x, y ) model =
         Nothing
 
     else
-        Viewport.pickBodyPoint x y model.viewport
-            |> Maybe.andThen
-                (\hit ->
-                    -- A glued part is an obstacle, not something to grab: a press on it only selects.
-                    if isGlued hit.source model then
-                        Nothing
+        case
+            Viewport.pickBodyPoint x y model.viewport
+                |> Maybe.andThen
+                    (\hit ->
+                        -- A glued part is an obstacle, not something to grab: a press on it only selects.
+                        if isGlued hit.source model then
+                            Nothing
 
-                    else
-                        Just
-                            { kind = PlaneDrag hit.point
-                            , plane = Just (DragPlane.choose model.viewport.camera hit.point)
-                            , ids =
-                                if Set.member hit.source model.selection then
-                                    Set.toList (movableSelection model)
+                        else
+                            Just
+                                { kind = PlaneDrag hit.point
+                                , plane = Just (DragPlane.choose model.viewport.camera hit.point)
+                                , ids =
+                                    if Set.member hit.source model.selection then
+                                        Set.toList (movableSelection model)
 
-                                else
-                                    [ hit.source ]
-                            , start = ( x, y )
-                            , lastPoint = ( x, y )
-                            , original = model.document
-                            , amount = 0
-                            , elevationOffset = 0.0
-                            , axisLock = Nothing
-                            , modeAnchor = ( x, y )
-                            , baseElevation = 0.0
-                            , shiftToggle = Nothing
-                            }
+                                    else
+                                        [ hit.source ]
+                                , start = ( x, y )
+                                , lastPoint = ( x, y )
+                                , original = model.document
+                                , amount = 0
+                                , elevationOffset = 0.0
+                                , axisLock = Nothing
+                                , modeAnchor = ( x, y )
+                                , baseElevation = 0.0
+                                , shiftToggle = Nothing
+                                }
+                    )
+        of
+            Just drag ->
+                Just drag
+
+            Nothing ->
+                grabSelectedTouch ( x, y ) model
+
+
+{-| On touch in `DragPartsOrPan` mode, when a movable part is already selected,
+a press anywhere on the canvas drags the selected part along its working plane
+instead of panning the camera.
+-}
+grabSelectedTouch : ( Float, Float ) -> Model -> Maybe Drag
+grabSelectedTouch ( x, y ) model =
+    let
+        movable =
+            movableSelection model
+    in
+    if Viewport.isTouchGesture model.viewport && dragModeGrabsWithShift model.dragMode && not (Set.isEmpty movable) then
+        Edit.selectionCenter (Set.toList movable) model.document
+            |> Maybe.map
+                (\modelCentre ->
+                    let
+                        centreRender =
+                            selectionPivot movable modelCentre model
+
+                        plane0 =
+                            DragPlane.choose model.viewport.camera centreRender
+
+                        grab =
+                            Pick.screenRay model.viewport.camera model.viewport.width model.viewport.height x y
+                                |> Maybe.andThen (DragPlane.intersect plane0)
+                                |> Maybe.withDefault centreRender
+
+                        plane =
+                            DragPlane.choose model.viewport.camera grab
+                    in
+                    { kind = PlaneDrag grab
+                    , plane = Just plane
+                    , ids = Set.toList movable
+                    , start = ( x, y )
+                    , lastPoint = ( x, y )
+                    , original = model.document
+                    , amount = 0
+                    , elevationOffset = 0.0
+                    , axisLock = Nothing
+                    , modeAnchor = ( x, y )
+                    , baseElevation = 0.0
+                    , shiftToggle = Nothing
+                    }
                 )
+
+    else
+        Nothing
 
 
 {-| The grid step of a body drag on the working plane: 1 LDU while Shift is
@@ -2606,14 +2749,54 @@ movePlaneDrag initialDrag grab ( x, y ) model =
                 otherPlacements =
                     Document.placements gizmoMovedDoc
                         |> List.filter (\p -> not (List.member p.id drag.ids))
+
+                effectiveBoxOf placement =
+                    let
+                        pConn =
+                            Connectivity.extractPartConnectivity placement.part resolveLines
+
+                        rawBox =
+                            List.head pConn.boundingBoxes
+                                |> Maybe.withDefault { min = vec3 -10 -4 -10, max = vec3 10 24 10 }
+                    in
+                    Connectivity.effectiveEnvelope rawBox pConn.connections
+
+                sceneBoxes =
+                    List.map (\p -> ( p.id, p.matrix, effectiveBoxOf p )) otherPlacements
+
+                draggedOrigBoxes =
+                    List.map (\p -> ( p.id, p.matrix, effectiveBoxOf p )) originalPlacements
+
+                isValidSnap snap =
+                    if model.collisionMode == Connectivity.CollisionOff then
+                        True
+
+                    else
+                        not (Connectivity.isSnapColliding 0.5 leadP.id leadP.matrix draggedOrigBoxes sceneBoxes snap)
             in
             if model.altHeld || model.snapDistance <= 0 then
+                let
+                    draggedGizmoBoxes =
+                        originalPlacements
+                            |> List.map (\p -> ( p.id, Mat4.mul deltaMat p.matrix, effectiveBoxOf p ))
+
+                    collidingPairs =
+                        Connectivity.checkCollisions 0.5 draggedGizmoBoxes sceneBoxes
+
+                    collidingIds =
+                        Set.fromList (List.map Tuple.first collidingPairs)
+                in
                 syncDocumentLive
                     { model
                         | document = gizmoMovedDoc
                         , drag = Just { drag | amount = 0, lastPoint = ( x, y ) }
                         , activeSnap = Nothing
-                        , collidingPlacements = Set.empty
+                        , collidingPlacements =
+                            if model.collisionMode == Connectivity.CollisionOff then
+                                Set.empty
+
+                            else
+                                collidingIds
                     }
 
             else
@@ -2630,7 +2813,8 @@ movePlaneDrag initialDrag grab ( x, y ) model =
                                 )
 
                     maybeSnap =
-                        Connectivity.solveSnapWithHysteresis
+                        Connectivity.solveSnapWithHysteresisAndPredicate
+                            isValidSnap
                             model.snapDistance
                             (model.snapDistance * 1.5)
                             model.activeSnap
@@ -2651,22 +2835,48 @@ movePlaneDrag initialDrag grab ( x, y ) model =
 
                             ( snappedDoc, _ ) =
                                 Edit.apply (SetMatrix draggedSnapUpdates) drag.original
+
+                            isColliding =
+                                if model.collisionMode == Connectivity.CollisionOff then
+                                    Connectivity.isSnapColliding 0.5 leadP.id leadP.matrix draggedOrigBoxes sceneBoxes snap
+
+                                else
+                                    False
+
+                            guideWithCol =
+                                Connectivity.setGuideColliding isColliding snap.guide
                         in
                         syncDocumentLive
                             { model
                                 | document = snappedDoc
                                 , drag = Just { drag | amount = 0, lastPoint = ( x, y ) }
-                                , activeSnap = Just snap
+                                , activeSnap = Just { snap | guide = guideWithCol }
                                 , collidingPlacements = Set.empty
                             }
 
                     Nothing ->
+                        let
+                            draggedGizmoBoxes =
+                                originalPlacements
+                                    |> List.map (\p -> ( p.id, Mat4.mul deltaMat p.matrix, effectiveBoxOf p ))
+
+                            collidingPairs =
+                                Connectivity.checkCollisions 0.5 draggedGizmoBoxes sceneBoxes
+
+                            collidingIds =
+                                Set.fromList (List.map Tuple.first collidingPairs)
+                        in
                         syncDocumentLive
                             { model
                                 | document = gizmoMovedDoc
                                 , drag = Just { drag | amount = 0, lastPoint = ( x, y ) }
                                 , activeSnap = Nothing
-                                , collidingPlacements = Set.empty
+                                , collidingPlacements =
+                                    if model.collisionMode == Connectivity.CollisionOff then
+                                        Set.empty
+
+                                    else
+                                        collidingIds
                             }
 
         _ ->
@@ -2727,9 +2937,22 @@ endDrag model =
                         )
 
                     Nothing ->
+                        let
+                            ( startX, startY ) =
+                                drag.start
+
+                            pressedDraggedPart =
+                                Viewport.pickBodyPoint startX startY model.viewport
+                                    |> Maybe.map (\hit -> List.member hit.source drag.ids)
+                                    |> Maybe.withDefault False
+                        in
                         ( case drag.kind of
                             PlaneDrag _ ->
-                                pivotOnSelection released
+                                if pressedDraggedPart then
+                                    pivotOnSelection released
+
+                                else
+                                    released
 
                             _ ->
                                 released

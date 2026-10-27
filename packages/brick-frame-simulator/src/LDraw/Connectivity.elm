@@ -15,6 +15,7 @@ module LDraw.Connectivity exposing
     , extractPartConnectivity
     , invertRigid
     , isCompatible
+    , isSnapColliding
     , isStudded
     , knownCatalogPart
     , makeAxle
@@ -24,7 +25,10 @@ module LDraw.Connectivity exposing
     , snapEnterDistance
     , snapReleaseDistance
     , solveSnap
+    , solveSnapCandidates
     , solveSnapWithHysteresis
+    , solveSnapWithHysteresisAndPredicate
+    , solveSnapWithPredicate
     , studOffset
     , testOBB
     , toOBB
@@ -370,17 +374,17 @@ orthonormalBasis normalRaw tangentHint =
 -- ── Snap Solver ──────────────────────────────────────────────────────────────
 
 
-{-| Solve the best magnetic snap transformation between dragged connection points
-and candidate target points in the scene.
+{-| Find and score all compatible magnetic snap candidates within `maxDist`,
+sorted in ascending order by score (best candidate first).
 -}
-solveSnap :
+solveSnapCandidates :
     Float
     -> Int
     -> Mat4
     -> List ConnectionPoint
     -> List WorldConnectionPoint
-    -> Maybe SnapCandidate
-solveSnap maxDist rotationIndex currentMatrix draggedPoints targetPoints =
+    -> List SnapCandidate
+solveSnapCandidates maxDist rotationIndex currentMatrix draggedPoints targetPoints =
     let
         accessibleTargetPoints =
             List.filter
@@ -476,17 +480,61 @@ solveSnap maxDist rotationIndex currentMatrix draggedPoints targetPoints =
                 |> List.concatMap (\d -> List.filterMap (evalPair d) accessibleTargetPoints)
                 |> List.sortBy Tuple.first
     in
-    List.head candidates |> Maybe.map Tuple.second
+    List.map Tuple.second candidates
 
 
-{-| Solve snap with magnetic hysteresis latching:
-If an active snap candidate is provided, the connection remains latched as long as
-the dragged connection point stays within `releaseDist` (default 18.0 LDU) of the target.
-If the distance exceeds `releaseDist` or no active snap is present, candidates are
-searched within `enterDist` (default 12.0 LDU).
+{-| Solve the best magnetic snap transformation satisfying a validation predicate.
+Returns the highest-scoring candidate for which `isValid candidate` is True.
 -}
-solveSnapWithHysteresis :
+solveSnapWithPredicate :
+    (SnapCandidate -> Bool)
+    -> Float
+    -> Int
+    -> Mat4
+    -> List ConnectionPoint
+    -> List WorldConnectionPoint
+    -> Maybe SnapCandidate
+solveSnapWithPredicate isValid maxDist rotationIndex currentMatrix draggedPoints targetPoints =
+    findFirst isValid (solveSnapCandidates maxDist rotationIndex currentMatrix draggedPoints targetPoints)
+
+
+findFirst : (a -> Bool) -> List a -> Maybe a
+findFirst predicate items =
+    case items of
+        [] ->
+            Nothing
+
+        first :: rest ->
+            if predicate first then
+                Just first
+
+            else
+                findFirst predicate rest
+
+
+{-| Solve the best magnetic snap transformation between dragged connection points
+and candidate target points in the scene.
+-}
+solveSnap :
     Float
+    -> Int
+    -> Mat4
+    -> List ConnectionPoint
+    -> List WorldConnectionPoint
+    -> Maybe SnapCandidate
+solveSnap maxDist rotationIndex currentMatrix draggedPoints targetPoints =
+    solveSnapWithPredicate (\_ -> True) maxDist rotationIndex currentMatrix draggedPoints targetPoints
+
+
+{-| Solve snap with magnetic hysteresis latching and a validation predicate:
+If an active snap candidate is provided and satisfies `isValid`, the connection remains latched
+as long as the dragged connection point stays within `releaseDist` and its orientation remains valid.
+If distance exceeds `releaseDist`, orientation is incompatible, `isValid` fails, or no active snap
+is present, candidate search evaluates candidates within `enterDist` and picks the first that satisfies `isValid`.
+-}
+solveSnapWithHysteresisAndPredicate :
+    (SnapCandidate -> Bool)
+    -> Float
     -> Float
     -> Maybe SnapCandidate
     -> Int
@@ -494,7 +542,7 @@ solveSnapWithHysteresis :
     -> List ConnectionPoint
     -> List WorldConnectionPoint
     -> Maybe SnapCandidate
-solveSnapWithHysteresis enterDist releaseDist maybeActive rotationIndex currentMatrix draggedPoints targetPoints =
+solveSnapWithHysteresisAndPredicate isValid enterDist releaseDist maybeActive rotationIndex currentMatrix draggedPoints targetPoints =
     case maybeActive of
         Just active ->
             let
@@ -516,7 +564,7 @@ solveSnapWithHysteresis enterDist releaseDist maybeActive rotationIndex currentM
                         Vec3.dot draggedWorldNormal desiredNormal
                 in
                 if isDirectional active.draggedPoint.connType && cosAngle < -0.2 then
-                    solveSnap enterDist rotationIndex currentMatrix draggedPoints targetPoints
+                    solveSnapWithPredicate isValid enterDist rotationIndex currentMatrix draggedPoints targetPoints
 
                 else
                     let
@@ -525,19 +573,44 @@ solveSnapWithHysteresis enterDist releaseDist maybeActive rotationIndex currentM
 
                         guide =
                             makeGuide active.draggedPoint.connType active.targetPoint.worldPosition active.targetPoint.worldNormal False
+
+                        candidate =
+                            { active
+                                | snapMatrix = snapMat
+                                , distance = dist
+                                , guide = guide
+                            }
                     in
-                    Just
-                        { active
-                            | snapMatrix = snapMat
-                            , distance = dist
-                            , guide = guide
-                        }
+                    if isValid candidate then
+                        Just candidate
+
+                    else
+                        solveSnapWithPredicate isValid enterDist rotationIndex currentMatrix draggedPoints targetPoints
 
             else
-                solveSnap enterDist rotationIndex currentMatrix draggedPoints targetPoints
+                solveSnapWithPredicate isValid enterDist rotationIndex currentMatrix draggedPoints targetPoints
 
         Nothing ->
-            solveSnap enterDist rotationIndex currentMatrix draggedPoints targetPoints
+            solveSnapWithPredicate isValid enterDist rotationIndex currentMatrix draggedPoints targetPoints
+
+
+{-| Solve snap with magnetic hysteresis latching:
+If an active snap candidate is provided, the connection remains latched as long as
+the dragged connection point stays within `releaseDist` (default 18.0 LDU) of the target.
+If the distance exceeds `releaseDist` or no active snap is present, candidates are
+searched within `enterDist` (default 12.0 LDU).
+-}
+solveSnapWithHysteresis :
+    Float
+    -> Float
+    -> Maybe SnapCandidate
+    -> Int
+    -> Mat4
+    -> List ConnectionPoint
+    -> List WorldConnectionPoint
+    -> Maybe SnapCandidate
+solveSnapWithHysteresis enterDist releaseDist maybeActive rotationIndex currentMatrix draggedPoints targetPoints =
+    solveSnapWithHysteresisAndPredicate (\_ -> True) enterDist releaseDist maybeActive rotationIndex currentMatrix draggedPoints targetPoints
 
 
 isDirectional : ConnectionType -> Bool
@@ -906,6 +979,57 @@ checkCollisions tolerance draggedPlacements scenePlacements =
                                 Nothing
                         )
             )
+
+
+{-| Check whether applying a snap candidate causes the dragged placements to collide with scene placements.
+For Stud and AntiStud connections, all scene placements are checked (including `snap.targetPlacementId`).
+For other connection types (Technic pins/axles, clips, bars, balls), `snap.targetPlacementId` is excluded
+for the lead placement so joint mating can penetrate the target's bounding box.
+-}
+isSnapColliding :
+    Float
+    -> Int
+    -> Mat4
+    -> List ( Int, Mat4, BoundingBox3D )
+    -> List ( Int, Mat4, BoundingBox3D )
+    -> SnapCandidate
+    -> Bool
+isSnapColliding tolerance leadId leadOrigMatrix draggedOrigPlacements scenePlacements snap =
+    let
+        snapDeltaMat =
+            Mat4.mul snap.snapMatrix (invertRigid leadOrigMatrix)
+
+        draggedBoxes =
+            draggedOrigPlacements
+                |> List.map (\( id, origMat, box ) -> ( id, Mat4.mul snapDeltaMat origMat, box ))
+
+        isStudOrAntiStud =
+            case snap.draggedPoint.connType of
+                Stud ->
+                    True
+
+                AntiStud ->
+                    True
+
+                _ ->
+                    False
+
+        collidingPairs =
+            if isStudOrAntiStud then
+                checkCollisions tolerance draggedBoxes scenePlacements
+
+            else
+                let
+                    ( leadBoxes, otherBoxes ) =
+                        List.partition (\( id, _, _ ) -> id == leadId) draggedBoxes
+
+                    activeSceneBoxes =
+                        List.filter (\( id, _, _ ) -> id /= snap.targetPlacementId) scenePlacements
+                in
+                checkCollisions tolerance leadBoxes activeSceneBoxes
+                    ++ checkCollisions tolerance otherBoxes scenePlacements
+    in
+    not (List.isEmpty collidingPairs)
 
 
 

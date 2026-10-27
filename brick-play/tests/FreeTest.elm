@@ -8,6 +8,7 @@ button and `L`, the locks of a puzzle, and the two share links.
 import Expect
 import Free.Catalog as FreeCatalog
 import Html.Attributes as Attr
+import Json.Encode as Encode
 import LDraw.Document as Document
 import LDraw.Writer as Writer
 import Link
@@ -322,6 +323,30 @@ freeDockTests =
                 in
                 Query.fromHtml (view model)
                     |> Query.has [ Selector.attribute (Attr.attribute "aria-label" "Add Brick 1 x 1 (Yellow)") ]
+        , test "pressing the search box leaves its focus alone, while dock buttons keep focus on the canvas" <|
+            \_ ->
+                let
+                    mouseDownOn tag =
+                        Event.custom "mousedown"
+                            (Encode.object [ ( "target", Encode.object [ ( "tagName", Encode.string tag ) ] ) ])
+
+                    rendered =
+                        Query.fromHtml (view (open ""))
+                in
+                Expect.all
+                    [ \_ ->
+                        rendered
+                            |> Query.find [ Selector.id "play-part-search" ]
+                            |> Event.simulate (mouseDownOn "INPUT")
+                            |> Event.toResult
+                            |> Expect.err
+                    , \_ ->
+                        rendered
+                            |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Add Brick 2 x 4 (Yellow)") ]
+                            |> Event.simulate (mouseDownOn "BUTTON")
+                            |> Event.expect NoOp
+                    ]
+                    ()
         ]
 
 

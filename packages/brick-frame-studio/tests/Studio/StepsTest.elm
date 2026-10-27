@@ -269,6 +269,17 @@ tabSuite =
                             |> (\( _, _, events ) -> events)
                 in
                 Expect.equal True (List.member (Core.TappedAt 15 25) tapped)
+        , test "a one-finger tap on a brick reports TappedAt even when PressStarted captured the brick" <|
+            \_ ->
+                let
+                    tapped =
+                        bricks [ vec3 0 -24 0 ]
+                            |> Core.update (Core.ViewportMsg (Viewport.PointerTouchStart { id = 1, x = 400, y = 300 }))
+                            |> (\( m, _, _ ) -> m)
+                            |> Core.update (Core.ViewportMsg (Viewport.PointerTouchEnd 1))
+                            |> (\( _, _, events ) -> events)
+                in
+                Expect.equal True (List.member (Core.TappedAt 400 300) tapped)
         ]
 
 

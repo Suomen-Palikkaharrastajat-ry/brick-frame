@@ -30,6 +30,7 @@ import Test exposing (Test, describe, test)
 import Test.Html.Event as Event
 import Test.Html.Query as Query
 import Test.Html.Selector as Selector
+import Time
 import Viewport
 import Viewport.Shortcuts exposing (KeyEvent)
 
@@ -77,6 +78,55 @@ openTests =
                     |> send (TapTimed x y 0)
                     |> send (TapTimed x y 200)
                     |> (\m -> Expect.equal (Just 0) m.ringPart)
+        , test "double-tapping a brick with touch events opens the ring even when the camera glides after the first tap" <|
+            \_ ->
+                let
+                    -- Two bricks so the second brick is off-centre and tapping it starts a camera glide.
+                    start =
+                        builtWithTwoBricks
+                            |> send (StudioMsg Core.ClearSelection)
+
+                    -- Aim at brick 1 (at x = 20, in front of brick 0).
+                    centre1 =
+                        start.studio.viewport.instancedScene
+                            |> Maybe.andThen (\scene -> List.filter (\p -> p.source == 1) scene.placements |> List.head)
+                            |> Maybe.map .center
+                            |> Maybe.withDefault (vec3 0 0 0)
+
+                    ( x, y ) =
+                        Ring.screenPoint start.studio.viewport.camera start.studio.viewport.width start.studio.viewport.height centre1
+                            |> Maybe.withDefault ( 0, 0 )
+
+                    touchTap millis model =
+                        let
+                            ( pressed, _, _ ) =
+                                Core.update (Core.ViewportMsg (Viewport.PointerTouchStart { id = 1, x = x, y = y })) model.studio
+
+                            ( released, _, events ) =
+                                Core.update (Core.ViewportMsg (Viewport.PointerTouchEnd 1)) pressed
+
+                            afterTouch =
+                                { model | studio = released }
+                        in
+                        List.foldl
+                            (\ev acc ->
+                                case ev of
+                                    Core.TappedAt tx ty ->
+                                        send (TapTimed tx ty millis) acc
+
+                                    _ ->
+                                        acc
+                            )
+                            afterTouch
+                            events
+                in
+                start
+                    |> touchTap 100
+                    -- Advance the camera glide so brick 1 moves away from (x, y) before the second tap.
+                    |> send (StudioMsg (Core.ViewportMsg (Viewport.AnimationFrame (Time.millisToPosix 116))))
+                    |> send (StudioMsg (Core.ViewportMsg (Viewport.AnimationFrame (Time.millisToPosix 260))))
+                    |> touchTap 280
+                    |> (\m -> Expect.equal (Just 1) m.ringPart)
         , test "two taps a second apart are not a double-tap" <|
             \_ ->
                 let
@@ -186,6 +236,46 @@ closeTests =
                 openRing builtWithOneBrick
                     |> send ToggleMenu
                     |> (\m -> Expect.equal Nothing m.ringPart)
+        , test "dragging a brick shows the Shift bit-drag button, which toggles shiftHeld and resets on release" <|
+            \_ ->
+                let
+                    ( x, y ) =
+                        screenCentre builtWithOneBrick
+
+                    dragging =
+                        builtWithOneBrick
+                            |> send (StudioMsg (Core.ViewportMsg (Viewport.TouchStart [ { id = 1, x = x, y = y } ])))
+                            |> send (StudioMsg (Core.ViewportMsg (Viewport.TouchMove [ { id = 1, x = x + 30, y = y } ])))
+
+                    shifted =
+                        send ToggleDragShift dragging
+
+                    released =
+                        send (StudioMsg (Core.ViewportMsg (Viewport.TouchEnd []))) shifted
+                in
+                Expect.all
+                    [ \_ ->
+                        builtWithOneBrick
+                            |> view
+                            |> Query.fromHtml
+                            |> Query.findAll [ Selector.attribute (Attr.attribute "data-shift-drag" "") ]
+                            |> Query.count (Expect.equal 0)
+                    , \_ ->
+                        dragging
+                            |> view
+                            |> Query.fromHtml
+                            |> Query.find [ Selector.attribute (Attr.attribute "data-shift-drag" "") ]
+                            |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "false") ]
+                    , \_ -> Expect.equal True (Core.shiftHeld shifted.studio)
+                    , \_ ->
+                        shifted
+                            |> view
+                            |> Query.fromHtml
+                            |> Query.find [ Selector.attribute (Attr.attribute "data-shift-drag" "") ]
+                            |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "true") ]
+                    , \_ -> Expect.equal False (Core.shiftHeld released.studio)
+                    ]
+                    ()
         ]
 
 
