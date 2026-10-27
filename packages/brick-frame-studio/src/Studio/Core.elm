@@ -25,6 +25,7 @@ module Studio.Core exposing
     , freeSpotForPlacement
     , geometryFlattenFailed
     , geometryFlattened
+    , getDocument
     , getPlacements
     , hasSelection
     , init
@@ -429,6 +430,13 @@ hasSelection model =
 selectionCount : Model -> Int
 selectionCount model =
     Set.size model.selection
+
+
+{-| The active LDraw document.
+-}
+getDocument : Model -> Document
+getDocument model =
+    model.document
 
 
 {-| All placements in the document.

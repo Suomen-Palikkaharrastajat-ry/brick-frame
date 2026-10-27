@@ -627,10 +627,50 @@ menuTests =
                 in
                 Query.fromHtml (view opened)
                     |> Expect.all
-                        [ Query.findAll [ Selector.attribute (Attr.attribute "role" "menuitem") ] >> Query.count (Expect.equal 5)
+                        [ Query.findAll [ Selector.attribute (Attr.attribute "role" "menuitem") ] >> Query.count (Expect.equal 6)
                         , Query.has [ Selector.text "Share link" ]
+                        , Query.has [ Selector.text "Download BrickLink Studio (.io)" ]
                         , Query.has [ Selector.text "Ctrl+Shift+Z" ]
                         ]
+        , test "Download BrickLink Studio (.io) is disabled when empty and enabled when parts exist" <|
+            \_ ->
+                let
+                    ( model0, _ ) =
+                        init testFlags
+
+                    ( opened0, _ ) =
+                        update ToggleMenu model0
+
+                    ( model1, _ ) =
+                        addFirst model0
+
+                    ( opened1, _ ) =
+                        update ToggleMenu model1
+                in
+                Expect.all
+                    [ \_ ->
+                        Query.fromHtml (view opened0)
+                            |> Query.find [ Selector.attribute (Attr.attribute "role" "menuitem"), Selector.containing [ Selector.text "Download BrickLink Studio (.io)" ] ]
+                            |> Query.has [ Selector.disabled True ]
+                    , \_ ->
+                        Query.fromHtml (view opened1)
+                            |> Query.find [ Selector.attribute (Attr.attribute "role" "menuitem"), Selector.containing [ Selector.text "Download BrickLink Studio (.io)" ] ]
+                            |> Query.has [ Selector.disabled False ]
+                    ]
+                    ()
+        , test "DownloadIo update produces a command without modifying model" <|
+            \_ ->
+                let
+                    ( model0, _ ) =
+                        init testFlags
+
+                    ( model1, _ ) =
+                        addFirst model0
+
+                    ( modelAfterDownload, _ ) =
+                        update DownloadIo model1
+                in
+                Expect.equal (List.length (Core.getPlacements modelAfterDownload.studio)) 1
         , test "the kit cards show their count on the image and name it in the accessible label" <|
             \_ ->
                 let

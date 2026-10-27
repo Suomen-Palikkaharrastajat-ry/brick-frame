@@ -2,6 +2,7 @@ port module Ports exposing
     ( cancelSnapshot
     , captureRender
     , copyToClipboard
+    , downloadStudioIo
     , geometryFlattenFailed
     , geometryFlattened
     , rememberHintSeen
@@ -89,6 +90,11 @@ port snapshotReady : ({ dataUrl : String, filename : String } -> msg) -> Sub msg
 {-| Request file download of the approved snapshot.
 -}
 port saveSnapshot : { dataUrl : String, filename : String } -> Cmd msg
+
+
+{-| Request download of the model as a BrickLink Studio `.io` archive containing `model.ldr`.
+-}
+port downloadStudioIo : { filename : String, ldrText : String } -> Cmd msg
 
 
 {-| Remember in this browser that the first-selection hint has been shown, so it

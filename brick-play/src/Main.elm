@@ -94,6 +94,7 @@ import Html.Keyed as Keyed
 import Http
 import LDraw.Colors as Colors
 import LDraw.Document as Document
+import LDraw.Writer
 import Link
 import Math.Matrix4 as Mat4
 import Math.Vector3 as Vec3 exposing (Vec3)
@@ -271,6 +272,7 @@ type Msg
     | HideHint Int
     | Clear
     | FitView
+    | DownloadIo
     | TogglePlay
     | Tick Float
     | ToggleRealistic
@@ -1276,6 +1278,13 @@ step msg model =
                     Core.fitView model.studio
             in
             ( { model | studio = nextStudio }, Cmd.map StudioMsg studioCmd )
+
+        DownloadIo ->
+            let
+                ldrText =
+                    LDraw.Writer.writeDocument (Core.getDocument model.studio)
+            in
+            ( model, Ports.downloadStudioIo { filename = "model.io", ldrText = ldrText } )
 
         Tick delta ->
             if model.playing then
@@ -2481,6 +2490,7 @@ menuConfig model =
     , onClose = CloseMenu
     , items =
         [ { label = "Share link", shortcut = "", enabled = True, onSelect = MenuPicked ShareLink }
+        , { label = "Download BrickLink Studio (.io)", shortcut = "", enabled = not (List.isEmpty (Core.getPlacements model.studio)), onSelect = MenuPicked DownloadIo }
         , { label = "Undo", shortcut = "Ctrl+Z", enabled = Core.canUndo model.studio, onSelect = MenuPicked Undo }
         , { label = "Redo", shortcut = "Ctrl+Shift+Z", enabled = Core.canRedo model.studio, onSelect = MenuPicked Redo }
         , { label = "Delete", shortcut = "Del", enabled = Core.hasSelection model.studio, onSelect = MenuPicked Delete }

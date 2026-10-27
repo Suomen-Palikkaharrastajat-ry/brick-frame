@@ -1298,8 +1298,9 @@ menuTests =
                 in
                 Query.fromHtml (view opened)
                     |> Expect.all
-                        [ Query.findAll [ Selector.attribute (Attr.attribute "role" "menuitem") ] >> Query.count (Expect.equal 5)
+                        [ Query.findAll [ Selector.attribute (Attr.attribute "role" "menuitem") ] >> Query.count (Expect.equal 6)
                         , Query.has [ Selector.text "Share link" ]
+                        , Query.has [ Selector.text "Download BrickLink Studio (.io)" ]
                         , Query.findAll [ Selector.attribute (Attr.attribute "role" "tab") ] >> Query.count (Expect.equal 4)
                         , Query.hasNot [ Selector.attribute (Attr.attribute "aria-orientation" "vertical") ]
                         ]

@@ -1,4 +1,5 @@
 import './main.css'
+import { strToU8, zipSync } from 'fflate'
 import { initBricksRuntime } from '../packages/brick-frame-viewport/runtime/initBricksRuntime.js'
 import { initSnapshots } from '../packages/brick-frame-viewport/runtime/snapshot.js'
 import { initThumbnails } from '../packages/brick-frame-viewport/runtime/thumbnail-pipeline.js'
@@ -79,6 +80,23 @@ if (runtime.app?.ports?.copyToClipboard) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(toCopy).catch(() => {})
     }
+  })
+}
+
+if (runtime.app?.ports?.downloadStudioIo) {
+  runtime.app.ports.downloadStudioIo.subscribe(({ filename, ldrText }) => {
+    const zipData = zipSync({
+      'model.ldr': strToU8(ldrText),
+    })
+    const blob = new Blob([zipData], { type: 'application/octet-stream' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename || 'model.io'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
   })
 }
 
