@@ -1037,6 +1037,22 @@ export function initBricksRuntime(options) {
     addEventListener(suppressGestureTarget, 'gestureend', suppressGestureZoom, { passive: false })
   }
 
+  if (ownerDocument && ownerDocument !== suppressGestureTarget) {
+    addEventListener(ownerDocument, 'gesturestart', suppressGestureZoom, { passive: false })
+    addEventListener(ownerDocument, 'gesturechange', suppressGestureZoom, { passive: false })
+    addEventListener(ownerDocument, 'gestureend', suppressGestureZoom, { passive: false })
+  }
+
+  function suppressMultiTouchZoom(event) {
+    if (event.touches && event.touches.length > 1) {
+      event.preventDefault()
+    }
+  }
+
+  if (ownerDocument) {
+    addEventListener(ownerDocument, 'touchmove', suppressMultiTouchZoom, { passive: false })
+  }
+
   const ownerWindow = ownerDocument?.defaultView ?? (typeof window !== 'undefined' ? window : null)
   let hasResizeObserver = false
 

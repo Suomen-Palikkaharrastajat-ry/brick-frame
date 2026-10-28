@@ -51,7 +51,7 @@
     margin: 0;
     padding: 0;
     font-family: var(--font-sans);
-    touch-action: none;
+    touch-action: pan-x pan-y;
     overscroll-behavior: none;
     -webkit-touch-callout: none;
     -webkit-user-select: none;
@@ -238,6 +238,18 @@ button,
   -webkit-tap-highlight-color: transparent;
 }
 
-button {
+button,
+[role="button"],
+.part-card {
   touch-action: manipulation;
+}
+
+.scroll-thin,
+.scroll-none,
+.timeline-nav {
+  touch-action: pan-x pan-y;
+}
+
+canvas {
+  touch-action: none;
 }
