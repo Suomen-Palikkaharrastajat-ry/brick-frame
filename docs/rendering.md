@@ -320,7 +320,9 @@ same figure as before.
   capture. The canvas suppresses the context menu, and the middle button's
   default autoscroll is prevented. Held movement keys do not move the camera
   while a capture is active.
-- **Touch:** 2-finger pan + pinch zoom in every host. One finger orbits in the
+- **Touch:** 2-finger pan + pinch zoom in the viewer and the studio; in Brick
+  Play two fingers orbit instead (`Viewport.setTwoFingerOrbits`, through
+  `Core.setTwoFingerOrbits`), see below. One finger orbits in the
   viewer (`OneFingerOrbits`, since touch has no right button). One finger on
   empty canvas pans in the studio and Brick Play
   (`OneFingerPans` in Play; the studio workspace's empty-press
@@ -414,6 +416,13 @@ A two-finger gesture starts as pure pan and only engages zoom once the fingers
 have moved `pinchZoomDeadZone` (12 px) apart or together, latching for the rest
 of the gesture. Zoom and pan are then both applied — pan first, so the
 distance-dependent pan scale is taken once per frame.
+
+With `Viewport.setTwoFingerOrbits True` (Brick Play), the two-finger midpoint
+orbits the camera instead of panning — on both axes, at the same rate and signs
+as a mouse orbit drag (`Navigation.applyLook`, so it turns the head in Walk) —
+mirroring the one-finger pan. It engages once the midpoint has travelled
+`twoFingerOrbitDeadZone` (12 px), so a pinch with a wobbling midpoint only
+zooms; the pinch zoom is unchanged, and the twist rotation is off.
 
 `Ports.setUrlHash` is issued at gesture *end*, not on every move, and the JS
 side coalesces writes to one `history.replaceState` per animation frame inside a

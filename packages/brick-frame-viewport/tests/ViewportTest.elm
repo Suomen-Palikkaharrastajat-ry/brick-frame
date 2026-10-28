@@ -798,6 +798,72 @@ suite =
                         , \_ -> Expect.notEqual initialTarget panned.camera.target
                         ]
                         ()
+            , test "with setTwoFingerOrbits, a two-finger drag orbits on both axes without panning" <|
+                \_ ->
+                    let
+                        started =
+                            Viewport.setTwoFingerOrbits True idle
+                                |> update (PointerTouchStart { id = 1, x = 100, y = 100 })
+                                |> Tuple.first
+                                |> update (PointerTouchStart { id = 2, x = 200, y = 100 })
+                                |> Tuple.first
+
+                        -- Within the dead-zone: the midpoint travels 5 px.
+                        nudged =
+                            started
+                                |> update (PointerTouchMove { id = 1, x = 105, y = 100 })
+                                |> Tuple.first
+                                |> update (PointerTouchMove { id = 2, x = 205, y = 100 })
+                                |> Tuple.first
+
+                        -- Diagonal drag: right and up, both fingers together.
+                        dragged =
+                            nudged
+                                |> update (PointerTouchMove { id = 1, x = 140, y = 70 })
+                                |> Tuple.first
+                                |> update (PointerTouchMove { id = 2, x = 240, y = 70 })
+                                |> Tuple.first
+                    in
+                    Expect.all
+                        [ \_ -> Expect.within (Expect.Absolute 1.0e-6) started.camera.azimuth nudged.camera.azimuth
+                        , \_ -> Expect.greaterThan 1.0e-4 (abs (started.camera.azimuth - dragged.camera.azimuth))
+                        , \_ -> Expect.greaterThan 1.0e-4 (abs (started.camera.elevation - dragged.camera.elevation))
+                        , \_ -> Expect.equal started.camera.target dragged.camera.target
+                        , \_ -> Expect.within (Expect.Absolute 1.0e-6) started.camera.distance dragged.camera.distance
+                        ]
+                        ()
+            , test "with setTwoFingerOrbits, a pinch still zooms and a twist does not rotate" <|
+                \_ ->
+                    let
+                        started =
+                            Viewport.setTwoFingerOrbits True idle
+                                |> update (PointerTouchStart { id = 1, x = 100, y = 100 })
+                                |> Tuple.first
+                                |> update (PointerTouchStart { id = 2, x = 200, y = 100 })
+                                |> Tuple.first
+
+                        pinched =
+                            started
+                                |> update (PointerTouchMove { id = 1, x = 80, y = 100 })
+                                |> Tuple.first
+                                |> update (PointerTouchMove { id = 2, x = 220, y = 100 })
+                                |> Tuple.first
+
+                        -- Twist both fingers 20 degrees about their midpoint.
+                        twisted =
+                            started
+                                |> update (PointerTouchMove { id = 1, x = 150 - 50 * cos (degrees 20), y = 100 - 50 * sin (degrees 20) })
+                                |> Tuple.first
+                                |> update (PointerTouchMove { id = 2, x = 150 + 50 * cos (degrees 20), y = 100 + 50 * sin (degrees 20) })
+                                |> Tuple.first
+                    in
+                    Expect.all
+                        [ \_ -> Expect.greaterThan pinched.camera.distance started.camera.distance
+                        , \_ -> Expect.within (Expect.Absolute 1.0e-6) started.camera.azimuth pinched.camera.azimuth
+                        , \_ -> Expect.within (Expect.Absolute 1.0e-6) started.camera.azimuth twisted.camera.azimuth
+                        , \_ -> Expect.equal started.camera.target twisted.camera.target
+                        ]
+                        ()
             ]
         , describe "keyboard"
             [ test "a plain key press is handed to the host and held" <|

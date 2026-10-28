@@ -62,6 +62,7 @@ module Studio.Core exposing
     , setShiftHeld
     , setSnapDistance
     , setTool
+    , setTwoFingerOrbits
     , shiftHeld
     , subscriptions
     , turnSelected
@@ -174,7 +175,7 @@ type alias Drag =
     part to move it, left-drag empty space to pan, right-drag to orbit, wheel to
     zoom. A click on empty canvas still clears the selection. A single finger
     on empty canvas does what `oneFinger` says (see `OneFinger`); two fingers
-    pan and pinch as always.
+    pan and pinch, unless `setTwoFingerOrbits` makes them orbit.
 
 -}
 type DragMode
@@ -581,6 +582,16 @@ setDragMode mode model =
             | dragMode = mode
             , viewport = Viewport.setShiftPressGrabs (dragModeGrabsWithShift mode) model.viewport
         }
+
+
+{-| Make a two-finger drag on the canvas orbit the camera (on both axes) instead
+of panning, while spreading or pinching the fingers still zooms; see
+`Viewport.setTwoFingerOrbits`. For a host whose one-finger drag already pans
+(`DragPartsOrPan OneFingerPans`, Brick Play). Off by default.
+-}
+setTwoFingerOrbits : Bool -> Model -> Model
+setTwoFingerOrbits enabled model =
+    { model | viewport = Viewport.setTwoFingerOrbits enabled model.viewport }
 
 
 {-| Keep the viewport's `secondFingerShift` flag in sync with an active drag in

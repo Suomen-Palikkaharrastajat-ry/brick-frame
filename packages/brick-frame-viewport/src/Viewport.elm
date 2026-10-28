@@ -33,6 +33,7 @@ module Viewport exposing
     , setSecondFingerShift
     , setShiftPressGrabs
     , setSpacePan
+    , setTwoFingerOrbits
     , snapshotRequest
     , subscriptions
     , update
@@ -155,6 +156,11 @@ it, ordinary finger jitter during a pan bled into the zoom level.
 Similarly, `startAngle` and `rotateEngaged` implement the rotation dead-zone:
 rotation stays disengaged until the twist exceeds `pinchRotateDeadZone`.
 
+With `twoFingerOrbits` on, the midpoint orbits instead of panning, and the twist
+is ignored. `startMidX`, `startMidY` and `orbitEngaged` are the orbit
+dead-zone: the camera stays still until the midpoint has travelled
+`twoFingerOrbitDeadZone`, so a pinch whose midpoint wobbles only zooms.
+
 -}
 type alias PinchState =
     { idA : Int
@@ -167,6 +173,9 @@ type alias PinchState =
     , angle : Float
     , startAngle : Float
     , rotateEngaged : Bool
+    , startMidX : Float
+    , startMidY : Float
+    , orbitEngaged : Bool
     }
 
 
@@ -184,6 +193,14 @@ starts rotating the camera.
 pinchRotateDeadZone : Float
 pinchRotateDeadZone =
     degrees 5
+
+
+{-| How far, in pixels, the midpoint of two fingers must travel before a
+two-finger drag starts orbiting (with `twoFingerOrbits` on).
+-}
+twoFingerOrbitDeadZone : Float
+twoFingerOrbitDeadZone =
+    12.0
 
 
 type HeldControl
@@ -228,6 +245,7 @@ type alias Model =
     , secondFingerShift : Bool
     , shiftPressGrabs : Bool
     , spacePan : Bool
+    , twoFingerOrbits : Bool
     , loadingProgressPct : Float
     , loadingProgressTick : Maybe Time.Posix
     , heldControl : HeldControl
@@ -355,6 +373,7 @@ init config =
       , secondFingerShift = False
       , shiftPressGrabs = False
       , spacePan = False
+      , twoFingerOrbits = False
       , loadingProgressPct = 0.0
       , loadingProgressTick = Nothing
       , heldControl = NoHeldControl
@@ -1566,6 +1585,18 @@ setSpacePan enabled model =
     { model | spacePan = enabled }
 
 
+{-| Make a two-finger drag orbit the camera, the way a one-finger drag pans in
+Brick Play: the fingers' midpoint turns the view on both axes (sideways =
+azimuth, up and down = elevation, at the same rate as a mouse orbit drag), while
+moving the fingers apart or together still pinch-zooms. The twist rotation and
+the two-finger pan are off in this mode. Off by default: two fingers pan,
+pinch-zoom and twist-rotate (viewer, studio).
+-}
+setTwoFingerOrbits : Bool -> Model -> Model
+setTwoFingerOrbits enabled model =
+    { model | twoFingerOrbits = enabled }
+
+
 {-| Take the current mouse or touch gesture for the host: the camera stops
 following it, and the host receives `DragMoved` and `DragEnded` instead. Call
 from the handler of `PressStarted`.
@@ -1692,14 +1723,41 @@ advanceTouchGesture touches model =
                                 > pinchZoomDeadZone
 
                         rotateEngaged =
-                            pinch.rotateEngaged
-                                || abs (normalizeAngle (newAngle - pinch.startAngle))
-                                > pinchRotateDeadZone
+                            not model.twoFingerOrbits
+                                && (pinch.rotateEngaged
+                                        || abs (normalizeAngle (newAngle - pinch.startAngle))
+                                        > pinchRotateDeadZone
+                                   )
 
-                        -- Pan first, so the pixels-to-world scale is taken at a
-                        -- single distance for the whole frame.
+                        orbitEngaged =
+                            model.twoFingerOrbits
+                                && (pinch.orbitEngaged
+                                        || hypot (midX - pinch.startMidX) (midY - pinch.startMidY)
+                                        > twoFingerOrbitDeadZone
+                                   )
+
+                        -- Pan (or orbit) first, so the pixels-to-world scale is
+                        -- taken at a single distance for the whole frame.
                         cameraAfterPan =
-                            Camera.onPan (midX - pinch.midX) (midY - pinch.midY) model.camera
+                            if model.twoFingerOrbits then
+                                if orbitEngaged then
+                                    let
+                                        -- Same rate and signs as a mouse orbit drag
+                                        -- (`Camera.onMouseMove`): the canvas height is
+                                        -- one full turn.
+                                        radiansPerPixel =
+                                            2 * pi / max 1 model.camera.viewportHeight
+                                    in
+                                    Navigation.applyLook
+                                        (-(midX - pinch.midX) * radiansPerPixel)
+                                        ((midY - pinch.midY) * radiansPerPixel)
+                                        model.camera
+
+                                else
+                                    model.camera
+
+                            else
+                                Camera.onPan (midX - pinch.midX) (midY - pinch.midY) model.camera
 
                         cameraAfterZoom =
                             if zoomEngaged && newDistance > 0 && pinch.distance > 0 then
@@ -1726,6 +1784,7 @@ advanceTouchGesture touches model =
                                     , zoomEngaged = zoomEngaged
                                     , angle = newAngle
                                     , rotateEngaged = rotateEngaged
+                                    , orbitEngaged = orbitEngaged
                                 }
                         , cameraMode = CameraManual
                     }
@@ -1809,6 +1868,11 @@ touchDistance p1 p2 =
     sqrt ((dx * dx) + (dy * dy))
 
 
+hypot : Float -> Float -> Float
+hypot dx dy =
+    sqrt ((dx * dx) + (dy * dy))
+
+
 touchMidpoint : TouchPoint -> TouchPoint -> ( Float, Float )
 touchMidpoint p1 p2 =
     ( (p1.x + p2.x) / 2
@@ -1839,7 +1903,8 @@ normalizeAngle delta =
 
 {-| Start a two-finger gesture as pure pan; zoom engages once the fingers move
 past `pinchZoomDeadZone`, and rotation engages once they twist past
-`pinchRotateDeadZone`.
+`pinchRotateDeadZone` (with `twoFingerOrbits` on, orbiting engages once the
+midpoint travels past `twoFingerOrbitDeadZone` instead).
 -}
 beginPinch : TouchPoint -> TouchPoint -> PinchState
 beginPinch p1 p2 =
@@ -1863,6 +1928,9 @@ beginPinch p1 p2 =
     , angle = angle
     , startAngle = angle
     , rotateEngaged = False
+    , startMidX = midX
+    , startMidY = midY
+    , orbitEngaged = False
     }
 
 

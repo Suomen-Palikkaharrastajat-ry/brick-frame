@@ -395,8 +395,10 @@ init flags =
                 |> Tuple.mapFirst
                     (Core.setGizmoStyle Core.NoGizmo
                         -- Mouse: left-drag empty space pans, right-drag orbits.
-                        -- Touch: one finger on empty space pans; the globe orbits.
+                        -- Touch: one finger on empty space pans, two fingers orbit
+                        -- (and pinch-zoom); the globe orbits too.
                         >> Core.setDragMode (Core.DragPartsOrPan Core.OneFingerPans)
+                        >> Core.setTwoFingerOrbits True
                         -- Glue locks parts in a puzzle; free building may glue and unglue.
                         >> Core.setGlueEditable free
                         >> Step.apply Step.Stud
@@ -3373,7 +3375,8 @@ helpRows model =
                , ( "Drag empty space", "Pan" )
                , ( "Right-drag", "Orbit" )
                , ( "Middle drag", "Pan" )
-               , ( "One finger on empty space", "Pan (two fingers: pan and pinch-zoom)" )
+               , ( "One finger on empty space", "Pan" )
+               , ( "Two fingers on empty space", "Orbit; spread or pinch to zoom" )
                , ( "Wheel  + -", "Zoom" )
                , ( "1 2 3 4 5 6  `", "Views: front, back, left, right, top, bottom, 3/4" )
                , ( "G", "Street-level walk, on / off" )
