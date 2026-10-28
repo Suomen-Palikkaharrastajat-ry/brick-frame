@@ -1,6 +1,6 @@
 module HamburgerMenuTest exposing (suite)
 
-{-| Tests for the shared top-right menu (`UI.HamburgerMenu`) and the compact
+{-| Tests for the shared top-left menu (`UI.HamburgerMenu`) and the compact
 picture card (`UI.PartCard.compactView`).
 -}
 

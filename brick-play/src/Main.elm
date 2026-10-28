@@ -58,19 +58,23 @@ hidden. Technic parts (gears, axles, beams, pins) go on the shared axle line in
 either mode (`Technic.Placement`), and other parts rest on the ground. Any
 edit stops a running machine and rewinds it to 0.
 
-The top-right menu (`UI.HamburgerMenu`) holds share link, undo, redo, delete and
-clear, beside a visible ? button that opens the shortcut list and the play button;
-Escape closes the menu first. Share link copies a puzzle: for a free build, its
-glued parts stay on the board and everything else becomes the kit.
+The top-left toolbar holds the menu (`UI.HamburgerMenu` — share link, download
+.io, undo, redo, delete and clear), a visible ? button that opens the shortcut
+list, the play button (in Technic mode), and any temporary info pills (Shift · Bit,
+Tidy up, gear mesh status, first-select hint, touch part name, and the
+accomplishment banner), growing horizontally so the vertical space above the
+brick palette stays completely free. Escape closes the menu first. Share link
+copies a puzzle: for a free build, its glued parts stay on the board and
+everything else becomes the kit.
 
 Tidy up (`Studio.Health`) checks the build after each change: a studded part that
-sits off the stud grid, or parts that overlap, show a pill above the dock
+sits off the stud grid, or parts that overlap, show a pill in the top-left bar
 ("2 loose bricks · Tidy up"). A healthy build shows nothing. The pill opens a
 preview: the parts that move are outlined, a translucent ghost shows each new
 place, and Apply makes all the moves one undo step. While the preview is open
 editing is paused; Escape or Cancel leaves the build as it was.
 
-The first time a part is selected a small hint above the dock says how to open
+The first time a part is selected a small hint in the top-left bar says how to open
 the ring. It goes after five seconds, or when the ring opens, and is remembered
 per browser (`hintSeen`, a flag the JS side keeps in localStorage).
 
@@ -909,8 +913,8 @@ updateApp msg model =
 
 
 {-| The first-selection hint: the first time a part is selected, and the hint
-has not been seen in this browser, it shows above the dock for five seconds and
-is remembered as seen. Any selection counts, however it was made.
+has not been seen in this browser, it shows in the top-left bar for five seconds
+and is remembered as seen. Any selection counts, however it was made.
 -}
 withHint : Model -> ( Model, Cmd Msg )
 withHint model =
@@ -1942,45 +1946,46 @@ view model =
         , Attr.style "background" "var(--color-brand)"
         , Attr.style "font-family" "var(--font-sans)"
         ]
-        [ -- One row across the top: the accomplishment banner (Technic mode) sits in
-          -- the middle, the help, play and menu buttons on the right. The banner
-          -- shares the buttons' height and top edge, and shrinks before it reaches them.
+        [ -- Top-left toolbar and status bar: the menu, help and play buttons sit at
+          -- the top left, and temporary info pills (Shift · Bit, Tidy up, gear mesh
+          -- status, first-select hint, touch part name, and accomplishment banner)
+          -- grow horizontally beside them, keeping the vertical space above the
+          -- brick palette free.
           header
             [ Attr.style "position" "absolute"
-            , Attr.style "top" "1rem"
-            , Attr.style "left" "1rem"
-            , Attr.style "right" "1rem"
-            , Attr.style "height" "2.25rem"
-            , Attr.style "display" "grid"
-            , Attr.style "grid-template-columns" "1fr minmax(0, auto) 1fr"
+            , Attr.style "top" "0.75rem"
+            , Attr.style "left" "0.75rem"
+            , Attr.style "right" "0.75rem"
+            , Attr.style "display" "flex"
+            , Attr.style "flex-wrap" "wrap"
             , Attr.style "align-items" "center"
-            , Attr.style "gap" "0.75rem"
+            , Attr.style "gap" "0.5rem"
             , Attr.style "z-index" "20"
             , Attr.style "pointer-events" "none"
             , keepFocusOnCanvas
             ]
             [ h1 [ Attr.class "sr-only" ] [ text "Palikkakehys Play" ]
-            , div [] []
+            , HamburgerMenu.view (menuConfig model)
+            , helpButton
+            , if technicMode model then
+                playButton model.playing
+
+              else
+                text ""
+            , shiftDragRow model
+            , tidyRow model
+            , if technicMode model then
+                gearRow model
+
+              else
+                text ""
+            , hintRow model
+            , touchLabel model
             , if accomplished then
                 accomplishmentBanner gearCount
 
               else
-                div [ Attr.style "display" "none" ] []
-            , div
-                [ Attr.style "justify-self" "end"
-                , Attr.style "display" "flex"
-                , Attr.style "align-items" "center"
-                , Attr.style "gap" "0.5rem"
-                , Attr.style "pointer-events" "auto"
-                ]
-                [ helpButton
-                , if technicMode model then
-                    playButton model.playing
-
-                  else
-                    text ""
-                , HamburgerMenu.view (menuConfig model)
-                ]
+                text ""
             ]
 
         -- 3D WebGL Canvas
@@ -2019,8 +2024,7 @@ view model =
           else
             text ""
 
-        -- Bottom: the gear pill (Technic mode), the tidy pill and the first-select
-        -- hint float above the dock
+        -- Bottom: the brick palette / kit dock (or narrow row with camera toggle)
         , bottomArea model
         , case model.toast of
             Just t ->
@@ -2047,7 +2051,7 @@ view model =
 
 
 {-| The Tidy up pill: shown only when the build has problems and no preview is
-open. It sits in the bottom column, beside the gear pill, above the action bar.
+open. It sits in the top-left toolbar row.
 -}
 tidyRow : Model -> Html Msg
 tidyRow model =
@@ -2302,9 +2306,10 @@ isNarrow model =
     model.windowWidth < narrowWidth
 
 
-{-| The bottom area: the gear pill (Technic mode only), the Tidy up pill, the
-first-select hint, then the dock. On a narrow window the dock row also carries the
-camera toggle, and shows the camera globe instead of the dock while the toggle is on.
+{-| The bottom area: the dock on a wide window, or `narrowRow` (the dock, mobile
+context toolbar or camera globe, plus the camera toggle) on a narrow window.
+All temporary status pills sit in the top-left toolbar, keeping the space above
+the dock free.
 -}
 bottomArea : Model -> Html Msg
 bottomArea model =
@@ -2314,22 +2319,12 @@ bottomArea model =
          , Attr.style "display" "flex"
          , Attr.style "flex-direction" "column"
          , Attr.style "align-items" "center"
-         , Attr.style "gap" "0.5rem"
          , Attr.style "z-index" "10"
          , Attr.style "pointer-events" "none"
          ]
             ++ dockPlacement model.windowWidth
         )
-        [ if technicMode model then
-            gearRow model
-
-          else
-            text ""
-        , tidyRow model
-        , hintRow model
-        , shiftDragRow model
-        , touchLabel model
-        , if isNarrow model then
+        [ if isNarrow model then
             narrowRow model
 
           else
@@ -2337,9 +2332,9 @@ bottomArea model =
         ]
 
 
-{-| The Shift · Bit toggle pill shown above the palette or mobile context toolbar
-whenever a movable brick is selected or being dragged: tapping or holding it
-switches body drags to 1-LDU bit-dragging without magnetic snapping.
+{-| The Shift · Bit toggle pill shown in the top-left toolbar whenever a movable
+brick is selected or being dragged: tapping or holding it switches body drags to
+1-LDU bit-dragging without magnetic snapping.
 -}
 shiftDragRow : Model -> Html Msg
 shiftDragRow model =
@@ -2375,8 +2370,8 @@ shiftDragRow model =
                 , Attr.style "display" "inline-flex"
                 , Attr.style "align-items" "center"
                 , Attr.style "gap" "0.375rem"
-                , Attr.style "min-height" "2.5rem"
-                , Attr.style "padding" "0.25rem 0.75rem"
+                , Attr.style "height" "2.25rem"
+                , Attr.style "padding" "0 0.75rem"
                 , Attr.style "border-radius" "9999px"
                 , Attr.style "border"
                     (if active then
@@ -2549,8 +2544,8 @@ globeControl model =
 
 
 {-| On touch screens, where tooltips never show: the name of the dock part last
-tapped, above the dock. Hidden while the camera globe or mobile context menu takes
-the bottom row.
+tapped, in the top-left toolbar. Hidden while the camera globe or mobile context
+menu takes the bottom row.
 -}
 touchLabel : Model -> Html Msg
 touchLabel model =
@@ -2606,40 +2601,33 @@ dockPlacement windowWidth =
         ]
 
 
-{-| The row holding the gear mesh status pill, truncated rather than pushing the
-action bar off a phone.
+{-| The gear mesh status pill, keyed by its text so a changed status replaces it,
+and truncated rather than overflowing a narrow screen.
 -}
 gearRow : Model -> Html Msg
 gearRow model =
-    div
-        [ Attr.style "display" "flex"
-        , Attr.style "justify-content" "center"
-        , Attr.style "max-width" "100%"
-        , Attr.style "min-width" "0"
-        , Attr.style "overflow" "hidden"
-        , Attr.style "white-space" "nowrap"
-        ]
-        [ gearPill model ]
-
-
-{-| The gear feedback pill, keyed by its text so a changed status replaces it.
--}
-gearPill : Model -> Html Msg
-gearPill model =
     case GearFeedback.gearFeedback (Set.toList model.studio.selection) model.studio.document of
         Just feedback ->
             let
                 label =
                     GearFeedback.feedbackText feedback
             in
-            Keyed.node "span" [ Attr.style "display" "contents" ] [ ( label, GearFeedback.pill feedback ) ]
+            div
+                [ Attr.style "display" "flex"
+                , Attr.style "justify-content" "center"
+                , Attr.style "max-width" "100%"
+                , Attr.style "min-width" "0"
+                , Attr.style "overflow" "hidden"
+                , Attr.style "white-space" "nowrap"
+                ]
+                [ Keyed.node "span" [ Attr.style "display" "contents" ] [ ( label, GearFeedback.pill feedback ) ] ]
 
         Nothing ->
             text ""
 
 
-{-| The top-right menu: undo, redo, delete, clear and the shortcut list. Each
-item does what its keyboard shortcut does.
+{-| The top-left menu: share link, download .io, undo, redo, delete and clear.
+Each item does what its keyboard shortcut does.
 -}
 menuConfig : Model -> HamburgerMenu.Config Msg
 menuConfig model =
@@ -2680,6 +2668,7 @@ helpButton =
         , Attr.attribute "aria-label" "Keyboard shortcuts (?)"
         , Attr.title "Keyboard shortcuts (?)"
         , Attr.style "display" "flex"
+        , Attr.style "flex-shrink" "0"
         , Attr.style "align-items" "center"
         , Attr.style "justify-content" "center"
         , Attr.style "width" "2.25rem"
@@ -2690,6 +2679,7 @@ helpButton =
         , Attr.style "background" "rgba(5, 19, 29, 0.85)"
         , Attr.style "color" "var(--color-text-on-dark)"
         , Attr.style "cursor" "pointer"
+        , Attr.style "pointer-events" "auto"
         , Attr.style "transition" "all 150ms ease"
         , Attr.class "touch-target"
         ]
@@ -2811,6 +2801,7 @@ ringConfig model id =
     , glued = Core.selectionGlued model.studio
     , movable = Core.selectionMovable model.studio
     , step = model.stepSize
+    , coarsePointer = model.coarsePointer || isNarrow model
     , onTurn = TurnSelection
     , onRaise = RaiseSelection
     , onLower = LowerSelection
@@ -2822,7 +2813,7 @@ ringConfig model id =
     }
 
 
-{-| The first-selection hint, a small line above the dock that does not take
+{-| The first-selection hint, a small pill in the top-left bar that does not take
 pointer events. Its words depend on whether the device is a touch screen.
 -}
 hintRow : Model -> Html Msg
@@ -3237,7 +3228,7 @@ only in Technic mode, where it applies.
 helpRows : Model -> List ( String, List ( String, String ) )
 helpRows model =
     [ ( "Build"
-      , [ ( "Menu, top right", "Share link, undo, redo, delete, clear, and this list" )
+      , [ ( "Menu, top left", "Share link, undo, redo, delete, clear, and this list" )
         , ( "Drag a part", "Move it as seen from the camera (snaps to the move step)" )
         , ( "Double-click a part, or double-tap", "Open its ring: turn, tip, raise, lower, delete, glue, and the move pad" )
         , ( "Ring: Stud, ½ stud, Bit", "The move step: Stud 20 LDU sideways and 24 up or down; ½ stud 10 and 8; Bit 1 LDU" )
@@ -3251,7 +3242,7 @@ helpRows model =
         , ( "Ctrl + Shift + Z  Ctrl + Y", "Redo" )
         , ( "Ctrl + A", "Select all" )
         , ( "Ctrl + click  Shift + click", "Add to or remove from the selection" )
-        , ( "Tidy up (pill above the dock)", "Shown when parts sit off the studs or overlap. Tidy up previews the moves as ghosts; Apply makes them one undo step, Cancel or Esc changes nothing" )
+        , ( "Tidy up (pill, top left)", "Shown when parts sit off the studs or overlap. Tidy up previews the moves as ghosts; Apply makes them one undo step, Cancel or Esc changes nothing" )
         , ( "Esc", "Close the ring, then cancel a drag, or deselect" )
         ]
             ++ (if model.free then
@@ -3340,8 +3331,10 @@ playButton playing =
                 "var(--color-text-on-dark)"
             )
         , Attr.style "cursor" "pointer"
+        , Attr.style "pointer-events" "auto"
         , Attr.style "transition" "all 150ms ease"
         , Attr.style "display" "flex"
+        , Attr.style "flex-shrink" "0"
         , Attr.style "align-items" "center"
         , Attr.style "gap" "0.375rem"
         , Attr.style "white-space" "nowrap"

@@ -236,7 +236,7 @@ closeTests =
                 openRing builtWithOneBrick
                     |> send ToggleMenu
                     |> (\m -> Expect.equal Nothing m.ringPart)
-        , test "selecting a movable brick shows the Shift · Bit button above the palette, which toggles shiftHeld and resets on drag release" <|
+        , test "selecting a movable brick shows the Shift · Bit button in the top-left toolbar, which toggles shiftHeld and resets on drag release" <|
             \_ ->
                 let
                     unselected =
@@ -315,6 +315,28 @@ closeTests =
                             |> Query.has [ Selector.attribute (Attr.attribute "aria-pressed" "false") ]
                     ]
                     ()
+        , test "the top-left header holds the menu, help, Shift · Bit, Tidy up and hint pills so space above the palette stays free" <|
+            \_ ->
+                let
+                    withProblems =
+                        builtOnly
+                            |> send (StudioMsg (Core.ResetDocument (Document.parse misaligned)))
+                            |> send (StudioMsg (Core.SelectOnly 0))
+
+                    headerNode =
+                        withProblems
+                            |> view
+                            |> Query.fromHtml
+                            |> Query.find [ Selector.tag "header" ]
+                in
+                Expect.all
+                    [ \_ -> headerNode |> Query.findAll [ Selector.attribute (Attr.attribute "aria-label" "Menu") ] |> Query.count (Expect.equal 1)
+                    , \_ -> headerNode |> Query.findAll [ Selector.attribute (Attr.attribute "aria-label" "Keyboard shortcuts (?)") ] |> Query.count (Expect.equal 1)
+                    , \_ -> headerNode |> Query.findAll [ Selector.attribute (Attr.attribute "data-shift-drag" "") ] |> Query.count (Expect.equal 1)
+                    , \_ -> headerNode |> Query.findAll [ Selector.attribute (Attr.attribute "data-tidy-pill" "") ] |> Query.count (Expect.equal 1)
+                    , \_ -> headerNode |> Query.findAll [ Selector.attribute (Attr.attribute "data-play-hint" "") ] |> Query.count (Expect.equal 1)
+                    ]
+                    ()
         ]
 
 
@@ -335,6 +357,7 @@ ringTests =
                     , glued = False
                     , movable = True
                     , step = Step.Stud
+                    , coarsePointer = False
                     , onTurn = \_ -> NoOp
                     , onRaise = NoOp
                     , onLower = NoOp
@@ -397,6 +420,62 @@ ringTests =
                     |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Bit step") ]
                     |> Event.simulate Event.click
                     |> Event.expect (SetStepSize Step.Bit)
+        , test "desktop shows keyboard characters on the movement pad" <|
+            \_ ->
+                let
+                    ring =
+                        openRing builtWithOneBrick
+                            |> view
+                            |> Query.fromHtml
+                in
+                Expect.all
+                    [ \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Lower") ] |> Query.has [ Selector.text "Q" ]
+                    , \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Move away (W)") ] |> Query.has [ Selector.text "W" ]
+                    , \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Raise") ] |> Query.has [ Selector.text "E" ]
+                    , \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Move left (A)") ] |> Query.has [ Selector.text "A" ]
+                    , \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Move toward (S)") ] |> Query.has [ Selector.text "S" ]
+                    , \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Move right (D)") ] |> Query.has [ Selector.text "D" ]
+                    ]
+                    ()
+        , test "mobile / touch device shows arrow icons on the movement pad" <|
+            \_ ->
+                let
+                    ring =
+                        freshModel False True
+                            |> withBrickGeometry
+                            |> send (AddFreePart { file = "3001.dat", color = 14, name = "Brick 2 x 4" })
+                            |> scened
+                            |> openRing
+                            |> view
+                            |> Query.fromHtml
+                in
+                Expect.all
+                    [ \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Lower") ] |> Query.has [ Selector.tag "svg" ]
+                    , \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Move away (W)") ] |> Query.has [ Selector.tag "svg" ]
+                    , \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Raise") ] |> Query.has [ Selector.tag "svg" ]
+                    , \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Move left (A)") ] |> Query.has [ Selector.tag "svg" ]
+                    , \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Move toward (S)") ] |> Query.has [ Selector.tag "svg" ]
+                    , \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Move right (D)") ] |> Query.has [ Selector.tag "svg" ]
+                    ]
+                    ()
+        , test "mobile toolbar view shows arrow icons on the movement pad" <|
+            \_ ->
+                let
+                    ring =
+                        send (WindowResized 375 667) builtWithOneBrick
+                            |> openRing
+                            |> view
+                            |> Query.fromHtml
+                in
+                Expect.all
+                    [ \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Lower") ] |> Query.has [ Selector.tag "svg" ]
+                    , \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Move away (W)") ] |> Query.has [ Selector.tag "svg" ]
+                    , \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Raise") ] |> Query.has [ Selector.tag "svg" ]
+                    , \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Move left (A)") ] |> Query.has [ Selector.tag "svg" ]
+                    , \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Move toward (S)") ] |> Query.has [ Selector.tag "svg" ]
+                    , \_ -> ring |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Move right (D)") ] |> Query.has [ Selector.tag "svg" ]
+                    ]
+                    ()
         ]
 
 

@@ -1203,9 +1203,9 @@ snapshotTests =
         ]
 
 
-{-| The top-right menu: it opens and closes, Escape closes it before it
+{-| The top-left menu: it opens and closes, Escape closes it before it
 deselects anything, its items send the messages their buttons used to, and the
-dock's category tabs run down the left of the catalog.
+dock's category tabs run across the top of the catalog.
 -}
 menuTests : Test
 menuTests =
@@ -1218,7 +1218,7 @@ menuTests =
                 |> Tuple.first
                 |> (\m -> Tuple.first (update (StudioMsg (Core.SelectOnly 0)) m))
     in
-    describe "Top-right menu and category tabs"
+    describe "Top-left menu and category tabs"
         [ test "the menu opens, closes, and pauses the editing keys while open" <|
             \_ ->
                 let

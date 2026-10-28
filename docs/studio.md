@@ -257,7 +257,8 @@ adds leave the camera alone.
 Brick Play embeds `Studio.Core` with the gizmo off, so it edits like the studio
 while showing its own chrome. Its `Main.elm` owns the Msgs and forwards the action
 bar to the component. It keeps the chrome minimal: no title badge (a visually
-hidden `h1` keeps the heading), one top-right menu, and a compact dock. Technic
+hidden `h1` keeps the heading), one top-left toolbar (menu, help, play, and
+temporary status pills), and a compact dock. Technic
 mode (below) adds the gear chrome to the same view.
 
 - **Modes.** The URL hash picks free building (no hash, or `free=1`) or a puzzle
@@ -323,18 +324,21 @@ mode (below) adds the gear chrome to the same view.
   (selected, not movable). Play's `Shortcuts.actionFor` acts only when the canvas has
   focus: a focused button, link or field keeps Tab for the browser, and
   `brick-play/main.js` prevents the browser's Tab move only in the same case.
-- **First-select hint.** The first time any part is selected, a line above the dock
-  says "Double-click a brick for moves" (or "Double-tap" on a touch screen, from the
+- **First-select hint.** The first time any part is selected, a pill in the top-left
+  toolbar says "Double-click a brick for moves" (or "Double-tap" on a touch screen, from the
   `coarsePointer` flag). It goes after five seconds or when the ring opens, and is
   remembered per browser: `main.js` reads `hintSeen` from localStorage at start and
   writes it through the `rememberHintSeen` port, both inside a try/catch.
 - **Menu.** A visible `?` button (Keyboard shortcuts, the same as the `?` key) sits
-  beside one hamburger button at the top right (`UI.HamburgerMenu`), which opens
+  beside one hamburger button at the top left (`UI.HamburgerMenu`), which opens
   Undo, Redo, Delete and Clear, each with its shortcut shown. Items send the same
   Msgs as the old toolbar buttons, wrapped in `MenuPicked` so the menu closes first.
   A click outside (a backdrop) or Escape closes it; Escape closes the menu before it
   deselects anything. While the menu is open the studio's editing keys are paused,
-  like the help dialog.
+  like the help dialog. All temporary status pills (Shift · Bit, Tidy up, gear mesh
+  status, first-select hint, touch part name, and accomplishment banner) grow
+  horizontally in the same top-left toolbar so the vertical space above the dock
+  stays completely free.
 - **Accomplishment banner (Technic mode).** One green line, "All N gears are
   rotating together!" (`role="status"`), in the top row between the title-less
   left edge and the buttons, the buttons' height. It shrinks and ellipsizes on narrow

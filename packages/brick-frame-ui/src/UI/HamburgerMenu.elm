@@ -1,6 +1,6 @@
 module UI.HamburgerMenu exposing (Config, Item, view)
 
-{-| The top-right menu of the minimal apps (Brick Play): one
+{-| The top-left menu of the minimal apps (Brick Play): one
 hamburger button that opens a small dropdown of actions, each with its keyboard
 shortcut shown on the right.
 
@@ -119,7 +119,7 @@ panel config =
         , Attr.attribute "aria-label" "Menu"
         , Attr.style "position" "absolute"
         , Attr.style "top" "calc(100% + 0.375rem)"
-        , Attr.style "right" "0"
+        , Attr.style "left" "0"
         , Attr.style "z-index" "1"
         , Attr.style "min-width" "13rem"
         , Attr.style "padding" "0.25rem"

@@ -29,7 +29,7 @@ so the keyboard shortcuts keep working after a click on the ring.
 
 -}
 
-import Html exposing (Html, button, div, text)
+import Html exposing (Html, button, div, span, text)
 import Html.Attributes as Attr
 import Html.Events exposing (onClick)
 import Math.Matrix4 as Mat4
@@ -57,6 +57,8 @@ type alias Rect =
 then stays hidden). `canvas` is the canvas size in pixels, and `avoid` lists the
 rect rectangles the ring keeps clear of when it can (the dock and the camera globe).
 `movable` is False when the selection is glued, and `glued` says whether it is.
+`coarsePointer` is True on touch/mobile devices, which shows directional arrow icons
+on the movement pad instead of keyboard characters (Q, W, E, A, S, D).
 
 -}
 type alias Config msg =
@@ -67,6 +69,7 @@ type alias Config msg =
     , glued : Bool
     , movable : Bool
     , step : Step.StepSize
+    , coarsePointer : Bool
     , onTurn : TurnDirection -> msg
     , onRaise : msg
     , onLower : msg
@@ -317,7 +320,7 @@ mobileView config =
         , Attr.style "pointer-events" "auto"
         ]
         [ headerRow config
-        , mainControlsPod config
+        , mainControlsPod { config | coarsePointer = True }
         ]
 
 
@@ -380,6 +383,11 @@ mainControlsPod config =
 {-| Symmetric 3×2 movement pad:
 Row 1: Lower (Q), Move away (W), Raise (E)
 Row 2: Move left (A), Move toward (S), Move right (D)
+
+On desktop (`coarsePointer` False), the buttons show keyboard characters
+("Q", "W", "E", "A", "S", "D"). On touch/mobile devices (`coarsePointer` True),
+they show directional arrow icons.
+
 -}
 movementPad : Config msg -> Html msg
 movementPad config =
@@ -393,26 +401,40 @@ movementPad config =
         , Attr.style "justify-items" "center"
         , Attr.style "align-items" "center"
         ]
-        [ actionButton config config.onLower "chevrons-down" "Lower" "Q"
-        , dPadKey config Away "chevron-up" "Move away (W)" "Move away (W)"
-        , actionButton config config.onRaise "chevrons-up" "Raise" "E"
-        , dPadKey config Left "chevron-left" "Move left (A)" "Move left (A)"
-        , dPadKey config Toward "chevron-down" "Move toward (S)" "Move toward (S)"
-        , dPadKey config Right "chevron-right" "Move right (D)" "Move right (D)"
+        [ padButton config config.onLower "chevrons-down" "Q" "Lower" "Lower (Q)"
+        , padButton config (config.onMove Away) "chevron-up" "W" "Move away (W)" "Move away (W)"
+        , padButton config config.onRaise "chevrons-up" "E" "Raise" "Raise (E)"
+        , padButton config (config.onMove Left) "chevron-left" "A" "Move left (A)" "Move left (A)"
+        , padButton config (config.onMove Toward) "chevron-down" "S" "Move toward (S)" "Move toward (S)"
+        , padButton config (config.onMove Right) "chevron-right" "D" "Move right (D)" "Move right (D)"
         ]
 
 
-dPadKey : Config msg -> NudgeDirection -> String -> String -> String -> Html msg
-dPadKey config direction icon label tooltip =
+padButton : Config msg -> msg -> String -> String -> String -> String -> Html msg
+padButton config msg icon char label tooltip =
     roundButton
         { noOp = config.noOp
         , enabled = config.movable
-        , onPress = config.onMove direction
+        , onPress = msg
         , label = label
         , tooltip = tooltip
         , pressed = Nothing
         }
-        (Icon.featherSized 18 icon)
+        (padButtonContent config.coarsePointer icon char)
+
+
+padButtonContent : Bool -> String -> String -> Html msg
+padButtonContent coarsePointer icon char =
+    if coarsePointer then
+        Icon.featherSized 18 icon
+
+    else
+        span
+            [ Attr.style "font-weight" "600"
+            , Attr.style "font-size" "1rem"
+            , Attr.style "line-height" "1"
+            ]
+            [ text char ]
 
 
 {-| Right rotation column: Turn left (rotate-ccw), Turn right (rotate-cw), and Tip (corner-right-down).

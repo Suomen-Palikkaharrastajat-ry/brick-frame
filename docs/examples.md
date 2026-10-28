@@ -36,7 +36,7 @@ Free building's own link (`#free=1&model=…`, the address bar's copy) keeps eve
 
 #### How to make a puzzle link
 1. Build the starting board in free building, select its parts and press Glue (`L`) on the parts that should stay fixed.
-2. Choose **Share link** from the top-right menu. The copied link is a puzzle: the glued parts are on the board and locked, and the other parts are the kit.
+2. Choose **Share link** from the top-left menu. The copied link is a puzzle: the glued parts are on the board and locked, and the other parts are the kit.
 3. Test it by opening the link in a new tab, and check that the kit's counts match the pieces you want the solver to use.
 
 Examples below are puzzles (their kits are counted), and they open the same way from a bare `#model=…&parts=…` link.

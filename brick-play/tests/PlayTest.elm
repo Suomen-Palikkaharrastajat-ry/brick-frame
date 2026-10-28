@@ -533,12 +533,12 @@ addFirst model =
             ( model, Cmd.none )
 
 
-{-| The top-right menu: it opens and closes, Escape closes it before it
+{-| The top-left menu: it opens and closes, Escape closes it before it
 deselects anything, and its items send the messages their buttons used to.
 -}
 menuTests : Test
 menuTests =
-    describe "Top-right menu"
+    describe "Top-left menu"
         [ test "the menu opens, closes, and pauses the editing keys while open" <|
             \_ ->
                 let
