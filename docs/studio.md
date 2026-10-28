@@ -261,15 +261,14 @@ hidden `h1` keeps the heading), one top-left toolbar (menu, help, play, and
 temporary status pills), and a compact dock. Technic
 mode (below) adds the gear chrome to the same view.
 
-- **Modes.** The URL hash picks free building (no hash, or `free=1`) or a puzzle
-  (any other hash). Free building's dock is the curated catalog (`Free.Catalog`:
-  Bricks, Plates, Slopes & tiles, Technic), unlimited, with a colour row for the
+- **Modes and sharing.** The URL hash picks **Editable / free building** (no hash, `free=1`, or an editable binary hash), **Parts set** (a hash with a non-empty kit), or **Fixed model** (a hash with an empty kit). Free building's dock is the curated catalog (`Free.Catalog`:
+  Bricks, Plates, Slopes & tiles, Brackets & SNOT, Technic), unlimited, with a colour row for the
   parts added next and a search over the whole part library. The search reads
   `parts-index.json` once, on first use, through `Studio.PartIndex` and the shared
   matcher `Studio.PartSearch` (the palette uses the same ranking). Glue is free
   building only: the Glue toggle in the context ring and `L` (`Shortcuts`) glue or
-  unglue the selection, and a glued selection shows its ring's move buttons off. A puzzle's dock is its counted kit, its glued parts are locked, and Clear
-  keeps them (`Core.clearUnglued`). The hash formats are in
+  unglue the selection, and a glued selection shows its ring's move buttons off. A parts set's dock is its counted kit, its glued parts are locked, and Clear
+  keeps them (`Core.clearUnglued`). A fixed model glues all parts on the board and shows no catalog dock. The menu offers only similar or lesser shares for the current mode (editable offers `Share editable model`, `Share parts set`, and `Share fixed model`; a parts set offers only `Share parts set`; a fixed model offers only `Share fixed model`); `Link.partialSetHash` also supports sharing a partially built set. The hash formats are in
   [examples.md](examples.md).
 - **No gizmo.** `Core.setGizmoStyle NoGizmo` draws and hit-tests no arrows or
   rings. A body drag still moves a part on the view-relative plane

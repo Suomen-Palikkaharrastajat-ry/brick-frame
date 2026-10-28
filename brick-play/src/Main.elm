@@ -35,16 +35,20 @@ its zoom slider and reset button. On a narrow portrait window (a phone) the bott
 area shows either the dock or the camera globe, switched by a toggle button, and
 the dock is shown first.
 
-There are two modes, chosen by the URL hash (see `Link` for the formats):
+There are three modes, chosen by the URL hash (see `Link` for the formats):
 
-  - **Free building** (no hash, or `free=1`): the dock is the curated catalog of
-    `Free.Catalog`, unlimited, with a colour row that sets the colour of the parts
-    added next and a search box over the whole part library (`parts-index.json`,
-    loaded on first use). Parts can be glued to the board (the Glue button, or `L`):
-    a glued part is locked, and a glued part is written as `0 !PALIKKA GLUED`.
-  - **Puzzle** (any other hash): the dock is the counted kit (`parts=`, or the
-    default 10 yellow bricks for a bare `model=`). Glued parts are locked and
-    cannot be unglued, and the Glue button is hidden. Clear keeps the glued parts.
+  - **Free building / Editable model** (no hash, `free=1`, or an editable binary hash):
+    the dock is the curated catalog of `Free.Catalog`, unlimited, with a colour row
+    that sets the colour of the parts added next and a search box over the whole
+    part library (`parts-index.json`, loaded on first use). Parts can be glued to
+    the board (the Glue button, or `L`): a glued part is locked, and a glued part
+    is written as `0 !PALIKKA GLUED`.
+  - **Parts set / Puzzle** (a set or partially built set hash with a non-empty kit):
+    the dock is the counted kit (`parts=`, or the default 10 yellow bricks for a
+    bare `model=`). Glued parts are locked and cannot be unglued, and the Glue
+    button is hidden. Clear keeps the glued parts.
+  - **Fixed model** (a fixed model hash with an empty kit): every part on the board
+    is glued and locked, and there is no catalog dock.
 
 Each dock card is a rendered picture of the part (`UI.PartCard.compactView`, fed
 by the shared thumbnail pipeline through `Ports`).
@@ -58,14 +62,15 @@ hidden. Technic parts (gears, axles, beams, pins) go on the shared axle line in
 either mode (`Technic.Placement`), and other parts rest on the ground. Any
 edit stops a running machine and rewinds it to 0.
 
-The top-left toolbar holds the menu (`UI.HamburgerMenu` — share link, download
+The top-left toolbar holds the menu (`UI.HamburgerMenu` — share options, download
 .io, undo, redo, delete and clear), a visible ? button that opens the shortcut
 list, the play button (in Technic mode), and any temporary info pills (Shift · Bit,
 Tidy up, gear mesh status, first-select hint, touch part name, and the
 accomplishment banner), growing horizontally so the vertical space above the
-brick palette stays completely free. Escape closes the menu first. Share link
-copies a puzzle: for a free build, its glued parts stay on the board and
-everything else becomes the kit.
+brick palette stays completely free. Escape closes the menu first. An opened link
+offers only similar or lesser shares in the menu: editable offers Share editable
+model, Share parts set and Share fixed model; a parts set offers Share parts set
+and Share fixed model; a fixed model offers only Share fixed model.
 
 Tidy up (`Studio.Health`) checks the build after each change: a studded part that
 sits off the stud grid, or parts that overlap, show a pill in the top-left bar
@@ -301,7 +306,9 @@ type Msg
     | OpenTidy
     | CancelTidy
     | ApplyTidy
-    | ShareLink
+    | ShareEditableModel
+    | SharePartsSet
+    | ShareFixedModel
     | DismissToast Int
     | MenuPicked Msg
     | NoOp
@@ -314,7 +321,7 @@ type Msg
 init : Flags -> ( Model, Cmd Msg )
 init flags =
     let
-        ( initialDoc, free, inventory ) =
+        ( rawDoc, free, inventory ) =
             case flags.initialBytes |> Maybe.andThen HashPayload.decodeBytes of
                 Just binaryPayload ->
                     let
@@ -362,6 +369,13 @@ init flags =
                                 defaultInventory
                     in
                     ( doc, isFree, inv )
+
+        initialDoc =
+            if not free && List.isEmpty inventory then
+                List.foldl (\placement acc -> Document.setGlued True placement.id acc) rawDoc (Document.placements rawDoc)
+
+            else
+                rawDoc
 
         config =
             { ldrawBase = flags.ldrawBase
@@ -633,27 +647,36 @@ remainingCount model =
 
 
 {-| The binary payload the address bar keeps for the build (see `Link`): the whole board
-with its glue while free building, else the puzzle with its kit.
+with its glue while free building, the fixed model when there is no catalog, else the
+partially built set with its kit.
 -}
 liveHash : Model -> List Int
 liveHash model =
     if model.free then
         Link.freeHash model.studio.document
 
+    else if List.isEmpty model.inventory then
+        Link.fixedModelHash model.studio.document
+
     else
-        Link.puzzleHash model.studio.document model.inventory
+        Link.partialSetHash model.studio.document model.inventory
 
 
-{-| The link Share link copies. A puzzle keeps the current state. A free build
-shares a puzzle: its glued parts stay on the board, and the rest become the kit.
+{-| The default parts-set (or fixed-model) link for the current build: from free
+building its glued parts stay on the board and the rest become the kit; from a parts
+set its glued parts stay on the board and the full kit is offered in the dock; from
+a fixed model all parts stay glued with no catalog.
 -}
 shareHash : Model -> List Int
 shareHash model =
     if model.free then
         Link.freeShareHash model.studio.document
 
+    else if List.isEmpty model.inventory then
+        Link.fixedModelHash model.studio.document
+
     else
-        liveHash model
+        Link.setShareHash model.studio.document model.inventory
 
 
 {-| The hash to write after an update from `before` to `after`: the live hash
@@ -1439,26 +1462,29 @@ step msg model =
         CloseMenu ->
             ( syncKeyPause { model | menuOpen = False }, Cmd.none )
 
-        ShareLink ->
-            let
-                hash =
-                    shareHash model
+        ShareEditableModel ->
+            if model.free then
+                copyShareHash (Link.editableHash model.studio.document) model
 
-                nextId =
-                    model.toastCounter + 1
-            in
-            -- The address bar keeps the build itself (`hashFor`); a free build's
-            -- shared link is a puzzle, so only the copy goes out.
-            ( { model
-                | menuOpen = False
-                , toast = Just { message = "Link copied to clipboard!", id = nextId }
-                , toastCounter = nextId
-              }
-            , Cmd.batch
-                [ Ports.copyToClipboard hash
-                , Process.sleep 3000 |> Task.perform (\_ -> DismissToast nextId)
-                ]
-            )
+            else
+                ( model, Cmd.none )
+
+        SharePartsSet ->
+            if model.free then
+                copyShareHash (Link.freeShareHash model.studio.document) model
+
+            else if List.isEmpty model.inventory then
+                ( model, Cmd.none )
+
+            else
+                copyShareHash (Link.setShareHash model.studio.document model.inventory) model
+
+        ShareFixedModel ->
+            if model.free || List.isEmpty model.inventory then
+                copyShareHash (Link.fixedModelHash model.studio.document) model
+
+            else
+                ( model, Cmd.none )
 
         DismissToast id ->
             if Maybe.map .id model.toast == Just id then
@@ -1490,6 +1516,26 @@ step msg model =
               }
             , Cmd.none
             )
+
+
+{-| Copy a share link payload to the clipboard, close the menu and show a toast.
+-}
+copyShareHash : List Int -> Model -> ( Model, Cmd Msg )
+copyShareHash hash model =
+    let
+        nextId =
+            model.toastCounter + 1
+    in
+    ( { model
+        | menuOpen = False
+        , toast = Just { message = "Link copied to clipboard!", id = nextId }
+        , toastCounter = nextId
+      }
+    , Cmd.batch
+        [ Ports.copyToClipboard hash
+        , Process.sleep 3000 |> Task.perform (\_ -> DismissToast nextId)
+        ]
+    )
 
 
 {-| Put a dock part into the studio: a Technic part on the shared axle line, next
@@ -2411,40 +2457,59 @@ shiftDragRow model =
 
 {-| The narrow bottom row: the dock (or the mobile context toolbar while a part's
 ring is open, or the camera globe) and the toggle between them, at a finger-sized
-width.
+width. In a fixed model (no dock), shows the mobile context toolbar or the camera
+globe directly without the toggle.
 -}
 narrowRow : Model -> Html Msg
 narrowRow model =
-    div
-        [ Attr.style "display" "flex"
-        , Attr.style "align-items" "flex-end"
-        , Attr.style "gap" "0.5rem"
-        , Attr.style "width" "100%"
-        , Attr.style "min-width" "0"
-        ]
-        [ div
+    if not model.free && List.isEmpty model.inventory then
+        div
             [ Attr.style "display" "flex"
-            , Attr.style "justify-content" "center"
-            , Attr.style "flex" "1 1 auto"
+            , Attr.style "align-items" "flex-end"
+            , Attr.style "justify-content" "flex-end"
+            , Attr.style "width" "100%"
             , Attr.style "min-width" "0"
-            , Attr.style "overflow-x" "auto"
-            , Attr.style "overflow-y" "hidden"
-            , Attr.class "scroll-thin"
             , Attr.style "pointer-events" "auto"
             ]
-            [ if model.cameraShown then
-                globeControl model
+            [ case model.ringPart of
+                Just id ->
+                    Ring.mobileView (ringConfig model id)
 
-              else
-                case model.ringPart of
-                    Just id ->
-                        Ring.mobileView (ringConfig model id)
-
-                    Nothing ->
-                        viewDock model
+                Nothing ->
+                    globeControl model
             ]
-        , cameraToggle model
-        ]
+
+    else
+        div
+            [ Attr.style "display" "flex"
+            , Attr.style "align-items" "flex-end"
+            , Attr.style "gap" "0.5rem"
+            , Attr.style "width" "100%"
+            , Attr.style "min-width" "0"
+            ]
+            [ div
+                [ Attr.style "display" "flex"
+                , Attr.style "justify-content" "center"
+                , Attr.style "flex" "1 1 auto"
+                , Attr.style "min-width" "0"
+                , Attr.style "overflow-x" "auto"
+                , Attr.style "overflow-y" "hidden"
+                , Attr.class "scroll-thin"
+                , Attr.style "pointer-events" "auto"
+                ]
+                [ if model.cameraShown then
+                    globeControl model
+
+                  else
+                    case model.ringPart of
+                        Just id ->
+                            Ring.mobileView (ringConfig model id)
+
+                        Nothing ->
+                            viewDock model
+                ]
+            , cameraToggle model
+            ]
 
 
 {-| The toggle between the dock and the camera globe on a narrow window. Its icon
@@ -2629,8 +2694,8 @@ gearRow model =
             text ""
 
 
-{-| The top-left menu: share link, download .io, undo, redo, delete and clear.
-Each item does what its keyboard shortcut does.
+{-| The top-left menu: share options for the current mode, download .io, undo,
+redo, delete and clear. Each item does what its keyboard shortcut does.
 -}
 menuConfig : Model -> HamburgerMenu.Config Msg
 menuConfig model =
@@ -2639,14 +2704,35 @@ menuConfig model =
     , onToggle = ToggleMenu
     , onClose = CloseMenu
     , items =
-        [ { label = "Share link", shortcut = "", enabled = True, onSelect = MenuPicked ShareLink }
-        , { label = "Download BrickLink Studio (.io)", shortcut = "", enabled = not (List.isEmpty (Core.getPlacements model.studio)), onSelect = MenuPicked DownloadIo }
-        , { label = "Undo", shortcut = "Ctrl+Z", enabled = Core.canUndo model.studio, onSelect = MenuPicked Undo }
-        , { label = "Redo", shortcut = "Ctrl+Shift+Z", enabled = Core.canRedo model.studio, onSelect = MenuPicked Redo }
-        , { label = "Delete", shortcut = "Del", enabled = Core.hasSelection model.studio, onSelect = MenuPicked Delete }
-        , { label = "Clear", shortcut = "", enabled = clearable model, onSelect = MenuPicked Clear }
-        ]
+        shareMenuItems model
+            ++ [ { label = "Download BrickLink Studio (.io)", shortcut = "", enabled = not (List.isEmpty (Core.getPlacements model.studio)), onSelect = MenuPicked DownloadIo }
+               , { label = "Undo", shortcut = "Ctrl+Z", enabled = Core.canUndo model.studio, onSelect = MenuPicked Undo }
+               , { label = "Redo", shortcut = "Ctrl+Shift+Z", enabled = Core.canRedo model.studio, onSelect = MenuPicked Redo }
+               , { label = "Delete", shortcut = "Del", enabled = Core.hasSelection model.studio, onSelect = MenuPicked Delete }
+               , { label = "Clear", shortcut = "", enabled = clearable model, onSelect = MenuPicked Clear }
+               ]
     }
+
+
+{-| The share items the top-left menu offers for the current mode: an opened
+link offers only similar or lesser shares (editable offers all three, a parts
+set offers only parts set, and a fixed model offers only fixed model).
+-}
+shareMenuItems : Model -> List (HamburgerMenu.Item Msg)
+shareMenuItems model =
+    if model.free then
+        [ { label = "Share editable model", shortcut = "", enabled = True, onSelect = MenuPicked ShareEditableModel }
+        , { label = "Share parts set", shortcut = "", enabled = True, onSelect = MenuPicked SharePartsSet }
+        , { label = "Share fixed model", shortcut = "", enabled = True, onSelect = MenuPicked ShareFixedModel }
+        ]
+
+    else if List.isEmpty model.inventory then
+        [ { label = "Share fixed model", shortcut = "", enabled = True, onSelect = MenuPicked ShareFixedModel }
+        ]
+
+    else
+        [ { label = "Share parts set", shortcut = "", enabled = True, onSelect = MenuPicked SharePartsSet }
+        ]
 
 
 {-| Whether Clear has anything to remove: any part in free building, else any
@@ -2860,12 +2946,16 @@ boolText on =
         "false"
 
 
-{-| The dock: the free catalog in free building, else the counted kit.
+{-| The dock: the free catalog in free building, nothing in a fixed model, else
+the counted kit.
 -}
 viewDock : Model -> Html Msg
 viewDock model =
     if model.free then
         freeDockView model
+
+    else if List.isEmpty model.inventory then
+        text ""
 
     else
         kitDockView model
@@ -3255,32 +3345,41 @@ helpRows model =
                     []
                )
       )
-    , ( "Dock"
-      , if model.free then
-            [ ( "Tabs and colour row", "Bricks, plates, slopes and tiles, Technic; the colour row sets the colour of the next part" )
-            , ( "Search box", "Find any part in the whole library by name or number, then tap it to add it" )
-            ]
-
-        else
-            [ ( "Cards", "Each card is one part of the kit; its count shows on the picture" )
-            , ( "Glued parts", "A glued part is locked: it cannot be moved, turned or recoloured" )
-            ]
-      )
-    , ( "Camera"
-      , [ ( "Drag the globe, bottom right", "Orbit the camera (also by touch)" )
-        , ( "Tap the globe", "Fly to that side of the model" )
-        , ( "Zoom slider", "Zoom in and out" )
-        , ( "Reset view, or F", "Fit the whole model in view" )
-        , ( "Drag empty space", "Pan" )
-        , ( "Right-drag", "Orbit" )
-        , ( "Middle drag", "Pan" )
-        , ( "One finger on empty space", "Pan (two fingers: pan and pinch-zoom)" )
-        , ( "Wheel  + -", "Zoom" )
-        , ( "1 2 3 4 5 6  `", "Views: front, back, left, right, top, bottom, 3/4" )
-        , ( "G", "Street-level walk, on / off" )
-        ]
-      )
     ]
+        ++ (if model.free then
+                [ ( "Dock"
+                  , [ ( "Tabs and colour row", "Bricks, plates, slopes and tiles, Technic; the colour row sets the colour of the next part" )
+                    , ( "Search box", "Find any part in the whole library by name or number, then tap it to add it" )
+                    ]
+                  )
+                ]
+
+            else if List.isEmpty model.inventory then
+                []
+
+            else
+                [ ( "Dock"
+                  , [ ( "Cards", "Each card is one part of the kit; its count shows on the picture" )
+                    , ( "Glued parts", "A glued part is locked: it cannot be moved, turned or recoloured" )
+                    ]
+                  )
+                ]
+           )
+        ++ [ ( "Camera"
+             , [ ( "Drag the globe, bottom right", "Orbit the camera (also by touch)" )
+               , ( "Tap the globe", "Fly to that side of the model" )
+               , ( "Zoom slider", "Zoom in and out" )
+               , ( "Reset view, or F", "Fit the whole model in view" )
+               , ( "Drag empty space", "Pan" )
+               , ( "Right-drag", "Orbit" )
+               , ( "Middle drag", "Pan" )
+               , ( "One finger on empty space", "Pan (two fingers: pan and pinch-zoom)" )
+               , ( "Wheel  + -", "Zoom" )
+               , ( "1 2 3 4 5 6  `", "Views: front, back, left, right, top, bottom, 3/4" )
+               , ( "G", "Street-level walk, on / off" )
+               ]
+             )
+           ]
         ++ (if technicMode model then
                 [ ( "Machine"
                   , [ ( "Space", "Play / pause the machine (an edit stops it and rewinds)" )

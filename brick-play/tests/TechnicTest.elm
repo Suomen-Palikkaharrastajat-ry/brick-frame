@@ -1298,8 +1298,10 @@ menuTests =
                 in
                 Query.fromHtml (view opened)
                     |> Expect.all
-                        [ Query.findAll [ Selector.attribute (Attr.attribute "role" "menuitem") ] >> Query.count (Expect.equal 6)
-                        , Query.has [ Selector.text "Share link" ]
+                        [ Query.findAll [ Selector.attribute (Attr.attribute "role" "menuitem") ] >> Query.count (Expect.equal 8)
+                        , Query.has [ Selector.text "Share editable model" ]
+                        , Query.has [ Selector.text "Share parts set" ]
+                        , Query.has [ Selector.text "Share fixed model" ]
                         , Query.has [ Selector.text "Download BrickLink Studio (.io)" ]
                         , Query.findAll [ Selector.attribute (Attr.attribute "role" "tab") ] >> Query.count (Expect.equal 5)
                         , Query.hasNot [ Selector.attribute (Attr.attribute "aria-orientation" "vertical") ]
@@ -1316,14 +1318,14 @@ sharingAndToastTests =
             Tuple.first (init testFlags)
     in
     describe "Sharing and toast lifecycle"
-        [ test "ShareLink sets toast state and closes menu" <|
+        [ test "SharePartsSet sets toast state and closes menu" <|
             \_ ->
                 let
                     ( menuOpenModel, _ ) =
                         update ToggleMenu start
 
                     ( sharedModel, _ ) =
-                        update ShareLink menuOpenModel
+                        update SharePartsSet menuOpenModel
                 in
                 Expect.all
                     [ \m -> Expect.equal False m.menuOpen
@@ -1334,7 +1336,7 @@ sharingAndToastTests =
             \_ ->
                 let
                     ( sharedModel, _ ) =
-                        update ShareLink start
+                        update SharePartsSet start
 
                     toastId =
                         sharedModel.toast |> Maybe.map .id |> Maybe.withDefault 0

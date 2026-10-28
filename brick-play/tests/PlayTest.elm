@@ -628,7 +628,9 @@ menuTests =
                 Query.fromHtml (view opened)
                     |> Expect.all
                         [ Query.findAll [ Selector.attribute (Attr.attribute "role" "menuitem") ] >> Query.count (Expect.equal 6)
-                        , Query.has [ Selector.text "Share link" ]
+                        , Query.hasNot [ Selector.text "Share editable model" ]
+                        , Query.has [ Selector.text "Share parts set" ]
+                        , Query.hasNot [ Selector.text "Share fixed model" ]
                         , Query.has [ Selector.text "Download BrickLink Studio (.io)" ]
                         , Query.has [ Selector.text "Ctrl+Shift+Z" ]
                         ]
@@ -694,25 +696,54 @@ sharingAndToastTests =
             init testFlags
     in
     describe "Sharing and toast lifecycle"
-        [ test "ShareLink sets toast state and closes menu" <|
+        [ test "SharePartsSet in set mode and ShareFixedModel in editable/fixed mode set toast state and close menu" <|
             \_ ->
                 let
                     ( menuOpenModel, _ ) =
-                        update ToggleMenu start
+                        init testFlags |> Tuple.first |> update ToggleMenu
 
-                    ( sharedModel, _ ) =
-                        update ShareLink menuOpenModel
+                    ( sharedSetModel, _ ) =
+                        update SharePartsSet menuOpenModel
+
+                    ( blockedFixedInSet, _ ) =
+                        update ShareFixedModel menuOpenModel
+
+                    ( fixedMenuOpen, _ ) =
+                        init { testFlags | initialHash = "#model=&parts=" } |> Tuple.first |> update ToggleMenu
+
+                    ( sharedFixedModel, _ ) =
+                        update ShareFixedModel fixedMenuOpen
                 in
                 Expect.all
-                    [ \m -> Expect.equal False m.menuOpen
-                    , \m -> Expect.equal (Just "Link copied to clipboard!") (Maybe.map .message m.toast)
+                    [ \_ -> Expect.equal False sharedSetModel.menuOpen
+                    , \_ -> Expect.equal (Just "Link copied to clipboard!") (Maybe.map .message sharedSetModel.toast)
+                    , \_ -> Expect.equal Nothing blockedFixedInSet.toast
+                    , \_ -> Expect.equal False sharedFixedModel.menuOpen
+                    , \_ -> Expect.equal (Just "Link copied to clipboard!") (Maybe.map .message sharedFixedModel.toast)
                     ]
-                    sharedModel
+                    ()
+        , test "ShareEditableModel is ignored in set mode but sets toast in editable mode" <|
+            \_ ->
+                let
+                    ( blockedModel, _ ) =
+                        update ShareEditableModel start
+
+                    ( freeStart, _ ) =
+                        init { testFlags | initialHash = "" }
+
+                    ( sharedFreeModel, _ ) =
+                        update ShareEditableModel freeStart
+                in
+                Expect.all
+                    [ \_ -> Expect.equal Nothing blockedModel.toast
+                    , \_ -> Expect.equal (Just "Link copied to clipboard!") (Maybe.map .message sharedFreeModel.toast)
+                    ]
+                    ()
         , test "DismissToast with matching id clears toast; mismatching id preserves toast" <|
             \_ ->
                 let
                     ( sharedModel, _ ) =
-                        update ShareLink start
+                        update SharePartsSet start
 
                     toastId =
                         sharedModel.toast |> Maybe.map .id |> Maybe.withDefault 0

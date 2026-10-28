@@ -506,8 +506,12 @@ puzzleLockTests =
 
 shareTests : Test
 shareTests =
+    let
+        menuOpen model =
+            Tuple.first (update ToggleMenu model)
+    in
     describe "Share links"
-        [ test "a free build shares a puzzle: glued parts stay, the rest are counts grouped and summed" <|
+        [ test "a free build shares a parts set: glued parts stay, the rest are counts grouped and summed" <|
             \_ ->
                 case HashPayload.decodeBytes (shareHash freeBuild) of
                     Just payload ->
@@ -521,7 +525,7 @@ shareTests =
 
                     Nothing ->
                         Expect.fail "Failed to decode shareHash payload"
-        , test "the shared free build opens as a puzzle: glued part locked, kit counted without it" <|
+        , test "the shared free build opens as a parts set: glued part locked, kit counted without it" <|
             \_ ->
                 let
                     puzzle =
@@ -534,7 +538,7 @@ shareTests =
                     , \m -> Expect.equal 1 (List.length (gluedIds m))
                     ]
                     puzzle
-        , test "a puzzle share keeps the whole state: glued, placed and the remaining counts" <|
+        , test "Link.setShareHash (Share parts set from a set) keeps glued parts on the board and puts all unglued parts back in the limited catalog" <|
             \_ ->
                 let
                     kit =
@@ -546,12 +550,113 @@ shareTests =
                             |> Tuple.first
 
                     reopened =
-                        openBytes (shareHash board)
+                        openBytes (Link.setShareHash board.studio.document board.inventory)
+                in
+                Expect.all
+                    [ \m -> Expect.equal False m.free
+                    , \m -> Expect.equal 5 (remainingForItem m kit)
+                    , \m -> Expect.equal 1 (List.length (placementIds m))
+                    , \m -> Expect.equal [ 0 ] (gluedIds m)
+                    ]
+                    reopened
+        , test "Link.partialSetHash keeps the whole state of a partially built set: glued, placed unglued and remaining counts" <|
+            \_ ->
+                let
+                    kit =
+                        { part = "3001.dat", color = 14, count = 5 }
+
+                    board =
+                        open ("#model=" ++ Url.percentEncode gluedBoard ++ "&parts=3001.dat:14:5")
+                            |> update (AddPart kit)
+                            |> Tuple.first
+
+                    reopened =
+                        openBytes (Link.partialSetHash board.studio.document board.inventory)
 
                     summary m =
                         ( remainingForItem m kit, List.length (placementIds m), gluedIds m )
                 in
                 Expect.equal (summary board) (summary reopened)
+        , test "Link.editableHash preserves glued and unglued parts, opens in editable mode, and offers all 3 share options" <|
+            \_ ->
+                let
+                    reopened =
+                        openBytes (Link.editableHash freeBuild.studio.document)
+
+                    renderedMenu =
+                        Query.fromHtml (view (menuOpen reopened))
+                in
+                Expect.all
+                    [ \m -> Expect.equal True m.free
+                    , \m -> Expect.equal 6 (List.length (placementIds m))
+                    , \m -> Expect.equal [ 0 ] (gluedIds m)
+                    , \_ -> renderedMenu |> Query.has [ Selector.text "Share editable model" ]
+                    , \_ -> renderedMenu |> Query.has [ Selector.text "Share parts set" ]
+                    , \_ -> renderedMenu |> Query.has [ Selector.text "Share fixed model" ]
+                    ]
+                    reopened
+        , test "an opened parts set offers only Share parts set" <|
+            \_ ->
+                let
+                    setModel =
+                        openBytes (Link.freeShareHash freeBuild.studio.document)
+
+                    renderedMenu =
+                        Query.fromHtml (view (menuOpen setModel))
+                in
+                Expect.all
+                    [ \_ -> renderedMenu |> Query.hasNot [ Selector.text "Share editable model" ]
+                    , \_ -> renderedMenu |> Query.has [ Selector.text "Share parts set" ]
+                    , \_ -> renderedMenu |> Query.hasNot [ Selector.text "Share fixed model" ]
+                    ]
+                    ()
+        , test "Link.fixedModelHash glues all parts, clears the kit, hides the catalog dock, and offers only Share fixed model" <|
+            \_ ->
+                let
+                    fixedModel =
+                        openBytes (Link.fixedModelHash freeBuild.studio.document)
+
+                    rendered =
+                        Query.fromHtml (view fixedModel)
+
+                    renderedMenu =
+                        Query.fromHtml (view (menuOpen fixedModel))
+
+                    narrowFixed =
+                        Tuple.first (update (WindowResized 375 667) fixedModel)
+                in
+                Expect.all
+                    [ \m -> Expect.equal False m.free
+                    , \m -> Expect.equal [] m.inventory
+                    , \m -> Expect.equal 6 (List.length (placementIds m))
+                    , \m -> Expect.equal (placementIds m) (gluedIds m)
+                    , \_ -> rendered |> Query.hasNot [ Selector.attribute (Attr.attribute "data-testid" "part-dock") ]
+                    , \_ -> rendered |> Query.hasNot [ Selector.attribute (Attr.attribute "aria-label" "Kit") ]
+                    , \_ -> rendered |> Query.hasNot [ Selector.attribute (Attr.attribute "aria-label" "Parts") ]
+                    , \_ -> renderedMenu |> Query.hasNot [ Selector.text "Share editable model" ]
+                    , \_ -> renderedMenu |> Query.hasNot [ Selector.text "Share parts set" ]
+                    , \_ -> renderedMenu |> Query.has [ Selector.text "Share fixed model" ]
+                    , \_ ->
+                        Query.fromHtml (view narrowFixed)
+                            |> Query.hasNot [ Selector.attribute (Attr.attribute "aria-label" "Camera controls") ]
+                    , \_ ->
+                        Query.fromHtml (view narrowFixed)
+                            |> Query.has [ Selector.attribute (Attr.attribute "aria-label" "Camera") ]
+                    ]
+                    fixedModel
+        , test "a text hash with empty parts= opens as a fixed model with all parts glued and no catalog" <|
+            \_ ->
+                let
+                    fixedText =
+                        open ("#model=" ++ Url.percentEncode gluedBoard ++ "&parts=")
+                in
+                Expect.all
+                    [ \m -> Expect.equal False m.free
+                    , \m -> Expect.equal [] m.inventory
+                    , \m -> Expect.equal 2 (List.length (placementIds m))
+                    , \m -> Expect.equal [ 0, 1 ] (gluedIds m)
+                    ]
+                    fixedText
         , test "a puzzle's glued parts do not count against its kit" <|
             \_ ->
                 let
@@ -715,5 +820,11 @@ helpTests =
         , test "a puzzle does not list L" <|
             \_ ->
                 List.member "L  (ring: Glue)" (rowKeys (open "#parts=3001.dat:14:2"))
+                    |> Expect.equal False
+        , test "a fixed model omits the Dock section from the shortcut list" <|
+            \_ ->
+                helpRows (openBytes (Link.fixedModelHash freeBuild.studio.document))
+                    |> List.map Tuple.first
+                    |> List.member "Dock"
                     |> Expect.equal False
         ]

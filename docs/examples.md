@@ -18,25 +18,28 @@ A Palikkakehys hash fragment carries up to two query parameters separated by `&`
 | `parts` | Comma-separated list of kit items: `<part_file>:<color_code>:<count>`. Defines total kit pieces, always counted (unglued placed model pieces decrement the available dock count; glued ones do not). A gear in the kit turns Technic mode on. |
 | `free` | `free=1` opens free building (see below). Without it the hash is a puzzle. |
 
-### Modes: free building and puzzles
+### Modes and sharing: editable models, parts sets and fixed models
 
 The hash decides the mode in Brick Play (see `Link` in `brick-play/src/Link.elm`):
 
-| Hash | Mode | Dock |
+| Hash / Payload | Mode | Dock |
 |------|------|------|
-| *(none)* or `#free=1&model=…` | **Free building** | Unlimited curated catalog (Bricks, Plates, Slopes & tiles, Technic), a colour row and a search over the whole part library |
-| `#model=…&parts=…` (any hash without `free=1`) | **Puzzle** | The counted kit from `parts=` (a bare `#model=` link gets the default 10 yellow bricks) |
+| *(none)*, `#free=1&model=…`, or `Link.editableHash` | **Editable model (Free building)** | Unlimited curated catalog (Bricks, Plates, Slopes & tiles, Brackets & SNOT, Technic), a colour row and a search over the whole part library |
+| `#model=…&parts=…` (non-empty kit), `Link.freeShareHash`, `Link.setShareHash`, or `Link.partialSetHash` | **Parts set (Puzzle)** | The counted kit from `parts=` (a bare `#model=` link gets the default 10 yellow bricks) |
+| `#model=…&parts=` (empty kit) or `Link.fixedModelHash` | **Fixed model** | No catalog dock; every part on the board is glued and locked |
 
-Glue marks a part as locked. A glued part is written as the LDraw meta line `0 !PALIKKA GLUED` directly before its part line. In free building the Glue button (or `L`) glues and unglues the selection. A puzzle's glued parts cannot be moved, turned, unglued or recoloured, and the Glue button is hidden. Unglued parts on the board are movable, and each one counts against the kit of its file and colour.
+Glue marks a part as locked. A glued part is written as the LDraw meta line `0 !PALIKKA GLUED` directly before its part line. In free building the Glue button (or `L`) glues and unglues the selection. A parts set's or fixed model's glued parts cannot be moved, turned, unglued or recoloured, and the Glue button is hidden. Unglued parts on the board are movable, and each one counts against the kit of its file and colour.
 
-Free building's own link (`#free=1&model=…`, the address bar's copy) keeps every part in place, glue included. The **Share link** menu item always copies a puzzle:
+An opened link offers only similar or lesser shares in the top-left menu:
 
-- From a free build, the glued parts stay on the board as `model=`, and every other part becomes a kit count in `parts=`, grouped by file and colour and summed. Opening it gives a puzzle with those parts locked and the rest in the dock.
-- From a puzzle, the link carries the whole state: `model=` with glued and placed parts, and `parts=` with the kit, so reopening it shows the same remaining counts.
+- **Share editable model** (`Link.editableHash` / `Link.freeHash`, available in editable mode): shares the model built as-is (preserving glued and unglued parts) with the full catalog and editability.
+- **Share parts set** (`Link.freeShareHash` from editable mode, `Link.setShareHash` from a parts set; available in editable and parts set modes): keeps all glued parts on the board as glued, and puts all other parts into the limited counted catalog. An opened parts set link offers only `Share parts set`.
+- **Share fixed model** (`Link.fixedModelHash`, available in editable and fixed model modes): glues all parts on the board and sets an empty kit (`Just []`), so it opens with the model built all glued and no catalog. An opened fixed model link offers only `Share fixed model`.
+- **Partially built set** (`Link.partialSetHash` / `Link.puzzleHash`, used by the live address bar in parts set mode): keeps glued parts as glued and placed unglued parts on the board alongside the total kit, so reopening it shows the same remaining counts.
 
-#### How to make a puzzle link
+#### How to make a parts set link
 1. Build the starting board in free building, select its parts and press Glue (`L`) on the parts that should stay fixed.
-2. Choose **Share link** from the top-left menu. The copied link is a puzzle: the glued parts are on the board and locked, and the other parts are the kit.
+2. Choose **Share parts set** from the top-left menu. The copied link is a parts set: the glued parts are on the board and locked, and the other parts are the kit.
 3. Test it by opening the link in a new tab, and check that the kit's counts match the pieces you want the solver to use.
 
 Examples below are puzzles (their kits are counted), and they open the same way from a bare `#model=…&parts=…` link.
