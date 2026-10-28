@@ -1686,9 +1686,9 @@ boxCorners box =
         xs
 
 
-{-| The screen areas the context ring keeps clear of when it can: the dock band
-along the bottom (a generous bound, since the gear, tidy and hint rows sit above
-the dock) and, on a wide window, the camera globe in the bottom-right corner.
+{-| The screen areas the context ring keeps clear of when it can: the top-left
+toolbar row, the 130 px dock band along the bottom, and, on a wide window, the
+camera globe in the bottom-right corner.
 -}
 ringAvoid : Model -> List Ring.Rect
 ringAvoid model =
@@ -1699,17 +1699,20 @@ ringAvoid model =
         height =
             toFloat model.windowHeight
 
+        topToolbar =
+            { left = 0, top = 0, right = width, bottom = 12 + 44 }
+
         dock =
-            { left = 0, top = height - 12 - 130 - 120, right = width, bottom = height }
+            { left = 0, top = height - 12 - 130, right = width, bottom = height }
 
         globe =
             { left = width - 12 - 200, top = height - 12 - 200, right = width, bottom = height }
     in
     if isNarrow model then
-        [ dock ]
+        [ topToolbar, dock ]
 
     else
-        [ dock, globe ]
+        [ topToolbar, dock, globe ]
 
 
 syncKeyPause : Model -> Model

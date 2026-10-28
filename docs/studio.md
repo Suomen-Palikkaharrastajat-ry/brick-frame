@@ -340,8 +340,8 @@ mode (below) adds the gear chrome to the same view.
   horizontally in the same top-left toolbar so the vertical space above the dock
   stays completely free.
 - **Accomplishment banner (Technic mode).** One green line, "All N gears are
-  rotating together!" (`role="status"`), in the top row between the title-less
-  left edge and the buttons, the buttons' height. It shrinks and ellipsizes on narrow
+  rotating together!" (`role="status"`), in the top-left toolbar alongside the
+  buttons and status pills, the buttons' height. It shrinks and ellipsizes on narrow
   windows. The green is LDraw's Green from the colour table; the theme has no green
   token.
 - **Part cards.** Dock items are `UI.PartCard.compactView`s: the picture only, about
