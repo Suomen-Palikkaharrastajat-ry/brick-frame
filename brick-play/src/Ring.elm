@@ -13,7 +13,7 @@ module Ring exposing
 {-| The context ring: the controls that float beside a selected part in Brick
 Play. It opens on a double-click or double-tap of a part, and holds the part's
 Turn left, Turn right, Tip, Raise, Lower and Delete buttons, Glue (free building
-only), a planar D-pad, and the move-step control (`Step.StepSize`: Stud,
+only), a 3×2 movement pad (QWE / ASD), and the move-step control (`Step.StepSize`: Stud,
 ½ stud, Bit).
 
 The ring is a compact 224×192 px pod of 44 px touch buttons. `panelPosition`
@@ -361,8 +361,8 @@ utilityRow config =
         )
 
 
-{-| The main 3-column controls pod: Elevation (left), Planar D-Pad (center),
-and Rotation (right).
+{-| The main controls pod: a 3×2 movement pad on the left (QWE / ASD) and
+a rotation column on the right (Turn left, Turn right, Tip).
 -}
 mainControlsPod : Config msg -> Html msg
 mainControlsPod config =
@@ -372,54 +372,33 @@ mainControlsPod config =
         , Attr.style "justify-content" "space-between"
         , Attr.style "width" "100%"
         ]
-        [ elevationColumn config
-        , planarDPad config
+        [ movementPad config
         , rotationColumn config
         ]
 
 
-{-| Left elevation column: Raise (chevrons-up) and Lower (chevrons-down).
+{-| Symmetric 3×2 movement pad:
+Row 1: Lower (Q), Move away (W), Raise (E)
+Row 2: Move left (A), Move toward (S), Move right (D)
 -}
-elevationColumn : Config msg -> Html msg
-elevationColumn config =
-    div
-        [ Attr.attribute "role" "group"
-        , Attr.attribute "aria-label" "Elevation controls"
-        , Attr.style "display" "flex"
-        , Attr.style "flex-direction" "column"
-        , Attr.style "align-items" "center"
-        , Attr.style "justify-content" "center"
-        , Attr.style "gap" "0.5rem"
-        , Attr.style "width" "2.75rem"
-        ]
-        [ actionButton config config.onRaise "chevrons-up" "Raise" "E"
-        , actionButton config config.onLower "chevrons-down" "Lower" "Q"
-        ]
-
-
-{-| Center planar D-pad for ground movement: Away (W), Left (A), Toward (S), Right (D).
--}
-planarDPad : Config msg -> Html msg
-planarDPad config =
+movementPad : Config msg -> Html msg
+movementPad config =
     div
         [ Attr.attribute "role" "group"
         , Attr.attribute "aria-label" "Move the part"
         , Attr.style "display" "grid"
-        , Attr.style "grid-template-columns" "repeat(2, 2.75rem)"
-        , Attr.style "grid-template-rows" "repeat(3, 2.75rem)"
+        , Attr.style "grid-template-columns" "repeat(3, 2.75rem)"
+        , Attr.style "grid-template-rows" "repeat(2, 2.75rem)"
+        , Attr.style "gap" "0.25rem"
         , Attr.style "justify-items" "center"
         , Attr.style "align-items" "center"
-        , Attr.style "width" "5.5rem"
-        , Attr.style "height" "8.25rem"
         ]
-        [ div [ Attr.style "grid-column" "1 / span 2" ]
-            [ dPadKey config Away "chevron-up" "Move away (W)" "Move away (W)" ]
-        , div [ Attr.style "grid-column" "1", Attr.style "grid-row" "2" ]
-            [ dPadKey config Left "chevron-left" "Move left (A)" "Move left (A)" ]
-        , div [ Attr.style "grid-column" "2", Attr.style "grid-row" "2" ]
-            [ dPadKey config Right "chevron-right" "Move right (D)" "Move right (D)" ]
-        , div [ Attr.style "grid-column" "1 / span 2", Attr.style "grid-row" "3" ]
-            [ dPadKey config Toward "chevron-down" "Move toward (S)" "Move toward (S)" ]
+        [ actionButton config config.onLower "chevrons-down" "Lower" "Q"
+        , dPadKey config Away "chevron-up" "Move away (W)" "Move away (W)"
+        , actionButton config config.onRaise "chevrons-up" "Raise" "E"
+        , dPadKey config Left "chevron-left" "Move left (A)" "Move left (A)"
+        , dPadKey config Toward "chevron-down" "Move toward (S)" "Move toward (S)"
+        , dPadKey config Right "chevron-right" "Move right (D)" "Move right (D)"
         ]
 
 
@@ -446,9 +425,9 @@ rotationColumn config =
         , Attr.style "display" "flex"
         , Attr.style "flex-direction" "column"
         , Attr.style "align-items" "center"
-        , Attr.style "justify-content" "space-between"
+        , Attr.style "justify-content" "center"
+        , Attr.style "gap" "0.125rem"
         , Attr.style "width" "2.75rem"
-        , Attr.style "height" "8.25rem"
         ]
         [ actionButton config (config.onTurn TurnLeft) "rotate-ccw" "Turn left" "←"
         , actionButton config (config.onTurn TurnRight) "rotate-cw" "Turn right" "→"

@@ -373,6 +373,22 @@ ringTests =
                     |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Move away (W)") ]
                     |> Event.simulate Event.click
                     |> Event.expect (MoveSelection Away)
+        , test "the Raise button sends a raise" <|
+            \_ ->
+                openRing builtWithOneBrick
+                    |> view
+                    |> Query.fromHtml
+                    |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Raise") ]
+                    |> Event.simulate Event.click
+                    |> Event.expect RaiseSelection
+        , test "the Lower button sends a lower" <|
+            \_ ->
+                openRing builtWithOneBrick
+                    |> view
+                    |> Query.fromHtml
+                    |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Lower") ]
+                    |> Event.simulate Event.click
+                    |> Event.expect LowerSelection
         , test "the step segments send their step" <|
             \_ ->
                 openRing builtWithOneBrick
