@@ -12,6 +12,8 @@ import LDraw.Connectivity as Connectivity
         , WorldConnectionPoint
         , knownCatalogPart
         )
+import LDraw.Parser as Parser
+import LDraw.Types exposing (LDrawLine)
 import Math.Matrix4 as Mat4 exposing (Mat4)
 import Math.Vector3 as Vec3 exposing (Vec3, vec3)
 import Studio.SideSnap as SideSnap
@@ -23,6 +25,7 @@ suite =
     describe "Studio.SideSnap"
         [ targetsNearRayTests
         , approachMatrixTests
+        , roundPlateOnSideStudTests
         ]
 
 
@@ -185,4 +188,100 @@ approachMatrixTests =
                         }
                 in
                 Expect.equal Nothing (SideSnap.approachMatrix Mat4.identity studOnlyPart studTarget)
+        ]
+
+
+{-| The connection-bearing lines of 85861 (Plate 1 x 1 Round with Open Stud), as
+its LDraw file has them: an open stud on top, and a flipped stud4 tube from
+Y = 3 down to the underside at Y = 8.
+-}
+roundPlateLines : String -> Maybe (List LDrawLine)
+roundPlateLines name =
+    if name == "85861.dat" then
+        Just
+            (Parser.parseFile
+                (String.join "\n"
+                    [ "1 16 0 3 0 -1 0 0 0 -1.25 0 0 0 1 stud4.dat"
+                    , "1 16 0 0 0 10 0 0 0 3 0 0 0 10 4-4cyli.dat"
+                    , "1 16 0 0 0 1 0 0 0 1 0 0 0 1 stud2a.dat"
+                    ]
+                )
+            )
+
+    else
+        Nothing
+
+
+roundPlateOnSideStudTests : Test
+roundPlateOnSideStudTests =
+    let
+        plate =
+            Connectivity.extractPartConnectivity "85861.dat" roundPlateLines
+    in
+    describe "a 1 x 1 round plate on a brick's side stud"
+        [ test "the plate's anti-stud is on its underside, facing down" <|
+            \_ ->
+                plate.connections
+                    |> List.filter (\c -> c.connType == AntiStud)
+                    |> List.map (\c -> ( Vec3.toRecord c.localPosition, Vec3.toRecord c.normal ))
+                    |> Expect.equal [ ( { x = 0, y = 8, z = 0 }, { x = 0, y = 1, z = 0 } ) ]
+        , test "the plate's box is a plate's: from its stud top to its underside" <|
+            \_ ->
+                plate.boundingBoxes
+                    |> List.map (\b -> ( Vec3.toRecord b.min, Vec3.toRecord b.max ))
+                    |> Expect.equal [ ( { x = -10, y = -4, z = -10 }, { x = 10, y = 8, z = 10 } ) ]
+        , test "the plate snaps onto 87087's side stud without colliding with the brick" <|
+            \_ ->
+                case knownCatalogPart "87087.dat" of
+                    Just brick ->
+                        let
+                            brickMatrix =
+                                Mat4.makeTranslate3 0 -24 0
+
+                            target =
+                                brick.connections
+                                    |> List.filter (\c -> c.connType == Stud && Vec3.getZ c.normal < -0.7)
+                                    |> List.map (Connectivity.transformPoint brickMatrix 1)
+                                    |> List.head
+
+                            -- Tipped so its underside faces the stud (+Z), a little off it
+                            leadMatrix =
+                                Mat4.mul (Mat4.makeTranslate3 3 -12 -30) (Mat4.makeRotate (pi / 2) (vec3 1 0 0))
+
+                            envelope conn =
+                                List.head conn.boundingBoxes
+                                    |> Maybe.withDefault { min = vec3 0 0 0, max = vec3 0 0 0 }
+                                    |> (\box -> Connectivity.effectiveEnvelope box conn.connections)
+
+                            snapOnto tp =
+                                SideSnap.approachMatrix leadMatrix plate.connections tp
+                                    |> Maybe.map (\approach -> Connectivity.solveSnapCandidates 24 0 approach plate.connections [ tp ])
+                                    |> Maybe.andThen List.head
+                                    |> Maybe.map (\snap -> ( tp, snap ))
+                        in
+                        case Maybe.andThen snapOnto target of
+                            Just ( tp, snap ) ->
+                                let
+                                    antiStud =
+                                        Mat4.transform snap.snapMatrix (vec3 0 8 0)
+                                in
+                                Expect.all
+                                    [ \_ -> Expect.equal AntiStud snap.draggedPoint.connType
+                                    , \_ -> Expect.lessThan 0.001 (Vec3.distance antiStud tp.worldPosition)
+                                    , \_ ->
+                                        Connectivity.isSnapColliding 0.5
+                                            0
+                                            leadMatrix
+                                            [ ( 0, leadMatrix, envelope plate ) ]
+                                            [ ( 1, brickMatrix, envelope brick ) ]
+                                            snap
+                                            |> Expect.equal False
+                                    ]
+                                    ()
+
+                            Nothing ->
+                                Expect.fail "the plate found no snap on the side stud"
+
+                    Nothing ->
+                        Expect.fail "87087.dat not found in catalog"
         ]

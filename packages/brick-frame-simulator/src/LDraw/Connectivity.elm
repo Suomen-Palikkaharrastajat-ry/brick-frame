@@ -1121,7 +1121,7 @@ extractConnections lines =
                                 pt =
                                     { id = idx
                                     , connType = connType
-                                    , localPosition = Mat4.transform sub.transform (vec3 0 0 0)
+                                    , localPosition = Mat4.transform sub.transform (primitiveAnchor connType)
                                     , normal = transformDirection sub.transform norm
                                     , tangent = transformDirection sub.transform tang
                                     }
@@ -1149,7 +1149,11 @@ classifySubfile sub =
         Just ( Stud, vec3 0 -1 0, vec3 1 0 0 )
 
     else if isAntiStudFile file then
-        Just ( AntiStud, vec3 0 1 0, vec3 1 0 0 )
+        -- The tube primitives run from their base (Y = 0, against the part's
+        -- ceiling) to their open end at Y = -4: the opening faces local -Y
+        -- (see primitiveAnchor). Parts flip them with a negative Y scale, so the
+        -- opening ends up facing down out of the part's underside.
+        Just ( AntiStud, vec3 0 -1 0, vec3 1 0 0 )
 
     else if isAxleHoleFile file then
         Just ( TechnicAxleFemale { length = 20.0 }, vec3 0 0 1, vec3 1 0 0 )
@@ -1177,6 +1181,21 @@ classifySubfile sub =
 
     else
         Nothing
+
+
+{-| Where a connection primitive's connection point sits in its own space. A stud
+is anchored at its base (the origin). An anti-stud tube (stud3, stud4, …) is
+anchored at its open end, local Y = -4, where a stud enters it: in a part that
+is the underside face (a plate's Y = 8, a brick's Y = 24), as the catalog has it.
+-}
+primitiveAnchor : ConnectionType -> Vec3
+primitiveAnchor connType =
+    case connType of
+        AntiStud ->
+            vec3 0 -4 0
+
+        _ ->
+            vec3 0 0 0
 
 
 isStudFile : String -> Bool
@@ -1298,7 +1317,7 @@ extractRecursive lineResolver depth currentMat lines acc =
                             Just ( connType, norm, tang ) ->
                                 { id = List.length currentAcc + 1
                                 , connType = connType
-                                , localPosition = Mat4.transform comb (vec3 0 0 0)
+                                , localPosition = Mat4.transform comb (primitiveAnchor connType)
                                 , normal = transformDirection comb norm
                                 , tangent = transformDirection comb tang
                                 }
@@ -1327,6 +1346,34 @@ inferBounds points =
 
         first :: rest ->
             let
+                -- How far a point's connector sticks out of the body along its normal.
+                protrusion pt =
+                    if pt.connType == Stud then
+                        4
+
+                    else
+                        0
+
+                -- How far the body reaches behind a vertical point: to the nearest
+                -- opposite face (a plate's anti-studs 8 LDU below its studs), else
+                -- a brick's 24 LDU.
+                bodyDepth pt =
+                    points
+                        |> List.filterMap
+                            (\other ->
+                                let
+                                    behind =
+                                        Vec3.dot (Vec3.sub other.localPosition pt.localPosition) (Vec3.negate pt.normal)
+                                in
+                                if Vec3.dot other.normal pt.normal < -0.7 && behind > 0.5 then
+                                    Just behind
+
+                                else
+                                    Nothing
+                            )
+                        |> List.minimum
+                        |> Maybe.withDefault 24
+
                 pointExtents pt =
                     let
                         p =
@@ -1349,10 +1396,10 @@ inferBounds points =
                         padY =
                             if abs (Vec3.getY n) > 0.7 then
                                 if Vec3.getY n < 0 then
-                                    ( Vec3.getY p - 4, Vec3.getY p + 24 )
+                                    ( Vec3.getY p - protrusion pt, Vec3.getY p + bodyDepth pt )
 
                                 else
-                                    ( Vec3.getY p - 24, Vec3.getY p )
+                                    ( Vec3.getY p - bodyDepth pt, Vec3.getY p + protrusion pt )
 
                             else
                                 ( Vec3.getY p - 10, Vec3.getY p + 10 )

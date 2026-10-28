@@ -137,13 +137,15 @@ extractionTests =
 
                     _ ->
                         Expect.fail ("Expected 1 connection point, got " ++ String.fromInt (List.length points))
-        , test "extracts stud4.dat as AntiStud with normal (0, 1, 0)" <|
+        , test "extracts stud4.dat as AntiStud at its open end with normal (0, 1, 0)" <|
             \_ ->
                 let
+                    -- As parts place it: flipped (Y scale -1) with its base at Y = 20,
+                    -- so the tube runs down to the underside at Y = 24.
                     lines =
                         [ SubFileRef
                             { color = 16
-                            , transform = Mat4.makeTranslate3 0 24 0
+                            , transform = Mat4.mul (Mat4.makeTranslate3 0 20 0) (Mat4.makeScale3 1 -1 1)
                             , file = "stud4.dat"
                             }
                         ]
