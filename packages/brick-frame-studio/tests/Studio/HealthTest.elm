@@ -188,6 +188,35 @@ misalignmentTests =
                             |> Tuple.first
                 in
                 Expect.equal [] (Health.check noParts doc Set.empty)
+        , test "an aligned slope on a brick is healthy" <|
+            \_ ->
+                lines [ brick "3003.dat" 0 -24 0, brick "3039.dat" 0 -48 10 ]
+                    |> (\doc -> Expect.equal [] (Health.check noParts doc Set.empty))
+        , test "a misaligned slope on a brick is flagged as misaligned" <|
+            \_ ->
+                let
+                    doc =
+                        lines [ brick "3003.dat" 0 -24 0, brick "3039.dat" 5 -48 10 ]
+                in
+                Expect.equal [ Misaligned { placement = 1 } ] (Health.check noParts doc Set.empty)
+        , test "an off-grid slope on the ground is flagged as misaligned" <|
+            \_ ->
+                let
+                    doc =
+                        lines [ brick "3039.dat" 5 -24 10 ]
+                in
+                Expect.equal [ Misaligned { placement = 0 } ] (Health.check noParts doc Set.empty)
+        , test "an aligned tile on a brick is healthy" <|
+            \_ ->
+                lines [ brick "3005.dat" 10 -24 10, brick "3070b.dat" 10 -32 10 ]
+                    |> (\doc -> Expect.equal [] (Health.check noParts doc Set.empty))
+        , test "a misaligned tile on a brick is flagged as misaligned" <|
+            \_ ->
+                let
+                    doc =
+                        lines [ brick "3005.dat" 10 -24 10, brick "3070b.dat" 15 -32 10 ]
+                in
+                Expect.equal [ Misaligned { placement = 1 } ] (Health.check noParts doc Set.empty)
         ]
 
 

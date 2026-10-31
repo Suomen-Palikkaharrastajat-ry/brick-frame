@@ -328,7 +328,8 @@ itemOf cache glued id part matrix raw =
         , studs = []
         , antis = []
         , glued = Set.member id glued
-        , studRuled = Connectivity.isStudded conn && not (hasTechnicPoints conn)
+        , studRuled =
+            (Connectivity.isStudded conn || hasAntiStudPoints conn) && not (hasTechnicPoints conn)
         }
 
 
@@ -414,6 +415,11 @@ linesOf cache name =
 normaliseName : String -> String
 normaliseName name =
     String.toLower (String.replace "\\" "/" name)
+
+
+hasAntiStudPoints : PartConnectivity -> Bool
+hasAntiStudPoints conn =
+    List.any (\point -> point.connType == AntiStud) conn.connections
 
 
 hasTechnicPoints : PartConnectivity -> Bool

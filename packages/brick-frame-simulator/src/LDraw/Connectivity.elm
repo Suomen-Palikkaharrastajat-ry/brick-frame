@@ -22,6 +22,7 @@ module LDraw.Connectivity exposing
     , makeAxle
     , makeGear
     , makeGearPinHoles
+    , makeSlope
     , setGuideColliding
     , snapEnterDistance
     , snapReleaseDistance
@@ -1510,10 +1511,22 @@ studOffset conn matrix =
                     )
                 |> List.map (\point -> Vec3.sub (Mat4.transform matrix point.localPosition) origin)
 
+        relevantPoints =
+            if List.isEmpty studs then
+                conn.connections
+                    |> List.filter
+                        (\point ->
+                            point.connType == AntiStud && Vec3.getY (transformDirection matrix point.normal) > 0.7
+                        )
+                    |> List.map (\point -> Vec3.sub (Mat4.transform matrix point.localPosition) origin)
+
+            else
+                studs
+
         offsetAlong get =
             let
                 columns =
-                    studs
+                    relevantPoints
                         |> List.map (\v -> round (get v))
                         |> Set.fromList
                         |> Set.size
@@ -2045,6 +2058,32 @@ knownCatalogPart name =
             -- Tile 2 x 4 with Groove
             Just (makeTile 4 2 "87079.dat")
 
+        "3040" ->
+            -- Slope Brick 45 2 x 1
+            Just (makeSlope 1 2 24 "3040.dat")
+
+        "3040a" ->
+            Just (makeSlope 1 2 24 "3040a.dat")
+
+        "3040b" ->
+            Just (makeSlope 1 2 24 "3040b.dat")
+
+        "3039" ->
+            -- Slope Brick 45 2 x 2
+            Just (makeSlope 2 2 24 "3039.dat")
+
+        "3038" ->
+            -- Slope Brick 45 2 x 3
+            Just (makeSlope 3 2 24 "3038.dat")
+
+        "3037" ->
+            -- Slope Brick 45 2 x 4
+            Just (makeSlope 4 2 24 "3037.dat")
+
+        "3298" ->
+            -- Slope Brick 33 3 x 2
+            Just (makeSlope 2 3 24 "3298.dat")
+
         "14417" ->
             -- Plate 1 x 2 with Ball
             let
@@ -2231,6 +2270,72 @@ makeBrick length width height partName =
         bbox =
             { min = vec3 -halfL -4 -halfW
             , max = vec3 halfL height halfW
+            }
+    in
+    { part = partName
+    , connections = allConnections
+    , boundingBoxes = [ bbox ]
+    }
+
+
+{-| Procedurally generate connectivity descriptor for a standard LDraw slope brick.
+`width` is in studs along X, `depth` is in studs along -Z (`frontZ = 10 - depth * 20`),
+and `height` is the vertical height in LDU (typically 24).
+
+Top studs form a single row along X at Z = 0, Y = 0 (studs from `-halfW + 10` to `halfW - 10`).
+Anti-studs form a full grid of `width` × `depth` anti-studs at Y = height,
+X from `-halfW + 10` to `halfW - 10`, Z in `{0, -20, ..., -(depth - 1) * 20}`.
+Bounding box: min = vec3 -halfW -4 frontZ, max = vec3 halfW height 10.
+
+-}
+makeSlope : Int -> Int -> Float -> String -> PartConnectivity
+makeSlope width depth height partName =
+    let
+        halfW =
+            toFloat width * 10.0
+
+        frontZ =
+            10.0 - toFloat depth * 20.0
+
+        xCoords =
+            List.map (\i -> -halfW + 10.0 + toFloat i * 20.0) (List.range 0 (width - 1))
+
+        zCoords =
+            List.map (\j -> -(toFloat j) * 20.0) (List.range 0 (depth - 1))
+
+        studPoints =
+            List.indexedMap
+                (\idx x ->
+                    { id = idx + 1
+                    , connType = Stud
+                    , localPosition = vec3 x 0 0
+                    , normal = vec3 0 -1 0
+                    , tangent = vec3 1 0 0
+                    }
+                )
+                xCoords
+
+        antiStudPositions =
+            List.concatMap (\x -> List.map (\z -> ( x, z )) zCoords) xCoords
+
+        antiStudPoints =
+            List.indexedMap
+                (\idx ( x, z ) ->
+                    { id = idx + 100
+                    , connType = AntiStud
+                    , localPosition = vec3 x height z
+                    , normal = vec3 0 1 0
+                    , tangent = vec3 1 0 0
+                    }
+                )
+                antiStudPositions
+
+        allConnections =
+            studPoints ++ antiStudPoints
+
+        bbox =
+            { min = vec3 -halfW -4 frontZ
+            , max = vec3 halfW height 10
             }
     in
     { part = partName

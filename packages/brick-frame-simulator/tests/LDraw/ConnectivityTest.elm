@@ -552,6 +552,42 @@ extractionTests =
 
                     _ ->
                         Expect.fail "87087.dat or 3070b.dat not found in catalog"
+        , test "catalog slope parts have expected stud counts, anti-stud counts, and bounding boxes" <|
+            \_ ->
+                let
+                    checkSlope part expectedStuds expectedAntiStuds expectedMin expectedMax =
+                        case knownCatalogPart part of
+                            Just conn ->
+                                let
+                                    studCount =
+                                        List.length (List.filter (\c -> c.connType == Stud) conn.connections)
+
+                                    antiCount =
+                                        List.length (List.filter (\c -> c.connType == AntiStud) conn.connections)
+
+                                    box =
+                                        List.head conn.boundingBoxes
+                                            |> Maybe.withDefault { min = vec3 0 0 0, max = vec3 0 0 0 }
+                                in
+                                Expect.all
+                                    [ \_ -> Expect.equal expectedStuds studCount
+                                    , \_ -> Expect.equal expectedAntiStuds antiCount
+                                    , \_ -> Expect.equal (Vec3.toRecord expectedMin) (Vec3.toRecord box.min)
+                                    , \_ -> Expect.equal (Vec3.toRecord expectedMax) (Vec3.toRecord box.max)
+                                    ]
+                                    ()
+
+                            Nothing ->
+                                Expect.fail ("Catalog slope part not found: " ++ part)
+                in
+                Expect.all
+                    [ \_ -> checkSlope "3040b.dat" 1 2 (vec3 -10 -4 -30) (vec3 10 24 10)
+                    , \_ -> checkSlope "3039.dat" 2 4 (vec3 -20 -4 -30) (vec3 20 24 10)
+                    , \_ -> checkSlope "3038.dat" 3 6 (vec3 -30 -4 -30) (vec3 30 24 10)
+                    , \_ -> checkSlope "3037.dat" 4 8 (vec3 -40 -4 -30) (vec3 40 24 10)
+                    , \_ -> checkSlope "3298.dat" 2 6 (vec3 -20 -4 -50) (vec3 20 24 10)
+                    ]
+                    ()
         ]
 
 
@@ -665,6 +701,26 @@ studLatticeTests =
                     , \_ -> Expect.equal { x = 0, z = 0 } (offsetOf "3031.dat" rot270)
                     ]
                     ()
+        , test "studOffset for tiles (3070b, 3069b) and slopes (3040b, 3039) across 0° and 90° rotations" <|
+            \_ ->
+                Expect.all
+                    [ -- 1x1 tile 3070b: odd on both axes, offset { x = 10, z = 10 } at rot0 and rot90
+                      \_ -> Expect.equal { x = 10, z = 10 } (offsetOf "3070b.dat" rot0)
+                    , \_ -> Expect.equal { x = 10, z = 10 } (offsetOf "3070b.dat" rot90)
+
+                    -- 2x1 tile 3069b: 2 on X, 1 on Z at rot0, swaps at rot90
+                    , \_ -> Expect.equal { x = 0, z = 10 } (offsetOf "3069b.dat" rot0)
+                    , \_ -> Expect.equal { x = 10, z = 0 } (offsetOf "3069b.dat" rot90)
+
+                    -- 1x2 slope 3040b: single stud at origin, offset { x = 10, z = 10 }
+                    , \_ -> Expect.equal { x = 10, z = 10 } (offsetOf "3040b.dat" rot0)
+                    , \_ -> Expect.equal { x = 10, z = 10 } (offsetOf "3040b.dat" rot90)
+
+                    -- 2x2 slope 3039: 2 studs along X, 1 column along Z at rot0, swaps at rot90
+                    , \_ -> Expect.equal { x = 0, z = 10 } (offsetOf "3039.dat" rot0)
+                    , \_ -> Expect.equal { x = 10, z = 0 } (offsetOf "3039.dat" rot90)
+                    ]
+                    ()
         , test "isUpright reports True for yaw rotations and False for tipped/inverted parts" <|
             \_ ->
                 let
@@ -744,6 +800,47 @@ snapSolverTests =
 
                     Nothing ->
                         Expect.fail "Snap candidate was not found"
+        , test "snaps slope 3039 anti-studs onto target studs of a 2x2 brick" <|
+            \_ ->
+                let
+                    brickConn =
+                        Connectivity.extractPartConnectivity "3003.dat" (\_ -> Nothing)
+
+                    targetStuds =
+                        brickConn.connections
+                            |> List.filter (\c -> c.connType == Stud)
+                            |> List.map
+                                (\c ->
+                                    { placementId = 1
+                                    , pointId = c.id
+                                    , connType = c.connType
+                                    , worldPosition = c.localPosition
+                                    , worldNormal = c.normal
+                                    , worldTangent = c.tangent
+                                    }
+                                )
+
+                    slopeConn =
+                        Connectivity.extractPartConnectivity "3039.dat" (\_ -> Nothing)
+
+                    hoverMat =
+                        Mat4.makeTranslate3 1 -22 11
+                in
+                case solveSnap 12.0 0 hoverMat slopeConn.connections targetStuds of
+                    Just snap ->
+                        let
+                            snappedPos =
+                                Mat4.transform snap.snapMatrix (vec3 0 0 0)
+                        in
+                        Expect.all
+                            [ \_ -> Expect.lessThan 0.001 (abs (Vec3.getX snappedPos - 0))
+                            , \_ -> Expect.lessThan 0.001 (abs (Vec3.getY snappedPos - -24))
+                            , \_ -> Expect.lessThan 0.001 (abs (Vec3.getZ snappedPos - 10))
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "Expected snap candidate for slope on brick"
         , test "rotationIndex cycles orientation around connection normal by 90-degree steps" <|
             \_ ->
                 let
