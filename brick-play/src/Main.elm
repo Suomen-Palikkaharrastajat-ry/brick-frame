@@ -1183,7 +1183,15 @@ step msg model =
             ( { model | activeTab = tab }, Cmd.none )
 
         SetPaintColour colour ->
-            ( { model | paintColour = colour }, Cmd.none )
+            let
+                ( nextModel, cmd ) =
+                    if Core.hasSelection model.studio then
+                        runCore (Core.recolorSelection colour) model
+
+                    else
+                        ( model, Cmd.none )
+            in
+            ( { nextModel | paintColour = colour }, cmd )
 
         SearchInput query ->
             let

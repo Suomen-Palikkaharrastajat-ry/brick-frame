@@ -254,6 +254,60 @@ freeDockTests =
                     |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Add Brick 2 x 4 (Red)") ]
                     |> Event.simulate Event.click
                     |> Event.expect (AddFreePart { file = "3001.dat", color = 4, name = "Brick 2 x 4" })
+        , test "picking a colour swatch recolors the selected part" <|
+            \_ ->
+                let
+                    withPart =
+                        addFree "3001.dat" 14 (open "")
+
+                    recolored =
+                        Tuple.first (update (SetPaintColour 4) withPart)
+                in
+                Expect.all
+                    [ \m -> Expect.equal [ 4 ] (List.map .color (Core.getPlacements m.studio))
+                    , \m -> Expect.equal 4 m.paintColour
+                    ]
+                    recolored
+        , test "undo restores original colour after recoloring" <|
+            \_ ->
+                let
+                    withPart =
+                        addFree "3001.dat" 14 (open "")
+
+                    recolored =
+                        Tuple.first (update (SetPaintColour 4) withPart)
+
+                    undone =
+                        Tuple.first (update Undo recolored)
+                in
+                Expect.equal [ 14 ] (List.map .color (Core.getPlacements undone.studio))
+        , test "glued parts are protected from recoloring when picking a colour swatch" <|
+            \_ ->
+                let
+                    withPart =
+                        addFree "3001.dat" 14 (open "")
+
+                    glued =
+                        Tuple.first (update ToggleGlue withPart)
+
+                    attemptRecolor =
+                        Tuple.first (update (SetPaintColour 4) glued)
+                in
+                Expect.all
+                    [ \m -> Expect.equal [ 14 ] (List.map .color (Core.getPlacements m.studio))
+                    , \m -> Expect.equal 4 m.paintColour
+                    ]
+                    attemptRecolor
+        , test "clicking a colour swatch button emits SetPaintColour with that colour code" <|
+            \_ ->
+                let
+                    model =
+                        addFree "3001.dat" 14 (open "")
+                in
+                Query.fromHtml (view model)
+                    |> Query.find [ Selector.attribute (Attr.attribute "aria-label" "Red") ]
+                    |> Event.simulate Event.click
+                    |> Event.expect (SetPaintColour 4)
         , test "exactly one colour swatch is pressed, the paint colour" <|
             \_ ->
                 Query.fromHtml (view (open ""))

@@ -2411,4 +2411,104 @@ copyPasteSuite =
                     , \_ -> Expect.equal (List.length (Core.getPlacements afterDup)) 3
                     ]
                     ()
+        , describe "recolorSelection"
+            [ test "recolors a single selected part, emits DocumentChanged, and records undo" <|
+                \_ ->
+                    let
+                        ( recolored, _, events ) =
+                            Core.recolorSelection 4 addedPart
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal [ 4 ] (List.map .color (Core.getPlacements m))
+                        , \m -> Expect.equal (Core.canUndo m) True
+                        , \_ -> Expect.equal True (List.any isDocChanged events)
+                        ]
+                        recolored
+            , test "recolors multiple selected parts" <|
+                \_ ->
+                    let
+                        ( withTwo, _, _ ) =
+                            Core.addPart "3004.dat" 1 (vec3 40 0 0) addedPart
+
+                        withBothSelected =
+                            Core.selectAll withTwo
+
+                        ( recolored, _, _ ) =
+                            Core.recolorSelection 4 withBothSelected
+                    in
+                    Expect.equal [ 4, 4 ] (List.map .color (Core.getPlacements recolored))
+            , test "ignores glued parts when recoloring selection" <|
+                \_ ->
+                    let
+                        ( gluedBase, _, _ ) =
+                            Core.setGlued True addedPart
+
+                        ( withTwo, _, _ ) =
+                            Core.addPart "3004.dat" 1 (vec3 40 0 0) gluedBase
+
+                        withBothSelected =
+                            Core.selectAll withTwo
+
+                        ( recolored, _, _ ) =
+                            Core.recolorSelection 4 withBothSelected
+                    in
+                    Expect.equal [ 14, 4 ] (List.map .color (Core.getPlacements recolored))
+            , test "does nothing and records no history if only glued parts are selected" <|
+                \_ ->
+                    let
+                        ( gluedBase, _, _ ) =
+                            Core.setGlued True addedPart
+
+                        ( recolored, _, events ) =
+                            Core.recolorSelection 4 gluedBase
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal [ 14 ] (List.map .color (Core.getPlacements m))
+                        , \_ -> Expect.equal False (List.any isDocChanged events)
+                        ]
+                        recolored
+            , test "is a no-op and records no history if color is already the same" <|
+                \_ ->
+                    let
+                        ( sameColorModel, _, events ) =
+                            Core.recolorSelection 14 addedPart
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal [ 14 ] (List.map .color (Core.getPlacements m))
+                        , \_ -> Expect.equal False (List.any isDocChanged events)
+                        ]
+                        sameColorModel
+            , test "supports undo and redo" <|
+                \_ ->
+                    let
+                        ( recolored, _, _ ) =
+                            Core.recolorSelection 4 addedPart
+
+                        ( undone, _, _ ) =
+                            Core.undo recolored
+
+                        ( redone, _, _ ) =
+                            Core.redo undone
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal [ 4 ] (List.map .color (Core.getPlacements recolored))
+                        , \_ -> Expect.equal [ 14 ] (List.map .color (Core.getPlacements undone))
+                        , \_ -> Expect.equal [ 4 ] (List.map .color (Core.getPlacements redone))
+                        ]
+                        ()
+            , test "does nothing during a drag" <|
+                \_ ->
+                    let
+                        dragging =
+                            draggingModel addedPart
+
+                        ( recolored, _, events ) =
+                            Core.recolorSelection 4 dragging
+                    in
+                    Expect.all
+                        [ \m -> Expect.equal [ 14 ] (List.map .color (Core.getPlacements m))
+                        , \_ -> Expect.equal False (List.any isDocChanged events)
+                        ]
+                        recolored
+            ]
         ]

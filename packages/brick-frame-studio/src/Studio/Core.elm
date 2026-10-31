@@ -42,6 +42,7 @@ module Studio.Core exposing
     , pasteClipboard
     , previewScene
     , raiseSelected
+    , recolorSelection
     , redo
     , renderQuality
     , resetDocument
@@ -2016,39 +2017,54 @@ updateInner msg model =
             rotateSelection axis steps model
 
         SetColorSelection newColor ->
-            if Set.isEmpty model.selection then
-                ( { model | activeColour = newColor }, Cmd.none, [] )
-
-            else if Set.isEmpty (movableSelection model) then
-                -- A glued part is locked, its colour included.
+            if isDragging model then
                 ( model, Cmd.none, [] )
 
             else
                 let
                     recolorPairs =
-                        List.map (\id -> ( id, newColor )) (Set.toList (movableSelection model))
+                        movableSelection model
+                            |> Set.toList
+                            |> List.filterMap
+                                (\id ->
+                                    case Document.getPlacement id model.document of
+                                        Just p ->
+                                            if p.color /= newColor then
+                                                Just ( id, newColor )
 
-                    ( newDoc, newHistory ) =
-                        Edit.record (Recolor recolorPairs) model.document model.history
+                                            else
+                                                Nothing
 
-                    ( nextViewport, viewportCmd, events ) =
-                        Viewport.applyDocument newDoc model.viewport
-
-                    nextModel =
-                        { model
-                            | viewport = nextViewport
-                            , document = Document.clearTouched newDoc
-                            , history = newHistory
-                            , activeColour = newColor
-                        }
-
-                    ( finalModel, extraCmds, emittedEvents ) =
-                        handleViewportEvents events ( nextModel, [], [ DocumentChanged nextModel.document ] )
+                                        Nothing ->
+                                            Nothing
+                                )
                 in
-                ( finalModel
-                , Cmd.batch (Cmd.map ViewportMsg viewportCmd :: extraCmds)
-                , emittedEvents
-                )
+                if List.isEmpty recolorPairs then
+                    ( { model | activeColour = newColor }, Cmd.none, [] )
+
+                else
+                    let
+                        ( newDoc, newHistory ) =
+                            Edit.record (Recolor recolorPairs) model.document model.history
+
+                        ( nextViewport, viewportCmd, events ) =
+                            Viewport.applyDocument newDoc model.viewport
+
+                        nextModel =
+                            { model
+                                | viewport = nextViewport
+                                , document = Document.clearTouched newDoc
+                                , history = newHistory
+                                , activeColour = newColor
+                            }
+
+                        ( finalModel, extraCmds, emittedEvents ) =
+                            handleViewportEvents events ( nextModel, [], [ DocumentChanged nextModel.document ] )
+                    in
+                    ( finalModel
+                    , Cmd.batch (Cmd.map ViewportMsg viewportCmd :: extraCmds)
+                    , emittedEvents
+                    )
 
         SetTool tool ->
             ( setTool tool model, Cmd.none, [] )
@@ -2297,6 +2313,17 @@ raiseSelected =
 lowerSelected : Model -> ( Model, Cmd Msg, List Event )
 lowerSelected =
     stepSelected StudioShortcuts.Down
+
+
+{-| Recolor the selected parts to the given LDraw color code.
+
+Recorded in the history; does nothing without a selection, during a drag,
+or if all selected parts already have this colour or are glued.
+
+-}
+recolorSelection : Int -> Model -> ( Model, Cmd Msg, List Event )
+recolorSelection newColor model =
+    update (SetColorSelection newColor) model
 
 
 stepSelected : StudioShortcuts.NudgeDirection -> Model -> ( Model, Cmd Msg, List Event )
