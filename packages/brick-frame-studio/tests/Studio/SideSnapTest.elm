@@ -26,6 +26,8 @@ suite =
         [ targetsNearRayTests
         , approachMatrixTests
         , roundPlateOnSideStudTests
+        , multiAntiStudSelectionTests
+        , fourStepRotationTests
         ]
 
 
@@ -284,4 +286,193 @@ roundPlateOnSideStudTests =
 
                     Nothing ->
                         Expect.fail "87087.dat not found in catalog"
+        ]
+
+
+multiAntiStudSelectionTests : Test
+multiAntiStudSelectionTests =
+    describe "multi-anti-stud selection on side studs"
+        [ test "approachMatrix selects the closer anti-stud on a 1 x 2 tile" <|
+            \_ ->
+                case ( knownCatalogPart "3069b.dat", knownCatalogPart "87087.dat" ) of
+                    ( Just tile1x2, Just brick87087 ) ->
+                        let
+                            brickMatrix =
+                                Mat4.makeTranslate3 0 -24 0
+
+                            targetSideStud =
+                                brick87087.connections
+                                    |> List.filter (\c -> c.connType == Stud && Vec3.getZ c.normal < -0.7)
+                                    |> List.map (Connectivity.transformPoint brickMatrix 1)
+                                    |> List.head
+                                    |> Maybe.withDefault
+                                        { placementId = 1
+                                        , pointId = 200
+                                        , connType = Stud
+                                        , worldPosition = vec3 0 -14 -10
+                                        , worldNormal = vec3 0 0 -1
+                                        , worldTangent = vec3 0 1 0
+                                        }
+
+                            antiStuds =
+                                List.filter (\c -> c.connType == AntiStud) tile1x2.connections
+
+                            antiStud1 =
+                                List.filter (\c -> Vec3.getX c.localPosition < 0) antiStuds
+                                    |> List.head
+
+                            antiStud2 =
+                                List.filter (\c -> Vec3.getX c.localPosition > 0) antiStuds
+                                    |> List.head
+
+                            tipMatrix =
+                                Mat4.makeRotate (pi / 2) (vec3 1 0 0)
+
+                            leadMatrixA =
+                                Mat4.mul (Mat4.makeTranslate3 10 -14 -18) tipMatrix
+
+                            leadMatrixB =
+                                Mat4.mul (Mat4.makeTranslate3 -10 -14 -18) tipMatrix
+                        in
+                        case ( antiStud1, antiStud2 ) of
+                            ( Just as1, Just as2 ) ->
+                                let
+                                    approachA =
+                                        SideSnap.approachMatrix leadMatrixA tile1x2.connections targetSideStud
+
+                                    approachB =
+                                        SideSnap.approachMatrix leadMatrixB tile1x2.connections targetSideStud
+                                in
+                                case ( approachA, approachB ) of
+                                    ( Just matA, Just matB ) ->
+                                        let
+                                            placedAs1 =
+                                                Mat4.transform matA as1.localPosition
+
+                                            placedAs2 =
+                                                Mat4.transform matB as2.localPosition
+                                        in
+                                        Expect.all
+                                            [ \_ -> Expect.lessThan 0.001 (Vec3.distance placedAs1 targetSideStud.worldPosition)
+                                            , \_ -> Expect.lessThan 0.001 (Vec3.distance placedAs2 targetSideStud.worldPosition)
+                                            ]
+                                            ()
+
+                                    _ ->
+                                        Expect.fail "approachMatrix returned Nothing for 1x2 tile"
+
+                            _ ->
+                                Expect.fail "3069b.dat missing anti-studs"
+
+                    _ ->
+                        Expect.fail "3069b.dat or 87087.dat not found in catalog"
+        ]
+
+
+fourStepRotationTests : Test
+fourStepRotationTests =
+    describe "4-step in-flight rotation on side studs"
+        [ test "rotationIndex 0, 1, 2, 3 produce valid SO(3) rotation matrices and clean alignment without collisions" <|
+            \_ ->
+                case ( knownCatalogPart "3070b.dat", knownCatalogPart "87087.dat" ) of
+                    ( Just tile1x1, Just brick87087 ) ->
+                        let
+                            brickMatrix =
+                                Mat4.makeTranslate3 0 -24 0
+
+                            targetSideStud =
+                                brick87087.connections
+                                    |> List.filter (\c -> c.connType == Stud && Vec3.getZ c.normal < -0.7)
+                                    |> List.map (Connectivity.transformPoint brickMatrix 1)
+                                    |> List.head
+
+                            envelope conn =
+                                List.head conn.boundingBoxes
+                                    |> Maybe.withDefault { min = vec3 0 0 0, max = vec3 0 0 0 }
+                                    |> (\box -> Connectivity.effectiveEnvelope box conn.connections)
+
+                            brickBox =
+                                envelope brick87087
+
+                            tileBox =
+                                envelope tile1x1
+
+                            leadMatrix =
+                                Mat4.mul (Mat4.makeTranslate3 0 -14 -18) (Mat4.makeRotate (pi / 2) (vec3 1 0 0))
+
+                            testRotation rotIdx =
+                                case targetSideStud of
+                                    Just target ->
+                                        let
+                                            snapCandidates =
+                                                SideSnap.approachMatrix leadMatrix tile1x1.connections target
+                                                    |> Maybe.map (\approach -> Connectivity.solveSnapCandidates 24 rotIdx approach tile1x1.connections [ target ])
+                                                    |> Maybe.andThen List.head
+                                        in
+                                        case snapCandidates of
+                                            Just snap ->
+                                                let
+                                                    mat =
+                                                        snap.snapMatrix
+
+                                                    c1 =
+                                                        Connectivity.transformDirection mat (vec3 1 0 0)
+
+                                                    c2 =
+                                                        Connectivity.transformDirection mat (vec3 0 1 0)
+
+                                                    c3 =
+                                                        Connectivity.transformDirection mat (vec3 0 0 1)
+
+                                                    len1 =
+                                                        Vec3.length c1
+
+                                                    len2 =
+                                                        Vec3.length c2
+
+                                                    len3 =
+                                                        Vec3.length c3
+
+                                                    dot12 =
+                                                        abs (Vec3.dot c1 c2)
+
+                                                    dot23 =
+                                                        abs (Vec3.dot c2 c3)
+
+                                                    dot31 =
+                                                        abs (Vec3.dot c3 c1)
+
+                                                    det =
+                                                        Vec3.dot (Vec3.cross c1 c2) c3
+
+                                                    colliding =
+                                                        Connectivity.isSnapColliding 0.5
+                                                            0
+                                                            leadMatrix
+                                                            [ ( 0, leadMatrix, tileBox ) ]
+                                                            [ ( 1, brickMatrix, brickBox ) ]
+                                                            snap
+                                                in
+                                                Expect.all
+                                                    [ \_ -> Expect.lessThan 0.001 (abs (len1 - 1.0))
+                                                    , \_ -> Expect.lessThan 0.001 (abs (len2 - 1.0))
+                                                    , \_ -> Expect.lessThan 0.001 (abs (len3 - 1.0))
+                                                    , \_ -> Expect.lessThan 0.001 dot12
+                                                    , \_ -> Expect.lessThan 0.001 dot23
+                                                    , \_ -> Expect.lessThan 0.001 dot31
+                                                    , \_ -> Expect.lessThan 0.001 (abs (det - 1.0))
+                                                    , \_ -> Expect.equal False colliding
+                                                    ]
+                                                    ()
+
+                                            Nothing ->
+                                                Expect.fail ("Failed to find snap candidate for rotationIndex " ++ String.fromInt rotIdx)
+
+                                    Nothing ->
+                                        Expect.fail "Missing target side stud"
+                        in
+                        Expect.all (List.map (\idx -> \_ -> testRotation idx) [ 0, 1, 2, 3 ]) ()
+
+                    _ ->
+                        Expect.fail "3070b.dat or 87087.dat not found in catalog"
         ]

@@ -436,7 +436,7 @@ solveSnapCandidates maxDist rotationIndex currentMatrix draggedPoints targetPoin
                                 Vec3.getY (Mat4.transform snapMat draggedLocal.localPosition)
 
                             isPenetratingGround =
-                                if Vec3.getY targetWorld.worldPosition <= 0.5 then
+                                if abs (Vec3.getY targetWorld.worldNormal) > 0.7 && Vec3.getY targetWorld.worldPosition <= 0.5 then
                                     originY
                                         > 0.5
                                         || draggedY
@@ -909,7 +909,7 @@ effectiveEnvelope box connections =
                     Vec3.getY box.min
 
                 bases ->
-                    trimMin (List.foldl max -1.0e9 bases) (Vec3.getY box.min)
+                    trimMin (List.foldl min 1.0e9 bases) (Vec3.getY box.min)
 
         newMaxY =
             case maxYStuds of
@@ -917,7 +917,7 @@ effectiveEnvelope box connections =
                     Vec3.getY box.max
 
                 bases ->
-                    trimMax (List.foldl min 1.0e9 bases) (Vec3.getY box.max)
+                    trimMax (List.foldl max -1.0e9 bases) (Vec3.getY box.max)
 
         newMinX =
             case minXStuds of
@@ -925,7 +925,7 @@ effectiveEnvelope box connections =
                     Vec3.getX box.min
 
                 bases ->
-                    trimMin (List.foldl max -1.0e9 bases) (Vec3.getX box.min)
+                    trimMin (List.foldl min 1.0e9 bases) (Vec3.getX box.min)
 
         newMaxX =
             case maxXStuds of
@@ -933,7 +933,7 @@ effectiveEnvelope box connections =
                     Vec3.getX box.max
 
                 bases ->
-                    trimMax (List.foldl min 1.0e9 bases) (Vec3.getX box.max)
+                    trimMax (List.foldl max -1.0e9 bases) (Vec3.getX box.max)
 
         newMinZ =
             case minZStuds of
@@ -941,7 +941,7 @@ effectiveEnvelope box connections =
                     Vec3.getZ box.min
 
                 bases ->
-                    trimMin (List.foldl max -1.0e9 bases) (Vec3.getZ box.min)
+                    trimMin (List.foldl min 1.0e9 bases) (Vec3.getZ box.min)
 
         newMaxZ =
             case maxZStuds of
@@ -949,7 +949,7 @@ effectiveEnvelope box connections =
                     Vec3.getZ box.max
 
                 bases ->
-                    trimMax (List.foldl min 1.0e9 bases) (Vec3.getZ box.max)
+                    trimMax (List.foldl max -1.0e9 bases) (Vec3.getZ box.max)
     in
     { min = vec3 newMinX newMinY newMinZ
     , max = vec3 newMaxX newMaxY newMaxZ
@@ -1934,8 +1934,34 @@ knownCatalogPart name =
             Just (makeBrick 1 1 24 "87087.dat" |> withSideStuds [ ( vec3 0 10 -10, vec3 0 0 -1 ) ])
 
         "4070" ->
-            -- Brick 1 x 1 with Headlight: the side stud sits recessed, its base at Z = -6
-            Just (makeBrick 1 1 24 "4070.dat" |> withSideStuds [ ( vec3 0 10 -6, vec3 0 0 -1 ) ])
+            -- Brick 1 x 1 with Headlight: the side stud sits recessed, its base at Z = -6,
+            -- and the rear face has an anti-stud cavity at Z = 10
+            let
+                base =
+                    makeBrick 1 1 24 "4070.dat"
+                        |> withSideStuds [ ( vec3 0 10 -6, vec3 0 0 -1 ) ]
+
+                rearAntiStud =
+                    { id = 101
+                    , connType = AntiStud
+                    , localPosition = vec3 0 10 10
+                    , normal = vec3 0 0 1
+                    , tangent = vec3 0 1 0
+                    }
+            in
+            Just { base | connections = rearAntiStud :: base.connections }
+
+        "4733" ->
+            -- Brick 1 x 1 with Studs on 4 Sides (Travis brick)
+            Just
+                (makeBrick 1 1 24 "4733.dat"
+                    |> withSideStuds
+                        [ ( vec3 0 10 -10, vec3 0 0 -1 )
+                        , ( vec3 10 10 0, vec3 1 0 0 )
+                        , ( vec3 0 10 10, vec3 0 0 1 )
+                        , ( vec3 -10 10 0, vec3 -1 0 0 )
+                        ]
+                )
 
         "26604" ->
             -- Brick 1 x 1 with Studs on Two Adjacent Sides

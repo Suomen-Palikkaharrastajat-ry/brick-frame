@@ -116,6 +116,7 @@ entriesFor tab =
             [ entry "87087.dat" "Brick 1 x 1 with Stud on 1 Side" "1 x 1 brick with side stud"
             , entry "4070.dat" "Brick 1 x 1 with Headlight" "1 x 1 headlight brick"
             , entry "26604.dat" "Brick 1 x 1 with Studs on 2 Sides" "1 x 1 brick with two side studs"
+            , entry "4733.dat" "Brick 1 x 1 with Studs on 4 Sides" "1 x 1 brick with four side studs"
             , entry "11211.dat" "Brick 1 x 2 with Studs on Side" "1 x 2 brick with two side studs"
             , entry "30414.dat" "Brick 1 x 4 with Studs on Side" "1 x 4 brick with four side studs"
             , entry "32952.dat" "Brick 1 x 1 x 1 2/3 with Studs on 1 Side" "1 x 1 x 1 2/3 brick with two side studs"
