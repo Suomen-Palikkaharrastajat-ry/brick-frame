@@ -1149,8 +1149,11 @@ classifySubfile sub =
     else if isPinHoleFile file then
         Just ( TechnicPinFemale { length = 20.0 }, vec3 0 0 1, vec3 1 0 0 )
 
-    else if isPinMaleFile file then
+    else if isFrictionPinMaleFile file then
         Just ( TechnicPinMale { length = 20.0, friction = True }, vec3 0 0 1, vec3 1 0 0 )
+
+    else if isFrictionlessPinMaleFile file then
+        Just ( TechnicPinMale { length = 20.0, friction = False }, vec3 0 0 1, vec3 1 0 0 )
 
     else if String.contains "clip" file then
         Just ( ClipMale { width = 4.0 }, vec3 0 0 1, vec3 1 0 0 )
@@ -1232,16 +1235,31 @@ isPinHoleFile f =
     String.contains "pinhole" f
         || f
         == "peghole.dat"
+        || f
+        == "beamhole.dat"
+        || f
+        == "connhole.dat"
+
+
+isFrictionPinMaleFile : String -> Bool
+isFrictionPinMaleFile f =
+    String.contains "confric" f
+
+
+isFrictionlessPinMaleFile : String -> Bool
+isFrictionlessPinMaleFile f =
+    f
+        == "connect.dat"
+        || f
+        == "connect2.dat"
+        || f
+        == "pin.dat"
+        || String.startsWith "wpin" f
 
 
 isPinMaleFile : String -> Bool
 isPinMaleFile f =
-    String.contains "confric" f
-        || f
-        == "connect.dat"
-        || f
-        == "pin.dat"
-        || String.startsWith "wpin" f
+    isFrictionPinMaleFile f || isFrictionlessPinMaleFile f
 
 
 
@@ -1889,6 +1907,137 @@ knownCatalogPart name =
                     ]
                 , boundingBoxes =
                     [ { min = vec3 -5 -5 -10, max = vec3 5 5 10 } ]
+                }
+
+        "3673" ->
+            -- Technic Pin without Friction (2L)
+            Just
+                { part = "3673.dat"
+                , connections =
+                    [ { id = 1
+                      , connType = TechnicPinMale { length = 10.0, friction = False }
+                      , localPosition = vec3 0 0 10
+                      , normal = vec3 0 0 1
+                      , tangent = vec3 1 0 0
+                      }
+                    , { id = 2
+                      , connType = TechnicPinMale { length = 10.0, friction = False }
+                      , localPosition = vec3 0 0 -10
+                      , normal = vec3 0 0 -1
+                      , tangent = vec3 1 0 0
+                      }
+                    ]
+                , boundingBoxes =
+                    [ { min = vec3 -5 -5 -10, max = vec3 5 5 10 } ]
+                }
+
+        "6558" ->
+            -- Technic Pin 3L with Friction Ridges
+            Just
+                { part = "6558.dat"
+                , connections =
+                    [ { id = 1
+                      , connType = TechnicPinMale { length = 30.0, friction = True }
+                      , localPosition = vec3 0 0 15
+                      , normal = vec3 0 0 1
+                      , tangent = vec3 1 0 0
+                      }
+                    , { id = 2
+                      , connType = TechnicPinMale { length = 30.0, friction = True }
+                      , localPosition = vec3 0 0 -15
+                      , normal = vec3 0 0 -1
+                      , tangent = vec3 1 0 0
+                      }
+                    ]
+                , boundingBoxes =
+                    [ { min = vec3 -5 -5 -15, max = vec3 5 5 15 } ]
+                }
+
+        "32556" ->
+            -- Technic Pin 3L without Friction
+            Just
+                { part = "32556.dat"
+                , connections =
+                    [ { id = 1
+                      , connType = TechnicPinMale { length = 30.0, friction = False }
+                      , localPosition = vec3 0 0 15
+                      , normal = vec3 0 0 1
+                      , tangent = vec3 1 0 0
+                      }
+                    , { id = 2
+                      , connType = TechnicPinMale { length = 30.0, friction = False }
+                      , localPosition = vec3 0 0 -15
+                      , normal = vec3 0 0 -1
+                      , tangent = vec3 1 0 0
+                      }
+                    ]
+                , boundingBoxes =
+                    [ { min = vec3 -5 -5 -15, max = vec3 5 5 15 } ]
+                }
+
+        "32556a" ->
+            Just
+                { part = "32556a.dat"
+                , connections =
+                    [ { id = 1
+                      , connType = TechnicPinMale { length = 30.0, friction = False }
+                      , localPosition = vec3 0 0 15
+                      , normal = vec3 0 0 1
+                      , tangent = vec3 1 0 0
+                      }
+                    , { id = 2
+                      , connType = TechnicPinMale { length = 30.0, friction = False }
+                      , localPosition = vec3 0 0 -15
+                      , normal = vec3 0 0 -1
+                      , tangent = vec3 1 0 0
+                      }
+                    ]
+                , boundingBoxes =
+                    [ { min = vec3 -5 -5 -15, max = vec3 5 5 15 } ]
+                }
+
+        "43093" ->
+            -- Technic Axle 1L with Pin with Friction
+            Just
+                { part = "43093.dat"
+                , connections =
+                    [ { id = 1
+                      , connType = TechnicPinMale { length = 10.0, friction = True }
+                      , localPosition = vec3 0 0 10
+                      , normal = vec3 0 0 1
+                      , tangent = vec3 1 0 0
+                      }
+                    , { id = 2
+                      , connType = TechnicAxleMale { length = 20.0 }
+                      , localPosition = vec3 0 0 -10
+                      , normal = vec3 0 0 -1
+                      , tangent = vec3 1 0 0
+                      }
+                    ]
+                , boundingBoxes =
+                    [ { min = vec3 -5 -5 -20, max = vec3 5 5 10 } ]
+                }
+
+        "4274" ->
+            -- Technic Pin 1/2 with Stud
+            Just
+                { part = "4274.dat"
+                , connections =
+                    [ { id = 1
+                      , connType = TechnicPinMale { length = 10.0, friction = False }
+                      , localPosition = vec3 0 0 10
+                      , normal = vec3 0 0 1
+                      , tangent = vec3 1 0 0
+                      }
+                    , { id = 2
+                      , connType = Stud
+                      , localPosition = vec3 0 0 0
+                      , normal = vec3 0 0 -1
+                      , tangent = vec3 1 0 0
+                      }
+                    ]
+                , boundingBoxes =
+                    [ { min = vec3 -5 -5 -4, max = vec3 5 5 10 } ]
                 }
 
         "4085" ->

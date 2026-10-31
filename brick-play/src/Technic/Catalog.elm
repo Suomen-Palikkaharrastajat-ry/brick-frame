@@ -139,6 +139,30 @@ curatedParts =
       , category = PinsCategory
       , description = "Technic connector pin"
       }
+    , { name = "Pin without Friction"
+      , file = "3673.dat"
+      , color = 7
+      , category = PinsCategory
+      , description = "Smooth 2L pin for spinning gears"
+      }
+    , { name = "Pin 3L with Friction"
+      , file = "6558.dat"
+      , color = 1
+      , category = PinsCategory
+      , description = "Long 3L friction pin"
+      }
+    , { name = "Axle 1L with Pin"
+      , file = "43093.dat"
+      , color = 1
+      , category = PinsCategory
+      , description = "Axle-pin connector with friction"
+      }
+    , { name = "Pin 1/2 with Stud"
+      , file = "4274.dat"
+      , color = 7
+      , category = PinsCategory
+      , description = "Half pin with stud"
+      }
     ]
 
 

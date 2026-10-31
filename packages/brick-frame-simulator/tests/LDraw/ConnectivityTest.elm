@@ -191,6 +191,200 @@ extractionTests =
 
                     _ ->
                         Expect.fail ("Expected 1 connection point, got " ++ String.fromInt (List.length points))
+        , test "extracts confric subfile as TechnicPinMale with friction = True" <|
+            \_ ->
+                let
+                    lines =
+                        [ SubFileRef
+                            { color = 16
+                            , transform = Mat4.identity
+                            , file = "confric5.dat"
+                            }
+                        ]
+
+                    points =
+                        extractConnections lines
+                in
+                case points of
+                    [ p ] ->
+                        Expect.equal (TechnicPinMale { length = 20.0, friction = True }) p.connType
+
+                    _ ->
+                        Expect.fail ("Expected 1 connection point, got " ++ String.fromInt (List.length points))
+        , test "extracts connect.dat subfile as TechnicPinMale with friction = False" <|
+            \_ ->
+                let
+                    lines =
+                        [ SubFileRef
+                            { color = 16
+                            , transform = Mat4.identity
+                            , file = "connect.dat"
+                            }
+                        ]
+
+                    points =
+                        extractConnections lines
+                in
+                case points of
+                    [ p ] ->
+                        Expect.equal (TechnicPinMale { length = 20.0, friction = False }) p.connType
+
+                    _ ->
+                        Expect.fail ("Expected 1 connection point, got " ++ String.fromInt (List.length points))
+        , test "extracts beamhole.dat and connhole.dat as TechnicPinFemale" <|
+            \_ ->
+                let
+                    lines =
+                        [ SubFileRef { color = 16, transform = Mat4.identity, file = "beamhole.dat" }
+                        , SubFileRef { color = 16, transform = Mat4.identity, file = "connhole.dat" }
+                        ]
+
+                    points =
+                        extractConnections lines
+                in
+                case points of
+                    [ p1, p2 ] ->
+                        Expect.all
+                            [ \_ -> Expect.equal (TechnicPinFemale { length = 20.0 }) p1.connType
+                            , \_ -> Expect.equal (TechnicPinFemale { length = 20.0 }) p2.connType
+                            ]
+                            ()
+
+                    _ ->
+                        Expect.fail ("Expected 2 connection points, got " ++ String.fromInt (List.length points))
+        , test "knownCatalogPart builds 3673 with frictionless pin connections" <|
+            \_ ->
+                case knownCatalogPart "3673.dat" of
+                    Just conn ->
+                        let
+                            frictionlessPins =
+                                List.filter (\c -> c.connType == TechnicPinMale { length = 10.0, friction = False }) conn.connections
+                        in
+                        Expect.all
+                            [ \_ -> Expect.equal 2 (List.length conn.connections)
+                            , \_ -> Expect.equal 2 (List.length frictionlessPins)
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "Catalog part 3673.dat was not found"
+        , test "knownCatalogPart builds 6558 3L friction pin" <|
+            \_ ->
+                case knownCatalogPart "6558.dat" of
+                    Just conn ->
+                        let
+                            frictionPins =
+                                List.filter (\c -> c.connType == TechnicPinMale { length = 30.0, friction = True }) conn.connections
+
+                            zPositions =
+                                List.map (\c -> Vec3.getZ c.localPosition) conn.connections
+                                    |> List.sort
+                        in
+                        Expect.all
+                            [ \_ -> Expect.equal 2 (List.length conn.connections)
+                            , \_ -> Expect.equal 2 (List.length frictionPins)
+                            , \_ -> Expect.equal [ -15.0, 15.0 ] zPositions
+                            , \_ ->
+                                case conn.boundingBoxes of
+                                    [ box ] ->
+                                        Expect.all
+                                            [ \_ -> Expect.equal (vec3 -5 -5 -15) box.min
+                                            , \_ -> Expect.equal (vec3 5 5 15) box.max
+                                            ]
+                                            ()
+
+                                    _ ->
+                                        Expect.fail "Expected 1 bounding box"
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "Catalog part 6558.dat was not found"
+        , test "knownCatalogPart builds 43093 with axle and pin ends" <|
+            \_ ->
+                case knownCatalogPart "43093.dat" of
+                    Just conn ->
+                        let
+                            pins =
+                                List.filter
+                                    (\c ->
+                                        case c.connType of
+                                            TechnicPinMale { friction } ->
+                                                friction == True
+
+                                            _ ->
+                                                False
+                                    )
+                                    conn.connections
+
+                            axles =
+                                List.filter
+                                    (\c ->
+                                        case c.connType of
+                                            TechnicAxleMale { length } ->
+                                                length == 20.0
+
+                                            _ ->
+                                                False
+                                    )
+                                    conn.connections
+                        in
+                        Expect.all
+                            [ \_ -> Expect.equal 2 (List.length conn.connections)
+                            , \_ -> Expect.equal 1 (List.length pins)
+                            , \_ -> Expect.equal 1 (List.length axles)
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "Catalog part 43093.dat was not found"
+        , test "knownCatalogPart builds 4274 with pin and stud ends" <|
+            \_ ->
+                case knownCatalogPart "4274.dat" of
+                    Just conn ->
+                        let
+                            pins =
+                                List.filter
+                                    (\c ->
+                                        case c.connType of
+                                            TechnicPinMale { length, friction } ->
+                                                length == 10.0 && friction == False
+
+                                            _ ->
+                                                False
+                                    )
+                                    conn.connections
+
+                            studs =
+                                List.filter (\c -> c.connType == Stud) conn.connections
+                        in
+                        Expect.all
+                            [ \_ -> Expect.equal 2 (List.length conn.connections)
+                            , \_ -> Expect.equal 1 (List.length pins)
+                            , \_ -> Expect.equal 1 (List.length studs)
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "Catalog part 4274.dat was not found"
+        , test "knownCatalogPart builds 32556 and 32556a 3L frictionless pins" <|
+            \_ ->
+                case ( knownCatalogPart "32556.dat", knownCatalogPart "32556a.dat" ) of
+                    ( Just conn1, Just conn2 ) ->
+                        let
+                            frictionlessPins c =
+                                List.filter (\p -> p.connType == TechnicPinMale { length = 30.0, friction = False }) c.connections
+                        in
+                        Expect.all
+                            [ \_ -> Expect.equal 2 (List.length conn1.connections)
+                            , \_ -> Expect.equal 2 (List.length (frictionlessPins conn1))
+                            , \_ -> Expect.equal 2 (List.length conn2.connections)
+                            , \_ -> Expect.equal 2 (List.length (frictionlessPins conn2))
+                            ]
+                            ()
+
+                    _ ->
+                        Expect.fail "Catalog parts 32556.dat or 32556a.dat not found"
         , test "knownCatalogPart builds Brick 2x4 with 8 studs and 8 anti-studs" <|
             \_ ->
                 case knownCatalogPart "3001.dat" of

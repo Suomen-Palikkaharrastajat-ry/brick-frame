@@ -76,7 +76,11 @@ suite =
                     Expect.all
                         [ \_ -> Expect.equal (List.length beamFiles >= 3) True
                         , \_ -> Expect.equal (List.length axleFiles >= 4) True
-                        , \_ -> Expect.equal (List.length pinFiles >= 2) True
+                        , \_ -> Expect.equal (List.length pinFiles >= 6) True
+                        , \_ -> Expect.equal (List.member "3673.dat" pinFiles) True
+                        , \_ -> Expect.equal (List.member "6558.dat" pinFiles) True
+                        , \_ -> Expect.equal (List.member "43093.dat" pinFiles) True
+                        , \_ -> Expect.equal (List.member "4274.dat" pinFiles) True
                         ]
                         ()
             ]
