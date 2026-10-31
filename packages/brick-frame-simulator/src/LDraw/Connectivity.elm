@@ -1888,20 +1888,20 @@ knownCatalogPart name =
                 { part = "43093.dat"
                 , connections =
                     [ { id = 1
-                      , connType = TechnicPinMale { length = 10.0, friction = True }
-                      , localPosition = vec3 0 0 10
-                      , normal = vec3 0 0 1
-                      , tangent = vec3 1 0 0
+                      , connType = TechnicPinMale { length = 20.0, friction = True }
+                      , localPosition = vec3 -10 0 0
+                      , normal = vec3 -1 0 0
+                      , tangent = vec3 0 1 0
                       }
                     , { id = 2
                       , connType = TechnicAxleMale { length = 20.0 }
-                      , localPosition = vec3 0 0 -10
-                      , normal = vec3 0 0 -1
-                      , tangent = vec3 1 0 0
+                      , localPosition = vec3 10 0 0
+                      , normal = vec3 1 0 0
+                      , tangent = vec3 0 1 0
                       }
                     ]
                 , boundingBoxes =
-                    [ { min = vec3 -5 -5 -20, max = vec3 5 5 10 } ]
+                    [ { min = vec3 -20 -8 -8, max = vec3 20 8 8 } ]
                 }
 
         "4274" ->
@@ -1911,19 +1911,19 @@ knownCatalogPart name =
                 , connections =
                     [ { id = 1
                       , connType = TechnicPinMale { length = 10.0, friction = False }
-                      , localPosition = vec3 0 0 10
-                      , normal = vec3 0 0 1
-                      , tangent = vec3 1 0 0
+                      , localPosition = vec3 -10 0 0
+                      , normal = vec3 -1 0 0
+                      , tangent = vec3 0 1 0
                       }
                     , { id = 2
                       , connType = Stud
                       , localPosition = vec3 0 0 0
-                      , normal = vec3 0 0 -1
-                      , tangent = vec3 1 0 0
+                      , normal = vec3 1 0 0
+                      , tangent = vec3 0 1 0
                       }
                     ]
                 , boundingBoxes =
-                    [ { min = vec3 -5 -5 -4, max = vec3 5 5 10 } ]
+                    [ { min = vec3 -20 -8 -8, max = vec3 4 8 8 } ]
                 }
 
         "4085" ->
@@ -2316,33 +2316,30 @@ centeredPitch count =
 makeTechnicPin : Float -> Bool -> String -> PartConnectivity
 makeTechnicPin len friction partName =
     let
-        ( halfLength, connLength ) =
-            if len >= 25.0 then
-                ( 15.0, 30.0 )
-
-            else if len >= 12.0 then
-                ( 15.0, 30.0 )
+        ( halfExtent, pegCenter, connLength ) =
+            if len >= 12.0 then
+                ( 30.0, 20.0, 30.0 )
 
             else
-                ( 10.0, 10.0 )
+                ( 20.0, 10.0, 20.0 )
 
         connections =
             [ { id = 1
               , connType = TechnicPinMale { length = connLength, friction = friction }
-              , localPosition = vec3 0 0 halfLength
-              , normal = vec3 0 0 1
-              , tangent = vec3 1 0 0
+              , localPosition = vec3 pegCenter 0 0
+              , normal = vec3 1 0 0
+              , tangent = vec3 0 1 0
               }
             , { id = 2
               , connType = TechnicPinMale { length = connLength, friction = friction }
-              , localPosition = vec3 0 0 -halfLength
-              , normal = vec3 0 0 -1
-              , tangent = vec3 1 0 0
+              , localPosition = vec3 -pegCenter 0 0
+              , normal = vec3 -1 0 0
+              , tangent = vec3 0 1 0
               }
             ]
 
         bbox =
-            [ { min = vec3 -5 -5 -halfLength, max = vec3 5 5 halfLength } ]
+            [ { min = vec3 -halfExtent -8 -8, max = vec3 halfExtent 8 8 } ]
     in
     { part = partName
     , connections = connections

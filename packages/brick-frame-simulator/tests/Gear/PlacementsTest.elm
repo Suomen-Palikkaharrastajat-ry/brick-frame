@@ -4,6 +4,7 @@ module Gear.PlacementsTest exposing (suite)
 top-level placements in a document.
 -}
 
+import Dict
 import Expect
 import Gear.Placements as Placements
 import LDraw.Document as Document
@@ -60,5 +61,25 @@ suite =
                           }
                         ]
                         |> Expect.equal [ ( 3, 1 ) ]
+            ]
+        , describe "glued placements"
+            [ test "a glued part is excluded from partSources" <|
+                \_ ->
+                    let
+                        gluedDoc =
+                            Document.setGlued True 1 doc
+                    in
+                    Placements.partSources gluedDoc
+                        [ { file = "3705.dat", transform = Mat4.makeTranslate3 40 -60 0, drivingGearId = 0 } ]
+                        |> Expect.equal []
+            , test "a glued gear is excluded from gearSources" <|
+                \_ ->
+                    let
+                        gluedDoc =
+                            Document.setGlued True 0 doc
+                    in
+                    Placements.gearSources gluedDoc
+                        [ { id = 0, spec = { partFile = "3648.dat", teeth = 24, pitchRadius = 30 }, color = 7, worldPosition = vec3 0 0 0, worldMatrix = Mat4.identity } ]
+                        |> Expect.equal Dict.empty
             ]
         ]

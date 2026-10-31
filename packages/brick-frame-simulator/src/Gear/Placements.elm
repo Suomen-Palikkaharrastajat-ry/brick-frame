@@ -54,14 +54,21 @@ gearSources document gears =
         |> List.filterMap
             (\gear ->
                 placementAt document gear.spec.partFile gear.worldPosition
-                    |> Maybe.map (\placementId -> ( gear.id, placementId ))
+                    |> Maybe.andThen
+                        (\placementId ->
+                            if Document.isGlued placementId document then
+                                Nothing
+
+                            else
+                                Just ( gear.id, placementId )
+                        )
             )
         |> Dict.fromList
 
 
 {-| The main-model placement of each driven part (an axle or a part threaded on
 a gear), paired with the gear that drives it. Parts without a placement of their
-own are left out.
+own or glued placements are left out.
 -}
 partSources : Document -> List { a | file : String, transform : Mat4, drivingGearId : GearId } -> List ( GearId, Int )
 partSources document parts =
@@ -69,5 +76,12 @@ partSources document parts =
         |> List.filterMap
             (\part ->
                 placementAt document part.file (Mat4.transform part.transform (Vec3.vec3 0 0 0))
-                    |> Maybe.map (\placementId -> ( part.drivingGearId, placementId ))
+                    |> Maybe.andThen
+                        (\placementId ->
+                            if Document.isGlued placementId document then
+                                Nothing
+
+                            else
+                                Just ( part.drivingGearId, placementId )
+                        )
             )

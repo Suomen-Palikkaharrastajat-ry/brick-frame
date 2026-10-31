@@ -258,7 +258,7 @@ extractionTests =
                     Just conn ->
                         let
                             frictionlessPins =
-                                List.filter (\c -> c.connType == TechnicPinMale { length = 10.0, friction = False }) conn.connections
+                                List.filter (\c -> c.connType == TechnicPinMale { length = 20.0, friction = False }) conn.connections
                         in
                         Expect.all
                             [ \_ -> Expect.equal 2 (List.length conn.connections)
@@ -276,20 +276,20 @@ extractionTests =
                             frictionPins =
                                 List.filter (\c -> c.connType == TechnicPinMale { length = 30.0, friction = True }) conn.connections
 
-                            zPositions =
-                                List.map (\c -> Vec3.getZ c.localPosition) conn.connections
+                            xPositions =
+                                List.map (\c -> Vec3.getX c.localPosition) conn.connections
                                     |> List.sort
                         in
                         Expect.all
                             [ \_ -> Expect.equal 2 (List.length conn.connections)
                             , \_ -> Expect.equal 2 (List.length frictionPins)
-                            , \_ -> Expect.equal [ -15.0, 15.0 ] zPositions
+                            , \_ -> Expect.equal [ -20.0, 20.0 ] xPositions
                             , \_ ->
                                 case conn.boundingBoxes of
                                     [ box ] ->
                                         Expect.all
-                                            [ \_ -> Expect.equal (vec3 -5 -5 -15) box.min
-                                            , \_ -> Expect.equal (vec3 5 5 15) box.max
+                                            [ \_ -> Expect.equal (vec3 -30 -8 -8) box.min
+                                            , \_ -> Expect.equal (vec3 30 8 8) box.max
                                             ]
                                             ()
 
@@ -1324,6 +1324,86 @@ snapSolverTests =
 
                     Nothing ->
                         Expect.fail "Axle snap into beam pin hole failed"
+        , test "snaps Technic pin 2780 into Technic brick 3700 hole with orientation rotation" <|
+            \_ ->
+                case ( knownCatalogPart "2780.dat", knownCatalogPart "3700.dat" ) of
+                    ( Just pinPart, Just brickPart ) ->
+                        let
+                            brickWorldPoints =
+                                List.map (Connectivity.transformPoint Mat4.identity 1) brickPart.connections
+
+                            -- Hover near pin hole at (0, 10, 0)
+                            hoverMat =
+                                Mat4.makeTranslate3 8 10 2
+                        in
+                        case solveSnap 12.0 0 hoverMat pinPart.connections brickWorldPoints of
+                            Just snap ->
+                                let
+                                    snappedPos =
+                                        Mat4.transform snap.snapMatrix snap.draggedPoint.localPosition
+
+                                    snappedNormal =
+                                        transformDirection snap.snapMatrix (vec3 1 0 0)
+                                in
+                                Expect.all
+                                    [ \_ -> Expect.lessThan 0.001 (Vec3.distance snap.targetPoint.worldPosition snappedPos)
+                                    , \_ -> Expect.greaterThan 0.99 (abs (Vec3.getZ snappedNormal))
+                                    ]
+                                    ()
+
+                            Nothing ->
+                                Expect.fail "Pin snap into Technic brick 3700 hole failed"
+
+                    _ ->
+                        Expect.fail "Parts 2780.dat or 3700.dat not found"
+        , test "snaps 43093 pin end into Technic brick hole and axle end into gear axle hole" <|
+            \_ ->
+                case ( knownCatalogPart "43093.dat", knownCatalogPart "3700.dat", knownCatalogPart "3648b.dat" ) of
+                    ( Just part43093, Just brickPart, Just gearPart ) ->
+                        let
+                            brickWorldPoints =
+                                List.map (Connectivity.transformPoint Mat4.identity 1) brickPart.connections
+
+                            gearWorldPoints =
+                                List.map (Connectivity.transformPoint Mat4.identity 2) gearPart.connections
+
+                            -- Hover pin end (localPosition = -10 0 0) near brick hole at (0, 10, 0)
+                            hoverPin =
+                                Mat4.makeTranslate3 10 10 0
+
+                            -- Hover axle end (localPosition = 10 0 0) near gear center axle hole at (0, 0, 0)
+                            hoverAxle =
+                                Mat4.makeTranslate3 -10 0 0
+                        in
+                        case ( solveSnap 12.0 0 hoverPin part43093.connections brickWorldPoints, solveSnap 12.0 0 hoverAxle part43093.connections gearWorldPoints ) of
+                            ( Just pinSnap, Just axleSnap ) ->
+                                let
+                                    snappedPinPos =
+                                        Mat4.transform pinSnap.snapMatrix pinSnap.draggedPoint.localPosition
+
+                                    snappedAxlePos =
+                                        Mat4.transform axleSnap.snapMatrix axleSnap.draggedPoint.localPosition
+
+                                    snappedPinNormal =
+                                        transformDirection pinSnap.snapMatrix (vec3 1 0 0)
+                                in
+                                Expect.all
+                                    [ \_ -> Expect.equal 1 pinSnap.draggedPoint.id
+                                    , \_ -> Expect.lessThan 0.001 (Vec3.distance pinSnap.targetPoint.worldPosition snappedPinPos)
+                                    , \_ -> Expect.greaterThan 0.99 (abs (Vec3.getZ snappedPinNormal))
+                                    , \_ -> Expect.equal 2 axleSnap.draggedPoint.id
+                                    , \_ -> Expect.lessThan 0.001 (Vec3.distance axleSnap.targetPoint.worldPosition snappedAxlePos)
+                                    ]
+                                    ()
+
+                            ( Nothing, _ ) ->
+                                Expect.fail "43093 pin end snap into brick hole failed"
+
+                            ( _, Nothing ) ->
+                                Expect.fail "43093 axle end snap into gear axle hole failed"
+
+                    _ ->
+                        Expect.fail "Parts 43093.dat, 3700.dat or 3648b.dat not found"
         , test "1x1 plate dragging near 2x2 plate on ground snaps on top (Y = -16) not below (Y = 0)" <|
             \_ ->
                 case ( knownCatalogPart "3024.dat", knownCatalogPart "3022.dat" ) of

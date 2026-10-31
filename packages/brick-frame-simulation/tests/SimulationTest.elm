@@ -88,6 +88,28 @@ pinAlongZ x y =
         }
 
 
+{-| An axle-pin 43093 along Z at (x, y, 0): its local X turned to Z.
+-}
+axlePinAlongZ : Float -> Float -> LDrawLine
+axlePinAlongZ x y =
+    SubFileRef
+        { color = 0
+        , transform = Mat4.mul (Mat4.makeTranslate3 x y 0) (Mat4.makeRotate (pi / 2) (Vec3.vec3 0 1 0))
+        , file = "43093.dat"
+        }
+
+
+{-| A Technic brick 3700 placed so its pin hole (local y = 10) sits at (x, y, 0).
+-}
+brick3700AtZ : Float -> Float -> LDrawLine
+brick3700AtZ x y =
+    SubFileRef
+        { color = 4
+        , transform = Mat4.makeTranslate3 x (y - 10) 0
+        , file = "3700.dat"
+        }
+
+
 drivenCache : Resolve.PartCache
 drivenCache =
     Dict.fromList
@@ -96,6 +118,8 @@ drivenCache =
         , ( "3649.dat", Loaded [] )
         , ( "3705.dat", Loaded [] )
         , ( "2780.dat", Loaded [] )
+        , ( "43093.dat", Loaded [] )
+        , ( "3700.dat", Loaded [] )
         , ( "32523.dat", Loaded [] )
         ]
 
@@ -576,6 +600,79 @@ suite =
                         m =
                             Simulation.init config
                                 |> Simulation.analyse { lines = drivenLines ++ [ liftarm ], cache = drivenCache }
+                                |> Tuple.first
+                    in
+                    drivenPartsFor [ 0, 1 ] m
+                        |> List.map .file
+                        |> Expect.equal [ "3705.dat" ]
+            , test "an unglued Technic brick on a 2780 friction pin connected to a rotating gear is included in driven parts" <|
+                \_ ->
+                    let
+                        lines =
+                            [ gear24 0
+                            , gear24 60
+                            , pinAlongZ 60 0
+                            , brick3700AtZ 60 0
+                            ]
+
+                        m =
+                            Simulation.init config
+                                |> Simulation.analyse { lines = lines, cache = drivenCache }
+                                |> Tuple.first
+                    in
+                    drivenPartsFor [ 0, 1 ] m
+                        |> List.map .file
+                        |> Expect.equal [ "2780.dat", "3700.dat" ]
+            , test "an unglued Technic brick on a 43093 axle-pin connected to a rotating gear is included in driven parts" <|
+                \_ ->
+                    let
+                        lines =
+                            [ gear24 0
+                            , gear24 60
+                            , axlePinAlongZ 60 0
+                            , brick3700AtZ 60 0
+                            ]
+
+                        m =
+                            Simulation.init config
+                                |> Simulation.analyse { lines = lines, cache = drivenCache }
+                                |> Tuple.first
+                    in
+                    drivenPartsFor [ 0, 1 ] m
+                        |> List.map .file
+                        |> Expect.equal [ "43093.dat", "3700.dat" ]
+            , test "a glued Technic brick on a 2780 friction pin is not included in driven parts" <|
+                \_ ->
+                    let
+                        lines =
+                            [ gear24 0
+                            , gear24 60
+                            , pinAlongZ 60 0
+                            , Comment "!PALIKKA GLUED"
+                            , brick3700AtZ 60 0
+                            ]
+
+                        m =
+                            Simulation.init config
+                                |> Simulation.analyse { lines = lines, cache = drivenCache }
+                                |> Tuple.first
+                    in
+                    drivenPartsFor [ 0, 1 ] m
+                        |> List.map .file
+                        |> Expect.equal [ "2780.dat" ]
+            , test "a Technic brick with pin hole on a smooth axle 3705 is not included in driven parts" <|
+                \_ ->
+                    let
+                        lines =
+                            [ gear24 0
+                            , gear24 60
+                            , axleAlongZ 60 0
+                            , brick3700AtZ 60 0
+                            ]
+
+                        m =
+                            Simulation.init config
+                                |> Simulation.analyse { lines = lines, cache = drivenCache }
                                 |> Tuple.first
                     in
                     drivenPartsFor [ 0, 1 ] m

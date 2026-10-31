@@ -41,7 +41,8 @@ type alias ComponentInstance =
 defaultSpecs : List ComponentSpec
 defaultSpecs =
     [ -- Common cross-axles
-      { partFile = "3705.dat", kind = AxleLike }
+      { partFile = "3704.dat", kind = AxleLike }
+    , { partFile = "3705.dat", kind = AxleLike }
     , { partFile = "3706.dat", kind = AxleLike }
     , { partFile = "3707.dat", kind = AxleLike }
     , { partFile = "4519.dat", kind = AxleLike }
@@ -57,6 +58,9 @@ defaultSpecs =
       { partFile = "2780.dat", kind = AxleLike }
     , { partFile = "3673.dat", kind = AxleLike }
     , { partFile = "3749.dat", kind = AxleLike }
+    , { partFile = "4274.dat", kind = AxleLike }
+    , { partFile = "6558.dat", kind = AxleLike }
+    , { partFile = "43093.dat", kind = AxleLike }
     , -- Common beams and liftarms
       { partFile = "32316.dat", kind = Beam }
     , { partFile = "32523.dat", kind = Beam }

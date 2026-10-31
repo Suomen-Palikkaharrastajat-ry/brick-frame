@@ -240,48 +240,67 @@ and pick the starting motor gear.
 analyse : { lines : List LDrawLine, cache : PartCache } -> Model -> ( Model, Analysis )
 analyse { lines, cache } model =
     let
+        taggedLines =
+            tagGluedLines lines
+
         gearInstances =
             Detect.extractGears model.gearSpecs lines cache
 
         components =
-            topLevelComponents lines
+            topLevelComponents taggedLines
 
         drivenAxles =
             Meshes.buildDrivenAxles cache components gearInstances
 
         coaxialGearByLine =
-            List.map (\line -> Meshes.topLevelCoaxialGear cache drivenAxles line gearInstances) lines
+            List.map
+                (\( line, isGlued ) ->
+                    if isGlued then
+                        Nothing
+
+                    else
+                        Meshes.topLevelCoaxialGear cache drivenAxles line gearInstances
+                )
+                taggedLines
 
         nonGearTopLevelLines =
-            List.map2 Tuple.pair lines coaxialGearByLine
+            List.map2 (\( line, isGlued ) coaxial -> ( line, isGlued, coaxial )) taggedLines coaxialGearByLine
                 |> List.filter
-                    (\( line, coaxial ) ->
-                        not (isTopLevelGearRef model.gearSpecs line)
-                            && not (isTopLevelAxleRef line)
-                            && coaxial
-                            == Nothing
+                    (\( line, isGlued, coaxial ) ->
+                        if isGlued then
+                            True
+
+                        else
+                            not (isTopLevelGearRef model.gearSpecs line)
+                                && not (isTopLevelAxleRef line)
+                                && coaxial
+                                == Nothing
                     )
-                |> List.map Tuple.first
+                |> List.map (\( line, _, _ ) -> line)
 
         coaxialPartData =
-            List.map2 Tuple.pair lines coaxialGearByLine
+            List.map2 (\( line, isGlued ) coaxial -> ( line, isGlued, coaxial )) taggedLines coaxialGearByLine
                 |> List.filterMap
-                    (\( line, coaxial ) ->
-                        case ( line, coaxial ) of
-                            ( SubFileRef ref, Just gearId ) ->
-                                if not (isTopLevelGearRef model.gearSpecs line) && not (isTopLevelAxleRef line) then
-                                    Just
-                                        { file = ref.file
-                                        , color = resolveRootColor ref.color
-                                        , transform = ref.transform
-                                        , drivingGearId = gearId
-                                        }
+                    (\( line, isGlued, coaxial ) ->
+                        if isGlued then
+                            Nothing
 
-                                else
+                        else
+                            case ( line, coaxial ) of
+                                ( SubFileRef ref, Just gearId ) ->
+                                    if not (isTopLevelGearRef model.gearSpecs line) && not (isTopLevelAxleRef line) then
+                                        Just
+                                            { file = ref.file
+                                            , color = resolveRootColor ref.color
+                                            , transform = ref.transform
+                                            , drivingGearId = gearId
+                                            }
+
+                                    else
+                                        Nothing
+
+                                _ ->
                                     Nothing
-
-                            _ ->
-                                Nothing
                     )
 
         -- Axles driven by a gear and parts riding on them, with the file and
@@ -395,49 +414,87 @@ isTopLevelAxleRef line =
             False
 
 
-topLevelComponents : List LDrawLine -> List Components.ComponentInstance
-topLevelComponents lines =
-    lines
-        |> List.filterMap
-            (\line ->
+isGlueLine : LDrawLine -> Bool
+isGlueLine line =
+    case line of
+        Comment text ->
+            let
+                trimmed =
+                    String.trim text
+            in
+            trimmed == "!PALIKKA GLUED" || trimmed == "0 !PALIKKA GLUED" || String.contains "!PALIKKA GLUED" trimmed
+
+        _ ->
+            False
+
+
+tagGluedLines : List LDrawLine -> List ( LDrawLine, Bool )
+tagGluedLines inputLines =
+    let
+        step line ( pendingGlue, acc ) =
+            if isGlueLine line then
+                ( True, ( line, False ) :: acc )
+
+            else
                 case line of
-                    SubFileRef ref ->
-                        case List.filter (\spec -> spec.partFile == ref.file) Components.defaultSpecs |> List.head of
-                            Just spec ->
-                                let
-                                    origin =
-                                        Mat4.transform ref.transform (Vec3.vec3 0 0 0)
-
-                                    axisEnd =
-                                        Mat4.transform ref.transform (Vec3.vec3 0 0 1)
-
-                                    rawAxis =
-                                        Vec3.sub axisEnd origin
-
-                                    axisLen =
-                                        Vec3.length rawAxis
-
-                                    axis =
-                                        if axisLen < 1.0e-6 then
-                                            Vec3.vec3 0 0 1
-
-                                        else
-                                            Vec3.scale (1 / axisLen) rawAxis
-                                in
-                                Just
-                                    { kind = spec.kind
-                                    , partFile = spec.partFile
-                                    , color = resolveRootColor ref.color
-                                    , worldPosition = origin
-                                    , worldAxis = axis
-                                    , worldMatrix = ref.transform
-                                    }
-
-                            Nothing ->
-                                Nothing
+                    SubFileRef _ ->
+                        ( False, ( line, pendingGlue ) :: acc )
 
                     _ ->
-                        Nothing
+                        ( False, ( line, False ) :: acc )
+    in
+    List.foldl step ( False, [] ) inputLines
+        |> Tuple.second
+        |> List.reverse
+
+
+topLevelComponents : List ( LDrawLine, Bool ) -> List Components.ComponentInstance
+topLevelComponents taggedLines =
+    taggedLines
+        |> List.filterMap
+            (\( line, isGlued ) ->
+                if isGlued then
+                    Nothing
+
+                else
+                    case line of
+                        SubFileRef ref ->
+                            case List.filter (\spec -> spec.partFile == ref.file) Components.defaultSpecs |> List.head of
+                                Just spec ->
+                                    let
+                                        origin =
+                                            Mat4.transform ref.transform (Vec3.vec3 0 0 0)
+
+                                        axisEnd =
+                                            Mat4.transform ref.transform (Vec3.vec3 0 0 1)
+
+                                        rawAxis =
+                                            Vec3.sub axisEnd origin
+
+                                        axisLen =
+                                            Vec3.length rawAxis
+
+                                        axis =
+                                            if axisLen < 1.0e-6 then
+                                                Vec3.vec3 0 0 1
+
+                                            else
+                                                Vec3.scale (1 / axisLen) rawAxis
+                                    in
+                                    Just
+                                        { kind = spec.kind
+                                        , partFile = spec.partFile
+                                        , color = resolveRootColor ref.color
+                                        , worldPosition = origin
+                                        , worldAxis = axis
+                                        , worldMatrix = ref.transform
+                                        }
+
+                                Nothing ->
+                                    Nothing
+
+                        _ ->
+                            Nothing
             )
 
 

@@ -32,6 +32,7 @@ angle applies to them.
 import Dict exposing (Dict)
 import Gear.Components as Components
 import Gear.Types exposing (GearId, GearInstance)
+import LDraw.Connectivity as Connectivity
 import LDraw.Geometry as Geometry
 import LDraw.Resolve exposing (PartCache, PartStatus(..))
 import LDraw.Types exposing (LDrawLine(..))
@@ -450,22 +451,46 @@ topLevelCoaxialGear cache drivenAxles line gears =
                 pos =
                     toYUpPoint (Mat4.transform ref.transform (Vec3.vec3 0 0 0))
 
-                connectorPoints =
-                    connectorLocalPoints cache ref.file
-                        |> List.map (\local -> toYUpPoint (Mat4.transform ref.transform local))
+                connectors =
+                    extractConnectors cache ref.file
+
+                axleHolePoints =
+                    connectors
+                        |> List.filter (\c -> c.kind == AxleHole)
+                        |> List.map (\c -> toYUpPoint (Mat4.transform ref.transform c.localPosition))
+
+                pinHolePoints =
+                    connectors
+                        |> List.filter (\c -> c.kind == PinHole)
+                        |> List.map (\c -> toYUpPoint (Mat4.transform ref.transform c.localPosition))
 
                 samplePoints =
-                    pos :: connectorPoints
+                    pos :: axleHolePoints
 
                 axleMatch =
-                    if List.isEmpty connectorPoints then
-                        Nothing
+                    drivenAxles
+                        |> List.filterMap
+                            (\axle ->
+                                let
+                                    relevantPoints =
+                                        (if hasAxleShaft axle.file then
+                                            axleHolePoints
 
-                    else
-                        drivenAxles
-                            |> List.filterMap
-                                (\axle ->
-                                    bestLineMatchForPoints connectorPoints axle.center axle.axis
+                                         else
+                                            []
+                                        )
+                                            ++ (if isFrictionShaft axle.file then
+                                                    pinHolePoints
+
+                                                else
+                                                    []
+                                               )
+                                in
+                                if List.isEmpty relevantPoints then
+                                    Nothing
+
+                                else
+                                    bestLineMatchForPoints relevantPoints axle.center axle.axis
                                         |> Maybe.andThen
                                             (\( lineDist, axialOffset ) ->
                                                 if lineDist <= 2.5 && axialOffset <= 240 then
@@ -474,10 +499,10 @@ topLevelCoaxialGear cache drivenAxles line gears =
                                                 else
                                                     Nothing
                                             )
-                                )
-                            |> List.sortBy (\( lineDist, axialOffset, _ ) -> ( lineDist, axialOffset ))
-                            |> List.head
-                            |> Maybe.map (\( _, _, gearId ) -> gearId)
+                            )
+                        |> List.sortBy (\( lineDist, axialOffset, _ ) -> ( lineDist, axialOffset ))
+                        |> List.head
+                        |> Maybe.map (\( _, _, gearId ) -> gearId)
 
                 gearMatch =
                     gears
@@ -539,6 +564,56 @@ topLevelCoaxialGear cache drivenAxles line gears =
             Nothing
 
 
+cleanPartFile : String -> String
+cleanPartFile partFile =
+    partFile
+        |> String.replace "\\" "/"
+        |> String.replace "parts/" ""
+        |> String.replace ".dat" ""
+        |> String.toLower
+
+
+hasAxleShaft : String -> Bool
+hasAxleShaft file =
+    case cleanPartFile file of
+        "2780" ->
+            False
+
+        "3673" ->
+            False
+
+        "6558" ->
+            False
+
+        "32556" ->
+            False
+
+        "32556a" ->
+            False
+
+        "4274" ->
+            False
+
+        _ ->
+            True
+
+
+isFrictionShaft : String -> Bool
+isFrictionShaft file =
+    case cleanPartFile file of
+        "2780" ->
+            True
+
+        "43093" ->
+            True
+
+        "6558" ->
+            True
+
+        _ ->
+            False
+
+
 gearHoleOffsets : String -> List ( Float, Float )
 gearHoleOffsets partFile =
     ( 0, 0 ) :: gearPinAndAxleHoles partFile
@@ -546,15 +621,7 @@ gearHoleOffsets partFile =
 
 gearPinAndAxleHoles : String -> List ( Float, Float )
 gearPinAndAxleHoles partFile =
-    let
-        clean =
-            partFile
-                |> String.replace "\\" "/"
-                |> String.replace "parts/" ""
-                |> String.replace ".dat" ""
-                |> String.toLower
-    in
-    case clean of
+    case cleanPartFile partFile of
         "3648" ->
             pinHoles24T
 
@@ -747,31 +814,19 @@ buildDrivenAxles cache components gears =
             )
 
 
-connectorLocalPoints : PartCache -> String -> List Vec3.Vec3
-connectorLocalPoints cache partFile =
-    case Dict.get partFile cache of
-        Just (Loaded lines) ->
-            lines
-                |> List.filterMap
-                    (\line ->
-                        case line of
-                            SubFileRef subRef ->
-                                if isRotationalConnectorReference subRef.file then
-                                    Just (Mat4.transform subRef.transform (Vec3.vec3 0 0 0))
-
-                                else
-                                    Nothing
-
-                            _ ->
-                                Nothing
-                    )
-
-        _ ->
-            []
+type ConnectorKind
+    = AxleHole
+    | PinHole
 
 
-isRotationalConnectorReference : String -> Bool
-isRotationalConnectorReference file =
+type alias Connector =
+    { kind : ConnectorKind
+    , localPosition : Vec3.Vec3
+    }
+
+
+isAxleHoleReference : String -> Bool
+isAxleHoleReference file =
     let
         lower =
             String.toLower file
@@ -782,6 +837,124 @@ isRotationalConnectorReference file =
         , "axleend"
         , "axle.dat"
         ]
+
+
+isPinHoleReference : String -> Bool
+isPinHoleReference file =
+    let
+        lower =
+            String.toLower file
+    in
+    List.any
+        (\needle -> String.contains needle lower)
+        [ "peghole"
+        , "beamhole"
+        , "connhole"
+        , "pinhole"
+        ]
+
+
+extractConnectors : PartCache -> String -> List Connector
+extractConnectors cache partFile =
+    let
+        fromCache =
+            extractConnectorsHelp cache 0 Mat4.identity partFile []
+    in
+    if List.isEmpty fromCache then
+        extractCatalogConnectors partFile
+
+    else
+        fromCache
+
+
+extractConnectorsHelp : PartCache -> Int -> Mat4.Mat4 -> String -> List Connector -> List Connector
+extractConnectorsHelp cache depth currentMat partFile acc =
+    if depth > 2 then
+        acc
+
+    else
+        case lookupPartLines cache partFile of
+            Just lines ->
+                List.foldl
+                    (\line currentAcc ->
+                        case line of
+                            SubFileRef subRef ->
+                                let
+                                    comb =
+                                        Mat4.mul currentMat subRef.transform
+
+                                    pos =
+                                        Mat4.transform comb (Vec3.vec3 0 0 0)
+                                in
+                                if isAxleHoleReference subRef.file then
+                                    { kind = AxleHole, localPosition = pos } :: currentAcc
+
+                                else if isPinHoleReference subRef.file then
+                                    { kind = PinHole, localPosition = pos } :: currentAcc
+
+                                else
+                                    extractConnectorsHelp cache (depth + 1) comb subRef.file currentAcc
+
+                            _ ->
+                                currentAcc
+                    )
+                    acc
+                    lines
+
+            Nothing ->
+                acc
+
+
+extractCatalogConnectors : String -> List Connector
+extractCatalogConnectors partFile =
+    case Connectivity.knownCatalogPart partFile of
+        Just pc ->
+            List.filterMap
+                (\c ->
+                    case c.connType of
+                        Connectivity.TechnicPinFemale _ ->
+                            Just { kind = PinHole, localPosition = c.localPosition }
+
+                        Connectivity.TechnicAxleFemale _ ->
+                            Just { kind = AxleHole, localPosition = c.localPosition }
+
+                        _ ->
+                            Nothing
+                )
+                pc.connections
+
+        Nothing ->
+            []
+
+
+lookupPartLines : PartCache -> String -> Maybe (List LDrawLine)
+lookupPartLines cache file =
+    case Dict.get file cache of
+        Just (Loaded lines) ->
+            Just lines
+
+        _ ->
+            let
+                normalized =
+                    String.replace "\\" "/" file
+            in
+            case Dict.get normalized cache of
+                Just (Loaded lines) ->
+                    Just lines
+
+                _ ->
+                    case Dict.get (String.toLower normalized) cache of
+                        Just (Loaded lines) ->
+                            Just lines
+
+                        _ ->
+                            Nothing
+
+
+connectorLocalPoints : PartCache -> String -> List Vec3.Vec3
+connectorLocalPoints cache partFile =
+    extractConnectors cache partFile
+        |> List.map .localPosition
 
 
 gearAxisInfoById : GearId -> List GearInstance -> Maybe GearAxisInfo
@@ -907,14 +1080,32 @@ inferPartLocalAxis cache partFile =
                 extentZ =
                     bounds.maxZ - bounds.minZ
             in
-            if extentX >= extentY && extentX >= extentZ then
-                Vec3.vec3 1 0 0
+            case points of
+                [] ->
+                    defaultAxisForPart partFile
 
-            else if extentY >= extentZ then
-                Vec3.vec3 0 1 0
+                _ ->
+                    if extentX >= extentY && extentX >= extentZ then
+                        Vec3.vec3 1 0 0
 
-            else
-                Vec3.vec3 0 0 1
+                    else if extentY >= extentZ then
+                        Vec3.vec3 0 1 0
+
+                    else
+                        Vec3.vec3 0 0 1
 
         _ ->
-            Vec3.vec3 0 0 1
+            defaultAxisForPart partFile
+
+
+defaultAxisForPart : String -> Vec3.Vec3
+defaultAxisForPart partFile =
+    let
+        clean =
+            cleanPartFile partFile
+    in
+    if List.member clean [ "2780", "3673", "43093", "6558", "4274", "32556", "32556a", "3704", "3705", "3706", "3707", "4519", "32209" ] then
+        Vec3.vec3 1 0 0
+
+    else
+        Vec3.vec3 0 0 1
