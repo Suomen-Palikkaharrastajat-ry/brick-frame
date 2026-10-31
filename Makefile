@@ -3,6 +3,7 @@ LDRAW_SYNC_URL ?= https://library.ldraw.org/library/updates/complete.zip
 LDRAW_SYNC_DIR ?= viewer-app/public/ldraw
 LDRAW_SYNC_LOCK ?= ldraw-sync.lock.json
 WATCH_PORT ?= 5173
+PREVIEW_PORT ?= 4173
 
 .PHONY: help
 help: ## Show available targets
@@ -36,7 +37,7 @@ VIEWPORT_JS_SOURCES := $(shell find $(STUDIO_PACKAGES)/brick-frame-viewport/runt
 ELM_PACKAGE_SOURCES := $(shell find vendor/master-builder/packages -name '*.elm' -o -name '*.css' 2>/dev/null)
 WC_SOURCES := $(shell find viewer-app/web-components $(STUDIO_PACKAGES)/brick-frame-viewport/runtime -name '*.js' 2>/dev/null)
 
-# ── Elm frontend & Web Components ─────────────────────────────────────────────
+# ── Development & Build ──────────────────────────────────────────────────────
 
 .PHONY: elm-tailwind-gen
 elm-tailwind-gen: viewer-app/.elm-tailwind/.stamp ## Generate typed Tailwind Elm modules into viewer-app
@@ -73,8 +74,8 @@ wc-build: build/.wc-stamp ## Production build of Web Components bundle
 build: elm-build wc-build ## Build viewer-app and Web Components bundle → build/
 
 .PHONY: preview
-preview: build ## Serve production build locally on port 4173 (http://localhost:4173)
-	cd viewer-app && $(VITE) preview --outDir ../build --host 0.0.0.0 --port 4173
+preview: build ## Preview production build locally
+	cd viewer-app && $(VITE) preview --outDir ../build --host 0.0.0.0 --port $(PREVIEW_PORT)
 
 .PHONY: serve
 serve: preview ## Alias for preview
