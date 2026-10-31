@@ -9,7 +9,7 @@ const requestedModel = hashParams.get('src')
 
 const runtime = initBricksRuntime({
   elm: Elm.Main,
-  studioUrl: import.meta.env.VITE_STUDIO_URL ?? 'studio/',
+  studioUrl: import.meta.env.VITE_STUDIO_URL ?? 'https://studio.palikkaharrastajat.fi/',
   node: document.getElementById('app'),
   mode: 'simulator',
   ldrawBase: import.meta.env.VITE_LDRAW_BASE || 'https://catalog.palikkaharrastajat.fi/raw',
