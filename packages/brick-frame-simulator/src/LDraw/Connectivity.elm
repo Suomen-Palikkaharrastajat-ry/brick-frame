@@ -1054,9 +1054,9 @@ checkCollisions tolerance draggedPlacements scenePlacements =
 
 
 {-| Check whether applying a snap candidate causes the dragged placements to collide with scene placements.
-For Stud and AntiStud connections, all scene placements are checked (including `snap.targetPlacementId`).
-For other connection types (Technic pins/axles, clips, bars, balls), `snap.targetPlacementId` is excluded
-for the lead placement so joint mating can penetrate the target's bounding box.
+The lead part snapping to a target placement excludes `snap.targetPlacementId` so it does not collide
+with the target placement it wraps around or connects to, while still checking collisions against all
+other scene placements and checking follower parts against all scene placements.
 -}
 isSnapColliding :
     Float
@@ -1075,31 +1075,15 @@ isSnapColliding tolerance leadId leadOrigMatrix draggedOrigPlacements scenePlace
             draggedOrigPlacements
                 |> List.map (\( id, origMat, box ) -> ( id, Mat4.mul snapDeltaMat origMat, box ))
 
-        isStudOrAntiStud =
-            case snap.draggedPoint.connType of
-                Stud ->
-                    True
+        ( leadBoxes, otherBoxes ) =
+            List.partition (\( id, _, _ ) -> id == leadId) draggedBoxes
 
-                AntiStud ->
-                    True
-
-                _ ->
-                    False
+        activeSceneBoxes =
+            List.filter (\( id, _, _ ) -> id /= snap.targetPlacementId) scenePlacements
 
         collidingPairs =
-            if isStudOrAntiStud then
-                checkCollisions tolerance draggedBoxes scenePlacements
-
-            else
-                let
-                    ( leadBoxes, otherBoxes ) =
-                        List.partition (\( id, _, _ ) -> id == leadId) draggedBoxes
-
-                    activeSceneBoxes =
-                        List.filter (\( id, _, _ ) -> id /= snap.targetPlacementId) scenePlacements
-                in
-                checkCollisions tolerance leadBoxes activeSceneBoxes
-                    ++ checkCollisions tolerance otherBoxes scenePlacements
+            checkCollisions tolerance leadBoxes activeSceneBoxes
+                ++ checkCollisions tolerance otherBoxes scenePlacements
     in
     not (List.isEmpty collidingPairs)
 
@@ -1999,11 +1983,30 @@ knownCatalogPart name =
                         (List.concatMap (\x -> [ ( vec3 x 10 -10, vec3 0 0 -1 ), ( vec3 x 30 -10, vec3 0 0 -1 ) ]) [ -10, 10 ])
                 )
 
+        "36840" ->
+            -- Bracket 1 x 1 - 1 x 1 Up: 1 x 1 plate with upward vertical plate
+            Just
+                (makeBracket 1
+                    "36840.dat"
+                    { minY = -12, maxY = 8 }
+                    [ ( vec3 0 -2 -14, vec3 0 0 -1 ) ]
+                )
+
+        "36841" ->
+            -- Bracket 1 x 1 - 1 x 1 Down: 1 x 1 plate with downward vertical plate
+            Just
+                (makeBracket 1
+                    "36841.dat"
+                    { minY = -4, maxY = 20 }
+                    [ ( vec3 0 10 -14, vec3 0 0 -1 ) ]
+                )
+
         "99781" ->
             -- Bracket 1 x 2 - 1 x 2 Down: a 1 x 2 plate with a vertical plate hanging
             -- below its front edge (Z -14 to -10), whose studs face -Z
             Just
-                (makeBracket "99781.dat"
+                (makeBracket 2
+                    "99781.dat"
                     { minY = -4, maxY = 20 }
                     [ ( vec3 -10 10 -14, vec3 0 0 -1 ), ( vec3 10 10 -14, vec3 0 0 -1 ) ]
                 )
@@ -2011,7 +2014,8 @@ knownCatalogPart name =
         "99780" ->
             -- Bracket 1 x 2 - 1 x 2 Up: the vertical plate rises above the front edge
             Just
-                (makeBracket "99780.dat"
+                (makeBracket 2
+                    "99780.dat"
                     { minY = -12, maxY = 8 }
                     [ ( vec3 -10 -2 -14, vec3 0 0 -1 ), ( vec3 10 -2 -14, vec3 0 0 -1 ) ]
                 )
@@ -2019,9 +2023,19 @@ knownCatalogPart name =
         "99207" ->
             -- Bracket 1 x 2 - 2 x 2 Up: a taller vertical plate with two rows of studs
             Just
-                (makeBracket "99207.dat"
+                (makeBracket 2
+                    "99207.dat"
                     { minY = -32, maxY = 8 }
                     (List.concatMap (\y -> [ ( vec3 -10 y -14, vec3 0 0 -1 ), ( vec3 10 y -14, vec3 0 0 -1 ) ]) [ -2, -22 ])
+                )
+
+        "44728" ->
+            -- Bracket 1 x 2 - 2 x 2 Down: 1 x 2 plate with taller downward vertical plate
+            Just
+                (makeBracket 2
+                    "44728.dat"
+                    { minY = -4, maxY = 40 }
+                    (List.concatMap (\y -> [ ( vec3 -10 y -14, vec3 0 0 -1 ), ( vec3 10 y -14, vec3 0 0 -1 ) ]) [ 10, 30 ])
                 )
 
         "99206" ->
@@ -2232,19 +2246,22 @@ makeTile length width partName =
     { plate | connections = antiStuds, boundingBoxes = [ box ] }
 
 
-{-| A 1 x 2 bracket: a 1 x 2 plate (studs at Y = 0, anti-studs at Y = 8) with a
+{-| A bracket with length `length` along X: a plate (studs at Y = 0, anti-studs at Y = 8) with a
 vertical plate along its front edge (Z −14 to −10) carrying `sideStuds`.
 `minY` and `maxY` are the vertical extent of the whole part.
 -}
-makeBracket : String -> { minY : Float, maxY : Float } -> List ( Vec3, Vec3 ) -> PartConnectivity
-makeBracket partName extent sideStuds =
+makeBracket : Int -> String -> { minY : Float, maxY : Float } -> List ( Vec3, Vec3 ) -> PartConnectivity
+makeBracket length partName extent sideStuds =
     let
+        halfL =
+            toFloat length * 10.0
+
         plate =
-            makeBrick 2 1 8 partName
+            makeBrick length 1 8 partName
     in
     { plate
         | connections = plate.connections ++ sideStudPoints sideStuds
-        , boundingBoxes = [ { min = vec3 -20 extent.minY -14, max = vec3 20 extent.maxY 10 } ]
+        , boundingBoxes = [ { min = vec3 -halfL extent.minY -14, max = vec3 halfL extent.maxY 10 } ]
     }
 
 

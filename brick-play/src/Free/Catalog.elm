@@ -121,9 +121,12 @@ entriesFor tab =
             , entry "30414.dat" "Brick 1 x 4 with Studs on Side" "1 x 4 brick with four side studs"
             , entry "32952.dat" "Brick 1 x 1 x 1 2/3 with Studs on 1 Side" "1 x 1 x 1 2/3 brick with two side studs"
             , entry "22885.dat" "Brick 1 x 2 x 1 2/3 with Studs on 1 Side" "1 x 2 x 1 2/3 brick with four side studs"
+            , entry "36840.dat" "Bracket 1 x 1 - 1 x 1 Up" "1 x 1 up bracket"
+            , entry "36841.dat" "Bracket 1 x 1 - 1 x 1 Down" "1 x 1 down bracket"
             , entry "99781.dat" "Bracket 1 x 2 - 1 x 2 Down" "1 x 2 down bracket"
             , entry "99780.dat" "Bracket 1 x 2 - 1 x 2 Up" "1 x 2 up bracket"
             , entry "99207.dat" "Bracket 1 x 2 - 2 x 2 Up" "1 x 2 - 2 x 2 up bracket"
+            , entry "44728.dat" "Bracket 1 x 2 - 2 x 2 Down" "1 x 2 down bracket"
             , entry "99206.dat" "Plate 2 x 2 x 2/3 with Two Studs On Side" "2 x 2 plate with two side studs"
             ]
 

@@ -254,6 +254,14 @@ overlapTests =
             \_ ->
                 lines [ brick "3001.dat" 0 -24 0, brick "3001.dat" 80 -24 0 ]
                     |> (\doc -> Expect.equal [] (Health.check noParts doc Set.empty))
+        , test "multi-level SNOT assembly (Brick 1x2 + Bracket 99781 on top + Plate 1x2 on side stud) is healthy" <|
+            \_ ->
+                lines
+                    [ brick "3004.dat" 0 -24 10
+                    , brick "99781.dat" 0 -32 10
+                    , "1 14 0 -22 -12 1 0 0 0 0 -1 0 1 0 3023.dat"
+                    ]
+                    |> (\doc -> Expect.equal [] (Health.check noParts doc Set.empty))
         ]
 
 

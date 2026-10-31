@@ -669,6 +669,44 @@ extractionTests =
                     , \_ -> checkSlope "3298.dat" 2 6 (vec3 -20 -4 -50) (vec3 20 24 10)
                     ]
                     ()
+        , test "catalog bracket parts 36840, 36841, and 44728 have expected connection counts and bounding boxes" <|
+            \_ ->
+                let
+                    checkBracket part expectedStuds expectedAntiStuds expectedSideStuds expectedMin expectedMax =
+                        case knownCatalogPart part of
+                            Just conn ->
+                                let
+                                    upStuds =
+                                        List.filter (\c -> c.connType == Stud && Vec3.getY c.normal < -0.7) conn.connections
+
+                                    sideStuds =
+                                        List.filter (\c -> c.connType == Stud && Vec3.getZ c.normal < -0.7) conn.connections
+
+                                    antiStuds =
+                                        List.filter (\c -> c.connType == AntiStud) conn.connections
+
+                                    box =
+                                        List.head conn.boundingBoxes
+                                            |> Maybe.withDefault { min = vec3 0 0 0, max = vec3 0 0 0 }
+                                in
+                                Expect.all
+                                    [ \_ -> Expect.equal expectedStuds (List.length upStuds)
+                                    , \_ -> Expect.equal expectedSideStuds (List.length sideStuds)
+                                    , \_ -> Expect.equal expectedAntiStuds (List.length antiStuds)
+                                    , \_ -> Expect.equal (Vec3.toRecord expectedMin) (Vec3.toRecord box.min)
+                                    , \_ -> Expect.equal (Vec3.toRecord expectedMax) (Vec3.toRecord box.max)
+                                    ]
+                                    ()
+
+                            Nothing ->
+                                Expect.fail ("Catalog bracket part not found: " ++ part)
+                in
+                Expect.all
+                    [ \_ -> checkBracket "36840.dat" 1 1 1 (vec3 -10 -12 -14) (vec3 10 8 10)
+                    , \_ -> checkBracket "36841.dat" 1 1 1 (vec3 -10 -4 -14) (vec3 10 20 10)
+                    , \_ -> checkBracket "44728.dat" 2 2 4 (vec3 -20 -4 -14) (vec3 20 40 10)
+                    ]
+                    ()
         ]
 
 
@@ -2005,5 +2043,87 @@ collisionSATTests =
 
                         Nothing ->
                             Expect.fail "Expected snap candidate"
+            , test "snapping Bracket 1x2 Down (99781) onto Brick 1x2 (3004) returns isSnapColliding = False" <|
+                \_ ->
+                    case ( knownCatalogPart "99781.dat", knownCatalogPart "3004.dat" ) of
+                        ( Just bracket, Just brick ) ->
+                            let
+                                targetMatrix =
+                                    Mat4.makeTranslate3 0 -24 0
+
+                                targetWorldPoints =
+                                    List.map (Connectivity.transformPoint targetMatrix 1) brick.connections
+
+                                hoverMatrix =
+                                    Mat4.makeTranslate3 0 -30 0
+
+                                maybeSnap =
+                                    solveSnap 12.0 0 hoverMatrix bracket.connections targetWorldPoints
+                            in
+                            case maybeSnap of
+                                Just snap ->
+                                    let
+                                        bracketBox =
+                                            List.head bracket.boundingBoxes
+                                                |> Maybe.withDefault { min = vec3 -20 -4 -14, max = vec3 20 20 10 }
+                                                |> (\b -> effectiveEnvelope b bracket.connections)
+
+                                        brickBox =
+                                            List.head brick.boundingBoxes
+                                                |> Maybe.withDefault { min = vec3 -20 -4 -10, max = vec3 20 24 10 }
+                                                |> (\b -> effectiveEnvelope b brick.connections)
+
+                                        colliding =
+                                            isSnapColliding 0.5 2 hoverMatrix [ ( 2, hoverMatrix, bracketBox ) ] [ ( 1, targetMatrix, brickBox ) ] snap
+                                    in
+                                    Expect.equal False colliding
+
+                                Nothing ->
+                                    Expect.fail "Bracket snap candidate not found"
+
+                        _ ->
+                            Expect.fail "99781.dat or 3004.dat not found in catalog"
+            , test "snapping Plate 1x2 onto side studs of Bracket 99781 returns isSnapColliding = False" <|
+                \_ ->
+                    case ( knownCatalogPart "3023.dat", knownCatalogPart "99781.dat" ) of
+                        ( Just plate, Just bracket ) ->
+                            let
+                                targetMatrix =
+                                    Mat4.makeTranslate3 0 -32 0
+
+                                sideStuds =
+                                    bracket.connections
+                                        |> List.filter (\c -> c.connType == Stud && Vec3.getZ c.normal < -0.7)
+                                        |> List.map (Connectivity.transformPoint targetMatrix 1)
+
+                                hoverMatrix =
+                                    Mat4.makeTranslate3 0 -22 -20
+
+                                maybeSnap =
+                                    solveSnap 16.0 0 hoverMatrix plate.connections sideStuds
+                            in
+                            case maybeSnap of
+                                Just snap ->
+                                    let
+                                        plateBox =
+                                            List.head plate.boundingBoxes
+                                                |> Maybe.withDefault { min = vec3 -20 -4 -10, max = vec3 20 8 10 }
+                                                |> (\b -> effectiveEnvelope b plate.connections)
+
+                                        bracketBox =
+                                            List.head bracket.boundingBoxes
+                                                |> Maybe.withDefault { min = vec3 -20 -4 -14, max = vec3 20 20 10 }
+                                                |> (\b -> effectiveEnvelope b bracket.connections)
+
+                                        colliding =
+                                            isSnapColliding 0.5 2 hoverMatrix [ ( 2, hoverMatrix, plateBox ) ] [ ( 1, targetMatrix, bracketBox ) ] snap
+                                    in
+                                    Expect.equal False colliding
+
+                                Nothing ->
+                                    Expect.fail "Plate onto bracket side stud snap candidate not found"
+
+                        _ ->
+                            Expect.fail "3023.dat or 99781.dat not found in catalog"
             ]
         ]
