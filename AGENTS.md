@@ -1,74 +1,35 @@
-# AGENTS.md — Palikkakehys
+# AGENTS.md — Brick Frame
 
-Browser-based Brick Frame gear simulator built with Elm + WebGL. Loads LDraw `.ldr`/`.mpd` files, renders 3D models, detects gear trains, and simulates gear rotation physics with playback controls.
+Browser-based 3D LEGO® model viewer and Web Components bundle built with Elm + WebGL. Loads LDraw `.ldr`/`.mpd` files, renders 3D models with WebGL, detects gear trains, and simulates gear rotation physics with interactive playback controls.
 
 ## Project Structure
 
 ```
-packages/brick-frame-simulator/src/
-  LDraw/
-    Types.elm           # LDrawLine union type and supporting types
-    Parser.elm          # parseLine, parseFile, splitMpd
-    Resolve.elm         # PartCache, HTTP part fetching
-    Colors.elm          # LDraw color code → RGBA
-    Geometry.elm        # Transform tree → flat WebGL vertex buffers
-  Render/
-    Camera.elm          # Orbit camera (azimuth/elevation/distance)
-    Mesh.elm            # Vertex and EdgeVertex types
-    Shader.elm          # Lambert GLSL shaders
-    EdgeShader.elm      # Edge line GLSL shaders
-    GuideShader.elm     # Component visualisation shaders
-    Lighting.elm        # Light uniforms
-    Scene.elm           # buildScene, renderScene
-  Gear/
-    Types.elm           # GearSpec, GearInstance, GearGraph
-    Detect.elm          # extractGears, buildGearGraph
-    Physics.elm         # propagate (BFS gear ratio), angleAt
-    Animate.elm         # MotorState, gearAngles
-    Components.elm      # Axle/beam detection
-    Phase.elm           # Tooth phase of meshes and the rigid turn that closes a gap
-    Placements.elm      # Which document placement each detected gear, axle or part came from
-
-packages/brick-frame-viewport/   # Viewport component (camera, input, loading, document scenes) + runtime/ JS + geometry-worker.js
-  runtime/thumbnail-pipeline.js  # Shared part thumbnail renderer with an IndexedDB cache (studio palette, Brick Play dock)
-packages/brick-frame-simulation/ # Simulation component (gear analysis, playback, moving-part meshes)
-packages/brick-frame-studio/     # Reusable 3D studio TEA component (Core, Edit, Gizmo, Overlay, Transform, Shortcuts, UrlPayload)
-  src/Studio/DragPlane.elm       # View-relative body drag: working plane, snapping, free-spot search
-  src/Studio/GearAlign.elm       # Tooth alignment of gears a committed edit has just meshed
-  src/Studio/Health.elm          # Build health for Tidy up: misaligned studded parts, overlaps and the fixes that clear them
-  src/Studio/SideSnap.elm        # SNOT (studs not on top): side-stud candidate search & approach matrix
-packages/brick-frame-ui/         # Theme tokens, shared view widgets, theme.css; UI.CameraGlobe (globe, zoom slider, reset, extras row) used by every app
-  src/UI/PartCard.elm            # Visual dock card: thumbnail, name and secondary text for a part
-packages/brick-frame-data/src/   # Data.elm (generated, never edit) + EmbeddedParts.elm
-
-viewer-app/src/                  # Viewer + Web Components host
-  Main.elm              # Model, Msg, update, view; wraps ViewportMsg / SimulationMsg
-  Ports.elm             # JS interop (file reading, geometry worker, URL hash)
-  UI/                   # Viewer-only panels
-
-studio-app/src/                  # Full-featured LDraw studio (editor) host — see docs/studio.md
-  Main.elm              # Pages: Workspace and Preview (nested WorkspaceMsg / PreviewMsg)
-  Studio/               # Workspace, Preview, Instructions, Inspector, Palette, Tree, BOM
-
-brick-play/src/                  # Brick Play: free building, parts set or fixed model (chosen by the hash); Technic mode (gears, machine simulation) switches on by itself
-  Main.elm              # Model, Msg, dock (free catalog + search in free building, counted kit in parts set, none in fixed model), Technic mode, wraps StudioMsg (Studio.Core)
-  Link.elm              # Binary link payloads: editable model, parts set, partially built set, and fixed model
-  Shortcuts.elm         # Brick Play's own keys (L = glue, Tab / Shift+Tab = select), through actionFor and the key guard
-  Ring.elm              # The context ring: the controls beside a double-clicked part, its screen anchor and placement
-  Step.elm              # Move steps: Stud, ½ stud, Bit (the ring's segmented control; Core.setNudgeSteps / setFineMove)
-  Free/
-    Catalog.elm         # Curated free dock: Bricks, Plates, Slopes & tiles, and the Technic parts
-  Technic/
-    Machine.elm         # Technic machine analysis & accomplishment condition
-    Catalog.elm         # Curated Technic parts catalog (gears, beams, axles, pins)
-    Animation.elm       # Which gears and driven parts turn while playing, and their static copies to hide
-    Placement.elm       # Where a dock part is added: on the shared axle line, or at a free ground spot
-  Ports.elm             # JS interop (file reading, geometry worker, URL hash)
-
-src/
-  Lib.hs                # LDrawColor (with its Finish from the !COLOUR keywords), GearSpec, Elm module generation
-generator/Main.hs       # Writes packages/brick-frame-data/src/Data.elm
-tests/Main.hs           # Haskell test suite (hspec)
+brick-frame/
+├── viewer-app/                         # Viewer SPA and Web Component host
+│   ├── src/
+│   │   ├── Main.elm                    # Model, Msg, update, view; wraps ViewportMsg / SimulationMsg
+│   │   ├── Ports.elm                   # JS interop (file reading, geometry worker, URL hash)
+│   │   └── UI/                         # Viewer-only controls and panels
+│   ├── web-components/                 # Web Component wrappers (<brick-viewer>)
+│   ├── main.js                         # Application entrypoint
+│   ├── main.css                        # Tailwind styles
+│   └── public/                         # Public assets and LDraw model files
+│
+├── vendor/
+│   ├── brick-studio/                   # Submodule providing core Elm package suite:
+│   │   └── packages/
+│   │       ├── brick-frame-data/       # LDraw color table and embedded parts
+│   │       ├── brick-frame-simulator/  # Parser, exporter, gear math, and AST
+│   │       ├── brick-frame-viewport/   # WebGL rendering engine and runtime worker
+│   │       ├── brick-frame-simulation/ # Kinematics physics loop
+│   │       ├── brick-frame-ui/         # Theme tokens and UI widgets
+│   │       └── brick-frame-studio/     # Core studio TEA state
+│   └── master-builder/                 # Submodule providing design tokens and UI components
+│
+├── scripts/                            # LDraw sync and missing-parts scripts
+├── docs/                               # Architecture and specification docs
+└── devenv.nix                          # Pure Node/Elm development environment
 ```
 
 ## Documentation

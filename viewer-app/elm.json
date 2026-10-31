@@ -2,11 +2,11 @@
     "type": "application",
     "source-directories": [
         ".elm-tailwind",
-        "../packages/brick-frame-ui/src",
-        "../packages/brick-frame-data/src",
-        "../packages/brick-frame-simulator/src",
-        "../packages/brick-frame-viewport/src",
-        "../packages/brick-frame-simulation/src",
+        "../vendor/brick-studio/packages/brick-frame-ui/src",
+        "../vendor/brick-studio/packages/brick-frame-data/src",
+        "../vendor/brick-studio/packages/brick-frame-simulator/src",
+        "../vendor/brick-studio/packages/brick-frame-viewport/src",
+        "../vendor/brick-studio/packages/brick-frame-simulation/src",
         "src",
         "packages/design-tokens/src",
         "packages/ui-components/src"

@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import "../packages/brick-frame-ui/theme.css";
+@import "../vendor/brick-studio/packages/brick-frame-ui/theme.css";
 @source "./packages/ui-components/src";
 @source "./src";
 

@@ -1,6 +1,6 @@
 import './main.css'
-import { initBricksRuntime, runtimeDefaults } from '../packages/brick-frame-viewport/runtime/initBricksRuntime.js'
-import { initSnapshots } from '../packages/brick-frame-viewport/runtime/snapshot.js'
+import { initBricksRuntime, runtimeDefaults } from '../vendor/brick-studio/packages/brick-frame-viewport/runtime/initBricksRuntime.js'
+import { initSnapshots } from '../vendor/brick-studio/packages/brick-frame-viewport/runtime/snapshot.js'
 import { Elm } from './src/Main.elm'
 
 const defaults = runtimeDefaults()

@@ -38,8 +38,8 @@ generatedDirectories =
 
 generatedFiles : List String
 generatedFiles =
-    [ "../packages/brick-frame-data/src/Data.elm"
-    , "../packages/brick-frame-simulator/src/LDraw/ColorData.elm"
+    [ "../vendor/brick-studio/packages/brick-frame-data/src/Data.elm"
+    , "../vendor/brick-studio/packages/brick-frame-simulator/src/LDraw/ColorData.elm"
     ]
 
 

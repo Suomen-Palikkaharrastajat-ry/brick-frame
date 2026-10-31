@@ -1,4 +1,4 @@
-import { initBricksRuntime } from '../../packages/brick-frame-viewport/runtime/initBricksRuntime.js'
+import { initBricksRuntime } from '../../vendor/brick-studio/packages/brick-frame-viewport/runtime/initBricksRuntime.js'
 import { Elm } from '../src/Main.elm'
 
 const DEFAULT_HEIGHT = '420px'
