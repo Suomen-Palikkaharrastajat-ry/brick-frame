@@ -21,13 +21,11 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      LDRAW_SYNC_URL: https://library.ldraw.org/library/updates/complete.zip
 
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
 
       - name: Prepare vendor links
         run: make vendor
@@ -45,51 +43,13 @@ jobs:
       - name: Install devenv
         run: nix profile install "github:cachix/devenv/v2.0.6"
 
-      - name: Prepare Cabal cache directories
-        run: mkdir -p ~/.cabal/packages ~/.cabal/store
-
-      - name: Restore Cabal index cache
+      - name: Cache Elm dependencies
         uses: actions/cache@v4
-        with:
-          path: ~/.cabal/packages
-          key: cabal-index-${{ runner.os }}-${{ hashFiles('cabal.project.freeze') }}
-          restore-keys: cabal-index-${{ runner.os }}-
-
-      - name: Restore Cabal store cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cabal/store
-          key: cabal-store-${{ runner.os }}-${{ hashFiles('cabal.project.freeze', 'brick-frame.cabal', 'devenv.lock', 'devenv.nix') }}
-          restore-keys: cabal-store-${{ runner.os }}-
-
-      - name: Update Cabal package index
-        run: devenv shell --profile ci -- cabal update
-
-      - name: Restore LDraw library cache
-        id: ldraw-cache
-        uses: actions/cache@v4
-        with:
-          path: viewer-app/public/ldraw
-          key: ldraw-${{ runner.os }}-${{ env.LDRAW_SYNC_URL }}-${{ hashFiles('scripts/sync-ldraw.sh', 'Makefile', 'ldraw-sync.lock.json') }}
-
-      - name: Sync LDraw library (cache miss)
-        if: steps.ldraw-cache.outputs.cache-hit != 'true'
-        run: devenv shell --profile ci -- make sync-ldraw
-
-      - name: Generate and validate missing LDraw replacements
-        run: devenv shell --profile ci -- make ldraw-missing
-
-      - name: Restore Elm cache
-        id: elm-cache-restore
-        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.elm
             viewer-app/elm-stuff
-            studio-app/elm-stuff
-            brick-play/elm-stuff
-            packages/brick-frame-studio/elm-stuff
-          key: elm-${{ runner.os }}-${{ hashFiles('viewer-app/elm.json', 'studio-app/elm.json', 'brick-play/elm.json', 'packages/brick-frame-studio/elm.json') }}
+          key: elm-${{ runner.os }}-${{ hashFiles('viewer-app/elm.json') }}
           restore-keys: elm-${{ runner.os }}-
 
       - name: Run tests
@@ -99,28 +59,23 @@ jobs:
         env:
           VITE_PUBLIC_BASE: https://kehys.palikkaharrastajat.fi/
           VITE_LDRAW_BASE: "https://catalog.palikkaharrastajat.fi/raw"
-        run: devenv shell --profile ci -- make dist-ci
+        run: devenv shell --profile ci -- make build
 
       - name: Publish web-components bundle at site root
         run: cp build/docs/bricks-viewer.iife.js build/bricks-viewer.iife.js
 
-      - name: Save Elm cache
-        if: steps.elm-cache-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.elm
-            viewer-app/elm-stuff
-            studio-app/elm-stuff
-            brick-play/elm-stuff
-            packages/brick-frame-studio/elm-stuff
-          key: ${{ steps.elm-cache-restore.outputs.cache-primary-key }}
+      - name: Verify CNAME
+        run: |
+          test -f build/CNAME || { echo "Missing build/CNAME"; exit 1; }
+          grep -qx "kehys.palikkaharrastajat.fi" build/CNAME || { echo "Unexpected build/CNAME content"; cat build/CNAME; exit 1; }
 
-      - uses: actions/configure-pages@v5
+      - name: Configure GitHub Pages
         if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
 
-      - uses: actions/upload-pages-artifact@v3
+      - name: Upload Pages Artifact
         if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
         with:
           path: ./build
 
