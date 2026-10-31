@@ -28,6 +28,7 @@ suite =
         , roundPlateOnSideStudTests
         , multiAntiStudSelectionTests
         , fourStepRotationTests
+        , solveSideSnapTests
         ]
 
 
@@ -472,6 +473,60 @@ fourStepRotationTests =
                                         Expect.fail "Missing target side stud"
                         in
                         Expect.all (List.map (\idx -> \_ -> testRotation idx) [ 0, 1, 2, 3 ]) ()
+
+                    _ ->
+                        Expect.fail "3070b.dat or 87087.dat not found in catalog"
+        ]
+
+
+solveSideSnapTests : Test
+solveSideSnapTests =
+    describe "solveSideSnap"
+        [ test "solves side snap candidate when ray passes near target side stud" <|
+            \_ ->
+                case ( knownCatalogPart "3070b.dat", knownCatalogPart "87087.dat" ) of
+                    ( Just tile1x1, Just brick87087 ) ->
+                        let
+                            brickMatrix =
+                                Mat4.makeTranslate3 0 -24 0
+
+                            targetSideStud =
+                                brick87087.connections
+                                    |> List.filter (\c -> c.connType == Stud && Vec3.getZ c.normal < -0.7)
+                                    |> List.map (Connectivity.transformPoint brickMatrix 1)
+                                    |> List.head
+
+                            leadMatrix =
+                                Mat4.mul (Mat4.makeTranslate3 0 -14 -18) (Mat4.makeRotate (pi / 2) (vec3 1 0 0))
+
+                            ray =
+                                { origin = vec3 0 -14 -100
+                                , direction = vec3 0 0 1
+                                }
+                        in
+                        case targetSideStud of
+                            Just target ->
+                                let
+                                    maybeSnap =
+                                        SideSnap.solveSideSnap
+                                            (\_ -> True)
+                                            24.0
+                                            0
+                                            20.0
+                                            ray
+                                            leadMatrix
+                                            tile1x1.connections
+                                            [ target ]
+                                in
+                                case maybeSnap of
+                                    Just snap ->
+                                        Expect.lessThan 24.0 snap.distance
+
+                                    Nothing ->
+                                        Expect.fail "solveSideSnap returned Nothing"
+
+                            Nothing ->
+                                Expect.fail "Missing target side stud"
 
                     _ ->
                         Expect.fail "3070b.dat or 87087.dat not found in catalog"

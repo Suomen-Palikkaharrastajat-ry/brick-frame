@@ -180,41 +180,28 @@ snapReleaseDistance =
 -}
 isCompatible : ConnectionType -> ConnectionType -> Bool
 isCompatible a b =
+    canConnect a b || canConnect b a
+
+
+canConnect : ConnectionType -> ConnectionType -> Bool
+canConnect a b =
     case ( a, b ) of
         ( Stud, AntiStud ) ->
-            True
-
-        ( AntiStud, Stud ) ->
             True
 
         ( TechnicPinMale _, TechnicPinFemale _ ) ->
             True
 
-        ( TechnicPinFemale _, TechnicPinMale _ ) ->
-            True
-
         ( TechnicAxleMale _, TechnicAxleFemale _ ) ->
-            True
-
-        ( TechnicAxleFemale _, TechnicAxleMale _ ) ->
             True
 
         ( TechnicAxleMale _, TechnicPinFemale _ ) ->
             True
 
-        ( TechnicPinFemale _, TechnicAxleMale _ ) ->
-            True
-
         ( ClipMale _, BarFemale _ ) ->
             True
 
-        ( BarFemale _, ClipMale _ ) ->
-            True
-
         ( BallMale, BallSocketFemale ) ->
-            True
-
-        ( BallSocketFemale, BallMale ) ->
             True
 
         _ ->
@@ -640,39 +627,36 @@ isDirectional conn =
             False
 
 
-targetDesiredNormal : ConnectionType -> Vec3 -> Vec3 -> Vec3
-targetDesiredNormal conn draggedWorldNormal targetWorldNormal =
+isBidirectionalAxis : ConnectionType -> Bool
+isBidirectionalAxis conn =
     case conn of
         TechnicAxleMale _ ->
-            if Vec3.dot draggedWorldNormal targetWorldNormal < 0 then
-                Vec3.negate targetWorldNormal
-
-            else
-                targetWorldNormal
+            True
 
         TechnicAxleFemale _ ->
-            if Vec3.dot draggedWorldNormal targetWorldNormal < 0 then
-                Vec3.negate targetWorldNormal
-
-            else
-                targetWorldNormal
+            True
 
         TechnicPinMale _ ->
-            if Vec3.dot draggedWorldNormal targetWorldNormal < 0 then
-                Vec3.negate targetWorldNormal
-
-            else
-                targetWorldNormal
+            True
 
         TechnicPinFemale _ ->
-            if Vec3.dot draggedWorldNormal targetWorldNormal < 0 then
-                Vec3.negate targetWorldNormal
-
-            else
-                targetWorldNormal
+            True
 
         _ ->
+            False
+
+
+targetDesiredNormal : ConnectionType -> Vec3 -> Vec3 -> Vec3
+targetDesiredNormal conn draggedWorldNormal targetWorldNormal =
+    if isBidirectionalAxis conn then
+        if Vec3.dot draggedWorldNormal targetWorldNormal < 0 then
             Vec3.negate targetWorldNormal
+
+        else
+            targetWorldNormal
+
+    else
+        Vec3.negate targetWorldNormal
 
 
 computeSnapMatrix : Int -> ConnectionPoint -> WorldConnectionPoint -> Vec3 -> Mat4
@@ -687,14 +671,19 @@ computeSnapMatrix rotationIndex draggedLocal targetWorld desiredNormal =
         step =
             modBy 4 (modBy 4 rotationIndex + 4)
 
-        theta =
-            toFloat step * (pi / 2)
+        ( cosT, sinT ) =
+            case step of
+                0 ->
+                    ( 1.0, 0.0 )
 
-        cosT =
-            cos theta
+                1 ->
+                    ( 0.0, 1.0 )
 
-        sinT =
-            sin theta
+                2 ->
+                    ( -1.0, 0.0 )
+
+                _ ->
+                    ( 0.0, -1.0 )
 
         uT =
             Vec3.add (Vec3.scale cosT basisT0.tangent) (Vec3.scale sinT basisT0.bitangent)
@@ -871,6 +860,23 @@ effectiveEnvelope box connections =
                 )
                 connections
 
+        ( newMinX, newMaxX ) =
+            trimDimension Vec3.getX (Vec3.getX box.min) (Vec3.getX box.max) studs
+
+        ( newMinY, newMaxY ) =
+            trimDimension Vec3.getY (Vec3.getY box.min) (Vec3.getY box.max) studs
+
+        ( newMinZ, newMaxZ ) =
+            trimDimension Vec3.getZ (Vec3.getZ box.min) (Vec3.getZ box.max) studs
+    in
+    { min = vec3 newMinX newMinY newMinZ
+    , max = vec3 newMaxX newMaxY newMaxZ
+    }
+
+
+trimDimension : (Vec3 -> Float) -> Float -> Float -> List ( Vec3, Vec3 ) -> ( Float, Float )
+trimDimension getCoord minVal maxVal studs =
+    let
         trimMin studBase faceVal =
             if faceVal < studBase - 0.1 && (studBase - faceVal) <= 4.5 then
                 studBase
@@ -885,75 +891,45 @@ effectiveEnvelope box connections =
             else
                 faceVal
 
-        minYStuds =
-            List.filter (\( _, n ) -> Vec3.getY n < -0.7) studs |> List.map (\( p, _ ) -> Vec3.getY p)
+        minStuds =
+            studs
+                |> List.filterMap
+                    (\( p, n ) ->
+                        if getCoord n < -0.7 then
+                            Just (getCoord p)
 
-        maxYStuds =
-            List.filter (\( _, n ) -> Vec3.getY n > 0.7) studs |> List.map (\( p, _ ) -> Vec3.getY p)
+                        else
+                            Nothing
+                    )
 
-        minXStuds =
-            List.filter (\( _, n ) -> Vec3.getX n < -0.7) studs |> List.map (\( p, _ ) -> Vec3.getX p)
+        maxStuds =
+            studs
+                |> List.filterMap
+                    (\( p, n ) ->
+                        if getCoord n > 0.7 then
+                            Just (getCoord p)
 
-        maxXStuds =
-            List.filter (\( _, n ) -> Vec3.getX n > 0.7) studs |> List.map (\( p, _ ) -> Vec3.getX p)
+                        else
+                            Nothing
+                    )
 
-        minZStuds =
-            List.filter (\( _, n ) -> Vec3.getZ n < -0.7) studs |> List.map (\( p, _ ) -> Vec3.getZ p)
-
-        maxZStuds =
-            List.filter (\( _, n ) -> Vec3.getZ n > 0.7) studs |> List.map (\( p, _ ) -> Vec3.getZ p)
-
-        newMinY =
-            case minYStuds of
+        newMin =
+            case minStuds of
                 [] ->
-                    Vec3.getY box.min
+                    minVal
 
                 bases ->
-                    trimMin (List.foldl min 1.0e9 bases) (Vec3.getY box.min)
+                    trimMin (List.foldl min 1.0e9 bases) minVal
 
-        newMaxY =
-            case maxYStuds of
+        newMax =
+            case maxStuds of
                 [] ->
-                    Vec3.getY box.max
+                    maxVal
 
                 bases ->
-                    trimMax (List.foldl max -1.0e9 bases) (Vec3.getY box.max)
-
-        newMinX =
-            case minXStuds of
-                [] ->
-                    Vec3.getX box.min
-
-                bases ->
-                    trimMin (List.foldl min 1.0e9 bases) (Vec3.getX box.min)
-
-        newMaxX =
-            case maxXStuds of
-                [] ->
-                    Vec3.getX box.max
-
-                bases ->
-                    trimMax (List.foldl max -1.0e9 bases) (Vec3.getX box.max)
-
-        newMinZ =
-            case minZStuds of
-                [] ->
-                    Vec3.getZ box.min
-
-                bases ->
-                    trimMin (List.foldl min 1.0e9 bases) (Vec3.getZ box.min)
-
-        newMaxZ =
-            case maxZStuds of
-                [] ->
-                    Vec3.getZ box.max
-
-                bases ->
-                    trimMax (List.foldl max -1.0e9 bases) (Vec3.getZ box.max)
+                    trimMax (List.foldl max -1.0e9 bases) maxVal
     in
-    { min = vec3 newMinX newMinY newMinZ
-    , max = vec3 newMaxX newMaxY newMaxZ
-    }
+    ( newMin, newMax )
 
 
 {-| 3D Separating Axis Theorem (SAT) test between two OBBs with a skin tolerance.
@@ -1889,112 +1865,22 @@ knownCatalogPart name =
 
         "2780" ->
             -- Technic Pin with Friction
-            Just
-                { part = "2780.dat"
-                , connections =
-                    [ { id = 1
-                      , connType = TechnicPinMale { length = 10.0, friction = True }
-                      , localPosition = vec3 0 0 10
-                      , normal = vec3 0 0 1
-                      , tangent = vec3 1 0 0
-                      }
-                    , { id = 2
-                      , connType = TechnicPinMale { length = 10.0, friction = True }
-                      , localPosition = vec3 0 0 -10
-                      , normal = vec3 0 0 -1
-                      , tangent = vec3 1 0 0
-                      }
-                    ]
-                , boundingBoxes =
-                    [ { min = vec3 -5 -5 -10, max = vec3 5 5 10 } ]
-                }
+            Just (makeTechnicPin 10.0 True "2780.dat")
 
         "3673" ->
             -- Technic Pin without Friction (2L)
-            Just
-                { part = "3673.dat"
-                , connections =
-                    [ { id = 1
-                      , connType = TechnicPinMale { length = 10.0, friction = False }
-                      , localPosition = vec3 0 0 10
-                      , normal = vec3 0 0 1
-                      , tangent = vec3 1 0 0
-                      }
-                    , { id = 2
-                      , connType = TechnicPinMale { length = 10.0, friction = False }
-                      , localPosition = vec3 0 0 -10
-                      , normal = vec3 0 0 -1
-                      , tangent = vec3 1 0 0
-                      }
-                    ]
-                , boundingBoxes =
-                    [ { min = vec3 -5 -5 -10, max = vec3 5 5 10 } ]
-                }
+            Just (makeTechnicPin 10.0 False "3673.dat")
 
         "6558" ->
             -- Technic Pin 3L with Friction Ridges
-            Just
-                { part = "6558.dat"
-                , connections =
-                    [ { id = 1
-                      , connType = TechnicPinMale { length = 30.0, friction = True }
-                      , localPosition = vec3 0 0 15
-                      , normal = vec3 0 0 1
-                      , tangent = vec3 1 0 0
-                      }
-                    , { id = 2
-                      , connType = TechnicPinMale { length = 30.0, friction = True }
-                      , localPosition = vec3 0 0 -15
-                      , normal = vec3 0 0 -1
-                      , tangent = vec3 1 0 0
-                      }
-                    ]
-                , boundingBoxes =
-                    [ { min = vec3 -5 -5 -15, max = vec3 5 5 15 } ]
-                }
+            Just (makeTechnicPin 15.0 True "6558.dat")
 
         "32556" ->
             -- Technic Pin 3L without Friction
-            Just
-                { part = "32556.dat"
-                , connections =
-                    [ { id = 1
-                      , connType = TechnicPinMale { length = 30.0, friction = False }
-                      , localPosition = vec3 0 0 15
-                      , normal = vec3 0 0 1
-                      , tangent = vec3 1 0 0
-                      }
-                    , { id = 2
-                      , connType = TechnicPinMale { length = 30.0, friction = False }
-                      , localPosition = vec3 0 0 -15
-                      , normal = vec3 0 0 -1
-                      , tangent = vec3 1 0 0
-                      }
-                    ]
-                , boundingBoxes =
-                    [ { min = vec3 -5 -5 -15, max = vec3 5 5 15 } ]
-                }
+            Just (makeTechnicPin 15.0 False "32556.dat")
 
         "32556a" ->
-            Just
-                { part = "32556a.dat"
-                , connections =
-                    [ { id = 1
-                      , connType = TechnicPinMale { length = 30.0, friction = False }
-                      , localPosition = vec3 0 0 15
-                      , normal = vec3 0 0 1
-                      , tangent = vec3 1 0 0
-                      }
-                    , { id = 2
-                      , connType = TechnicPinMale { length = 30.0, friction = False }
-                      , localPosition = vec3 0 0 -15
-                      , normal = vec3 0 0 -1
-                      , tangent = vec3 1 0 0
-                      }
-                    ]
-                , boundingBoxes =
-                    [ { min = vec3 -5 -5 -15, max = vec3 5 5 15 } ]
-                }
+            Just (makeTechnicPin 15.0 False "32556a.dat")
 
         "43093" ->
             -- Technic Axle 1L with Pin with Friction
@@ -2414,6 +2300,56 @@ makeBracket length partName extent sideStuds =
     }
 
 
+{-| Centered 20 LDU pitch coordinates for `count` studs or modules.
+For count = 1, returns [ 0.0 ].
+For count = 2, returns [ -10.0, 10.0 ].
+-}
+centeredPitch : Int -> List Float
+centeredPitch count =
+    List.map (\i -> -10.0 * toFloat count + 10.0 + toFloat i * 20.0) (List.range 0 (count - 1))
+
+
+{-| Procedurally generate connectivity descriptor for a double-ended Technic pin.
+`len` is the half-extent along Z (10.0 for 2L pins, 15.0 for 3L pins) or pin length (30.0).
+`friction` indicates whether the pin has friction ridges.
+-}
+makeTechnicPin : Float -> Bool -> String -> PartConnectivity
+makeTechnicPin len friction partName =
+    let
+        ( halfLength, connLength ) =
+            if len >= 25.0 then
+                ( 15.0, 30.0 )
+
+            else if len >= 12.0 then
+                ( 15.0, 30.0 )
+
+            else
+                ( 10.0, 10.0 )
+
+        connections =
+            [ { id = 1
+              , connType = TechnicPinMale { length = connLength, friction = friction }
+              , localPosition = vec3 0 0 halfLength
+              , normal = vec3 0 0 1
+              , tangent = vec3 1 0 0
+              }
+            , { id = 2
+              , connType = TechnicPinMale { length = connLength, friction = friction }
+              , localPosition = vec3 0 0 -halfLength
+              , normal = vec3 0 0 -1
+              , tangent = vec3 1 0 0
+              }
+            ]
+
+        bbox =
+            [ { min = vec3 -5 -5 -halfLength, max = vec3 5 5 halfLength } ]
+    in
+    { part = partName
+    , connections = connections
+    , boundingBoxes = bbox
+    }
+
+
 makeBrick : Int -> Int -> Float -> String -> PartConnectivity
 makeBrick length width height partName =
     let
@@ -2424,36 +2360,22 @@ makeBrick length width height partName =
             toFloat width * 10.0
 
         xCoords =
-            List.map (\i -> -halfL + 10.0 + toFloat i * 20.0) (List.range 0 (length - 1))
+            centeredPitch length
 
         zCoords =
-            List.map (\j -> -halfW + 10.0 + toFloat j * 20.0) (List.range 0 (width - 1))
+            centeredPitch width
 
         studPositions =
             List.concatMap (\x -> List.map (\z -> ( x, z )) zCoords) xCoords
 
         studPoints =
             List.indexedMap
-                (\idx ( x, z ) ->
-                    { id = idx + 1
-                    , connType = Stud
-                    , localPosition = vec3 x 0 z
-                    , normal = vec3 0 -1 0
-                    , tangent = vec3 1 0 0
-                    }
-                )
+                (\idx ( x, z ) -> studAt (idx + 1) (vec3 x 0 z))
                 studPositions
 
         antiStudPoints =
             List.indexedMap
-                (\idx ( x, z ) ->
-                    { id = idx + 100
-                    , connType = AntiStud
-                    , localPosition = vec3 x height z
-                    , normal = vec3 0 1 0
-                    , tangent = vec3 1 0 0
-                    }
-                )
+                (\idx ( x, z ) -> antiStudAt (idx + 100) (vec3 x height z))
                 studPositions
 
         allConnections =

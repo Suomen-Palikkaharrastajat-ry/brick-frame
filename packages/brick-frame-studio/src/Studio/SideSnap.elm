@@ -1,4 +1,4 @@
-module Studio.SideSnap exposing (approachMatrix, targetsNearRay)
+module Studio.SideSnap exposing (approachMatrix, solveSideSnap, targetsNearRay)
 
 {-| Side-stud magnetic snapping for SNOT building techniques: detects side connection
 points near the cursor ray and computes approach poses for the snap solver.
@@ -8,6 +8,7 @@ import LDraw.Connectivity as Connectivity
     exposing
         ( ConnectionPoint
         , ConnectionType(..)
+        , SnapCandidate
         , WorldConnectionPoint
         , isCompatible
         )
@@ -95,3 +96,40 @@ approachMatrix leadMatrix draggedPoints target =
 
         [] ->
             Nothing
+
+
+{-| Search side-stud targets near the cursor ray, compute an approach matrix for each,
+and solve for the first valid snap candidate.
+-}
+solveSideSnap :
+    (SnapCandidate -> Bool)
+    -> Float
+    -> Int
+    -> Float
+    -> { origin : Vec3, direction : Vec3 }
+    -> Mat4
+    -> List ConnectionPoint
+    -> List WorldConnectionPoint
+    -> Maybe SnapCandidate
+solveSideSnap isValid maxDist rotationIndex reach ray leadMatrix draggedPoints targets =
+    let
+        sideTargets =
+            targetsNearRay ray reach targets
+
+        tryTarget target =
+            case approachMatrix leadMatrix draggedPoints target of
+                Just approachMat ->
+                    Connectivity.solveSnapCandidates
+                        maxDist
+                        rotationIndex
+                        approachMat
+                        draggedPoints
+                        [ target ]
+                        |> List.filter isValid
+                        |> List.head
+
+                Nothing ->
+                    Nothing
+    in
+    List.filterMap tryTarget sideTargets
+        |> List.head

@@ -2794,32 +2794,19 @@ movePlaneDrag initialDrag grab ( x, y ) model =
                                 16.0
 
                     maybeSideSnap =
-                        case cursorRay of
-                            Just ray ->
-                                let
-                                    sideTargets =
-                                        SideSnap.targetsNearRay ray sideReach targetWorldPoints
-
-                                    tryTarget target =
-                                        case SideSnap.approachMatrix leadP.matrix leadConn.connections target of
-                                            Just approachMat ->
-                                                Connectivity.solveSnapCandidates
-                                                    model.snapDistance
-                                                    model.snapRotationStep
-                                                    approachMat
-                                                    leadConn.connections
-                                                    [ target ]
-                                                    |> List.filter isValidSnap
-                                                    |> List.head
-
-                                            Nothing ->
-                                                Nothing
-                                in
-                                List.filterMap tryTarget sideTargets
-                                    |> List.head
-
-                            Nothing ->
-                                Nothing
+                        cursorRay
+                            |> Maybe.andThen
+                                (\ray ->
+                                    SideSnap.solveSideSnap
+                                        isValidSnap
+                                        model.snapDistance
+                                        model.snapRotationStep
+                                        sideReach
+                                        ray
+                                        leadP.matrix
+                                        leadConn.connections
+                                        targetWorldPoints
+                                )
 
                     maybeSnap =
                         case maybeSideSnap of
