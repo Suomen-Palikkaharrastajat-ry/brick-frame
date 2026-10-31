@@ -16,17 +16,22 @@ module Studio.Core exposing
     , cancelDrag
     , clearSelection
     , clearUnglued
+    , clipboardCount
+    , copySelection
     , currentArcHandles
     , currentHandles
     , deleteSelection
+    , duplicateSelection
     , fineMove
     , fitView
     , freeSpotFor
     , freeSpotForPlacement
     , geometryFlattenFailed
     , geometryFlattened
+    , getClipboard
     , getDocument
     , getPlacements
+    , hasClipboard
     , hasSelection
     , init
     , isDragging
@@ -34,6 +39,7 @@ module Studio.Core exposing
     , lowerSelected
     , partBox
     , partOrder
+    , pasteClipboard
     , previewScene
     , raiseSelected
     , redo
@@ -56,6 +62,7 @@ module Studio.Core exposing
     , setGridStep
     , setHelpVisible
     , setNudgeSteps
+    , setPasteEnabled
     , setPreview
     , setRenderQuality
     , setRotateStep
@@ -282,6 +289,8 @@ type alias Model =
     , gearAlignment : Bool
     , glueEditable : Bool
     , preview : List Health.Fix
+    , clipboard : Maybe { items : List Edit.NewPart, pasteCount : Int }
+    , pasteEnabled : Bool
     }
 
 
@@ -295,6 +304,9 @@ type Msg
     | ClearSelection
     | SelectAll
     | DeleteSelection
+    | DuplicateSelection
+    | CopySelection
+    | PasteClipboard
     | Undo
     | Redo
     | RotateSelection Axis Int
@@ -395,6 +407,8 @@ init config =
             , gearAlignment = False
             , glueEditable = True
             , preview = []
+            , clipboard = Nothing
+            , pasteEnabled = True
             }
 
         ( finalModel, extraCmds, _ ) =
@@ -1058,6 +1072,239 @@ deleteSelection model =
         , Cmd.batch (Cmd.map ViewportMsg viewportCmd :: extraCmds)
         , emittedEvents
         )
+
+
+{-| The sideways step in LDU: 1 LDU in fine mode or when grid step <= 1, else stud pitch (20 LDU).
+-}
+lateralStep : Model -> Float
+lateralStep model =
+    if model.fineMove || model.gridStep <= 1 then
+        1
+
+    else
+        studPitch
+
+
+{-| Query whether the clipboard contains any items.
+-}
+hasClipboard : Model -> Bool
+hasClipboard model =
+    case model.clipboard of
+        Just cb ->
+            not (List.isEmpty cb.items)
+
+        Nothing ->
+            False
+
+
+{-| The number of items currently in the clipboard.
+-}
+clipboardCount : Model -> Int
+clipboardCount model =
+    case model.clipboard of
+        Just cb ->
+            List.length cb.items
+
+        Nothing ->
+            0
+
+
+{-| Retrieve current clipboard state.
+-}
+getClipboard : Model -> Maybe { items : List Edit.NewPart, pasteCount : Int }
+getClipboard model =
+    model.clipboard
+
+
+{-| Enable or disable pasting.
+-}
+setPasteEnabled : Bool -> Model -> Model
+setPasteEnabled enabled model =
+    { model | pasteEnabled = enabled }
+
+
+{-| Copy the current selection to the clipboard.
+-}
+copySelection : Model -> Model
+copySelection model =
+    if isDragging model || Set.isEmpty model.selection then
+        model
+
+    else
+        let
+            selectedPlacements =
+                Document.placements model.document
+                    |> List.filter (\p -> Set.member p.id model.selection)
+
+            newParts =
+                selectedPlacements
+                    |> List.map
+                        (\p ->
+                            { part = p.fileText
+                            , color = p.color
+                            , matrix = p.matrix
+                            }
+                        )
+        in
+        if List.isEmpty newParts then
+            model
+
+        else
+            { model
+                | clipboard =
+                    Just
+                        { items = newParts
+                        , pasteCount = 0
+                        }
+            }
+
+
+{-| Duplicate the current selection, offset by one lateral step along X, and select the copies.
+-}
+duplicateSelection : Model -> ( Model, Cmd Msg, List Event )
+duplicateSelection model =
+    if isDragging model || Set.isEmpty model.selection then
+        ( model, Cmd.none, [] )
+
+    else
+        let
+            step =
+                lateralStep model
+
+            offset =
+                Mat4.makeTranslate3 step 0 0
+
+            selectedPlacements =
+                Document.placements model.document
+                    |> List.filter (\p -> Set.member p.id model.selection)
+
+            newParts =
+                selectedPlacements
+                    |> List.map
+                        (\p ->
+                            { part = p.fileText
+                            , color = p.color
+                            , matrix = Mat4.mul offset p.matrix
+                            }
+                        )
+        in
+        if List.isEmpty newParts then
+            ( model, Cmd.none, [] )
+
+        else
+            let
+                ( newDoc, newHistory ) =
+                    recordEdit (Add newParts) model
+
+                newIds =
+                    List.range model.document.nextId (model.document.nextId + List.length newParts - 1)
+
+                newSelection =
+                    Set.fromList newIds
+
+                ( nextViewport, viewportCmd, events ) =
+                    Viewport.applyDocument newDoc model.viewport
+
+                nextModel =
+                    { model
+                        | viewport = nextViewport
+                        , document = Document.clearTouched newDoc
+                        , history = newHistory
+                        , selection = newSelection
+                        , drag = Nothing
+                        , activeSnap = Nothing
+                        , collidingPlacements = Set.empty
+                    }
+
+                ( finalModel, extraCmds, emittedEvents ) =
+                    handleViewportEvents events
+                        ( nextModel
+                        , []
+                        , [ DocumentChanged nextModel.document
+                          , SelectionChanged newSelection
+                          ]
+                        )
+            in
+            ( syncTouchShiftMode finalModel
+            , Cmd.batch (Cmd.map ViewportMsg viewportCmd :: extraCmds)
+            , emittedEvents
+            )
+
+
+{-| Paste the clipboard contents, offset by one lateral step for each paste, and select the newly added parts.
+-}
+pasteClipboard : Model -> ( Model, Cmd Msg, List Event )
+pasteClipboard model =
+    if not model.pasteEnabled || isDragging model then
+        ( model, Cmd.none, [] )
+
+    else
+        case model.clipboard of
+            Nothing ->
+                ( model, Cmd.none, [] )
+
+            Just cb ->
+                if List.isEmpty cb.items then
+                    ( model, Cmd.none, [] )
+
+                else
+                    let
+                        step =
+                            lateralStep model
+
+                        offsetAmount =
+                            toFloat (cb.pasteCount + 1) * step
+
+                        offset =
+                            Mat4.makeTranslate3 offsetAmount 0 0
+
+                        newParts =
+                            cb.items
+                                |> List.map
+                                    (\item ->
+                                        { part = item.part
+                                        , color = item.color
+                                        , matrix = Mat4.mul offset item.matrix
+                                        }
+                                    )
+
+                        ( newDoc, newHistory ) =
+                            recordEdit (Add newParts) model
+
+                        newIds =
+                            List.range model.document.nextId (model.document.nextId + List.length newParts - 1)
+
+                        newSelection =
+                            Set.fromList newIds
+
+                        ( nextViewport, viewportCmd, events ) =
+                            Viewport.applyDocument newDoc model.viewport
+
+                        nextModel =
+                            { model
+                                | viewport = nextViewport
+                                , document = Document.clearTouched newDoc
+                                , history = newHistory
+                                , selection = newSelection
+                                , clipboard = Just { cb | pasteCount = cb.pasteCount + 1 }
+                                , drag = Nothing
+                                , activeSnap = Nothing
+                                , collidingPlacements = Set.empty
+                            }
+
+                        ( finalModel, extraCmds, emittedEvents ) =
+                            handleViewportEvents events
+                                ( nextModel
+                                , []
+                                , [ DocumentChanged nextModel.document
+                                  , SelectionChanged newSelection
+                                  ]
+                                )
+                    in
+                    ( syncTouchShiftMode finalModel
+                    , Cmd.batch (Cmd.map ViewportMsg viewportCmd :: extraCmds)
+                    , emittedEvents
+                    )
 
 
 {-| Undo the last edit.
@@ -1750,6 +1997,15 @@ updateInner msg model =
         DeleteSelection ->
             deleteSelection model
 
+        DuplicateSelection ->
+            duplicateSelection model
+
+        CopySelection ->
+            ( copySelection model, Cmd.none, [] )
+
+        PasteClipboard ->
+            pasteClipboard model
+
         Undo ->
             undo model
 
@@ -1914,6 +2170,15 @@ handleCanvasKey keyEvent model =
                     selectAll updatedModel
             in
             ( allModel, Cmd.none, [ SelectionChanged allModel.selection ] )
+
+        else if key == "c" then
+            ( copySelection updatedModel, Cmd.none, [] )
+
+        else if key == "v" then
+            pasteClipboard updatedModel
+
+        else if key == "d" then
+            duplicateSelection updatedModel
 
         else
             passToViewport keyEvent updatedModel

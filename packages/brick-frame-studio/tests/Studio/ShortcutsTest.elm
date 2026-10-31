@@ -116,6 +116,24 @@ suite =
                 \_ ->
                     Expect.equal (Just CloseMenu)
                         (Shortcuts.actionFor { selected | helpVisible = True, menuOpen = True } (press "Escape"))
+            , test "Ctrl C maps to CopySelection and Ctrl V maps to PasteClipboard" <|
+                \_ ->
+                    Expect.equal [ Just CopySelection, Just PasteClipboard ]
+                        [ Shortcuts.actionFor selected (press "c" |> withCtrl)
+                        , Shortcuts.actionFor selected (press "v" |> withCtrl)
+                        ]
+            , test "Cmd C and Cmd V map to CopySelection and PasteClipboard" <|
+                \_ ->
+                    Expect.equal [ Just CopySelection, Just PasteClipboard ]
+                        [ Shortcuts.actionFor selected (press "c" |> withMeta)
+                        , Shortcuts.actionFor selected (press "v" |> withMeta)
+                        ]
+            , test "Ctrl C and Ctrl V are ignored in a text field" <|
+                \_ ->
+                    Expect.equal [ Nothing, Nothing ]
+                        [ Shortcuts.actionFor selected (pressOn "INPUT" "c" |> withCtrl)
+                        , Shortcuts.actionFor selected (pressOn "INPUT" "v" |> withCtrl)
+                        ]
             ]
         , describe "turnRotation"
             [ test "a plain turn uses the turn step about the vertical axis" <|
@@ -142,6 +160,18 @@ suite =
                     in
                     Expect.equal True
                         (List.all (\k -> List.member k keys) [ "W A S D", "← →", "↑ ↓", "Esc", "T or M" ])
+            , test "helpRows includes Copy and Paste" <|
+                \_ ->
+                    let
+                        editRows =
+                            Shortcuts.helpRows
+                                |> List.filter (\( group, _ ) -> group == "Edit")
+                                |> List.concatMap Tuple.second
+                    in
+                    Expect.equal True
+                        (List.member ( "Ctrl C", "Copy" ) editRows
+                            && List.member ( "Ctrl V", "Paste" ) editRows
+                        )
             ]
         ]
 
@@ -193,6 +223,11 @@ withShift event =
 withCtrl : KeyEvent -> KeyEvent
 withCtrl event =
     { event | ctrl = True }
+
+
+withMeta : KeyEvent -> KeyEvent
+withMeta event =
+    { event | meta = True }
 
 
 withAlt : KeyEvent -> KeyEvent

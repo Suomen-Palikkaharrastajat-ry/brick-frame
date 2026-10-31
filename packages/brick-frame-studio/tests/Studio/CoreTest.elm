@@ -22,6 +22,7 @@ import Studio.DragPlane as DragPlane
 import Studio.Edit as Edit exposing (Axis(..))
 import Studio.Gizmo as Gizmo exposing (DragHandle(..))
 import Studio.Shortcuts as StudioShortcuts exposing (Tool(..))
+import Studio.Transform as Transform
 import Test exposing (Test, describe, test)
 import Time
 import Viewport
@@ -404,6 +405,7 @@ suite =
         , restingSuite
         , latticeSuite
         , magneticSnapCollisionSuite
+        , copyPasteSuite
         ]
 
 
@@ -2110,4 +2112,303 @@ magneticSnapCollisionSuite =
                             |> (\( m, _, _ ) -> m)
                 in
                 Expect.equal (Just (vec3 0 -32 0)) (firstPosition moved)
+        ]
+
+
+{-| Tests for copy, paste, duplicate, text-entry guard, and disabled paste.
+-}
+copyPasteSuite : Test
+copyPasteSuite =
+    describe "Copy and Paste"
+        [ test "copySelection stores selected part and pasteClipboard creates offset copy" <|
+            \_ ->
+                let
+                    config =
+                        { ldrawBase = "/ldraw"
+                        , ldrawFallbackBase = ""
+                        , defaultModelUrl = ""
+                        , initialHash = ""
+                        , supportsPointerEvents = True
+                        , document = Document.empty
+                        , gridStep = Just 20
+                        , rotateStep = Just 90
+                        , snapDistance = Just 24.0
+                        , collisionMode = Nothing
+                        }
+
+                    ( model0, _ ) =
+                        Core.init config
+
+                    ( model1, _, _ ) =
+                        Core.addPart "3001.dat" 14 (vec3 0 0 0) model0
+
+                    copied =
+                        Core.copySelection model1
+
+                    ( pasted, _, _ ) =
+                        Core.pasteClipboard copied
+
+                    placements =
+                        Core.getPlacements pasted
+
+                    firstPos =
+                        List.head placements |> Maybe.map (.matrix >> Transform.position)
+
+                    secondPos =
+                        List.drop 1 placements |> List.head |> Maybe.map (.matrix >> Transform.position)
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Core.hasClipboard copied) True
+                    , \_ -> Expect.equal (Core.clipboardCount copied) 1
+                    , \_ -> Expect.equal (List.length placements) 2
+                    , \_ -> Expect.equal (Core.selectionCount pasted) 1
+                    , \_ ->
+                        case ( firstPos, secondPos ) of
+                            ( Just p1, Just p2 ) ->
+                                Expect.within (Expect.Absolute 0.01) 20.0 (Vec3.getX p2 - Vec3.getX p1)
+
+                            _ ->
+                                Expect.fail "Expected two placements"
+                    ]
+                    ()
+        , test "multi-part paste with sequential offsets" <|
+            \_ ->
+                let
+                    config =
+                        { ldrawBase = "/ldraw"
+                        , ldrawFallbackBase = ""
+                        , defaultModelUrl = ""
+                        , initialHash = ""
+                        , supportsPointerEvents = True
+                        , document = Document.empty
+                        , gridStep = Just 20
+                        , rotateStep = Just 90
+                        , snapDistance = Just 24.0
+                        , collisionMode = Nothing
+                        }
+
+                    ( model0, _ ) =
+                        Core.init config
+
+                    ( model1, _, _ ) =
+                        Core.addPart "3001.dat" 14 (vec3 0 0 0) model0
+
+                    ( model2, _, _ ) =
+                        Core.addPart "3001.dat" 14 (vec3 100 0 0) model1
+
+                    selectedBoth =
+                        Core.selectAll model2
+
+                    copied =
+                        Core.copySelection selectedBoth
+
+                    ( paste1, _, _ ) =
+                        Core.pasteClipboard copied
+
+                    ( paste2, _, _ ) =
+                        Core.pasteClipboard paste1
+
+                    p2Placements =
+                        Core.getPlacements paste2
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Core.clipboardCount copied) 2
+                    , \_ -> Expect.equal (List.length (Core.getPlacements paste1)) 4
+                    , \_ -> Expect.equal (List.length p2Placements) 6
+                    , \_ -> Expect.equal (Core.selectionCount paste2) 2
+                    ]
+                    ()
+        , test "single-step undo removes all pasted parts from a multi-part paste" <|
+            \_ ->
+                let
+                    config =
+                        { ldrawBase = "/ldraw"
+                        , ldrawFallbackBase = ""
+                        , defaultModelUrl = ""
+                        , initialHash = ""
+                        , supportsPointerEvents = True
+                        , document = Document.empty
+                        , gridStep = Just 20
+                        , rotateStep = Just 90
+                        , snapDistance = Just 24.0
+                        , collisionMode = Nothing
+                        }
+
+                    ( model0, _ ) =
+                        Core.init config
+
+                    ( model1, _, _ ) =
+                        Core.addPart "3001.dat" 14 (vec3 0 0 0) model0
+
+                    ( model2, _, _ ) =
+                        Core.addPart "3001.dat" 14 (vec3 100 0 0) model1
+
+                    selectedBoth =
+                        Core.selectAll model2
+
+                    copied =
+                        Core.copySelection selectedBoth
+
+                    ( pasted, _, _ ) =
+                        Core.pasteClipboard copied
+
+                    ( undone, _, _ ) =
+                        Core.undo pasted
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (List.length (Core.getPlacements pasted)) 4
+                    , \_ -> Expect.equal (List.length (Core.getPlacements undone)) 2
+                    ]
+                    ()
+        , test "Ctrl C and Ctrl V are ignored when typing in an input" <|
+            \_ ->
+                let
+                    config =
+                        { ldrawBase = "/ldraw"
+                        , ldrawFallbackBase = ""
+                        , defaultModelUrl = ""
+                        , initialHash = ""
+                        , supportsPointerEvents = True
+                        , document = Document.empty
+                        , gridStep = Just 20
+                        , rotateStep = Just 90
+                        , snapDistance = Just 24.0
+                        , collisionMode = Nothing
+                        }
+
+                    ( model0, _ ) =
+                        Core.init config
+
+                    ( model1, _, _ ) =
+                        Core.addPart "3001.dat" 14 (vec3 0 0 0) model0
+
+                    copyKey =
+                        let
+                            k =
+                                pressOn "INPUT" "c"
+                        in
+                        { k | ctrl = True }
+
+                    ( afterCopy, _, _ ) =
+                        Core.update (Core.ViewportMsg (Viewport.KeyPressed copyKey)) model1
+
+                    pasteKey =
+                        let
+                            k =
+                                pressOn "INPUT" "v"
+                        in
+                        { k | ctrl = True }
+
+                    ( afterPaste, _, _ ) =
+                        Core.update (Core.ViewportMsg (Viewport.KeyPressed pasteKey)) afterCopy
+                in
+                Expect.all
+                    [ \m -> Expect.equal (Core.hasClipboard m) False
+                    , \m -> Expect.equal (List.length (Core.getPlacements m)) 1
+                    ]
+                    afterPaste
+        , test "disabled paste prevents pasteClipboard and Ctrl V from adding parts" <|
+            \_ ->
+                let
+                    config =
+                        { ldrawBase = "/ldraw"
+                        , ldrawFallbackBase = ""
+                        , defaultModelUrl = ""
+                        , initialHash = ""
+                        , supportsPointerEvents = True
+                        , document = Document.empty
+                        , gridStep = Just 20
+                        , rotateStep = Just 90
+                        , snapDistance = Just 24.0
+                        , collisionMode = Nothing
+                        }
+
+                    ( model0, _ ) =
+                        Core.init config
+
+                    ( model1, _, _ ) =
+                        Core.addPart "3001.dat" 14 (vec3 0 0 0) model0
+
+                    copied =
+                        Core.copySelection model1
+
+                    disabledModel =
+                        Core.setPasteEnabled False copied
+
+                    ( afterPaste, _, _ ) =
+                        Core.pasteClipboard disabledModel
+
+                    pasteKey =
+                        let
+                            k =
+                                pressOn "CANVAS" "v"
+                        in
+                        { k | ctrl = True }
+
+                    ( afterKeyPaste, _, _ ) =
+                        Core.update (Core.ViewportMsg (Viewport.KeyPressed pasteKey)) disabledModel
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (List.length (Core.getPlacements afterPaste)) 1
+                    , \_ -> Expect.equal (List.length (Core.getPlacements afterKeyPaste)) 1
+                    ]
+                    ()
+        , test "canvas shortcuts Ctrl C, Ctrl V, Ctrl D work on canvas" <|
+            \_ ->
+                let
+                    config =
+                        { ldrawBase = "/ldraw"
+                        , ldrawFallbackBase = ""
+                        , defaultModelUrl = ""
+                        , initialHash = ""
+                        , supportsPointerEvents = True
+                        , document = Document.empty
+                        , gridStep = Just 20
+                        , rotateStep = Just 90
+                        , snapDistance = Just 24.0
+                        , collisionMode = Nothing
+                        }
+
+                    ( model0, _ ) =
+                        Core.init config
+
+                    ( model1, _, _ ) =
+                        Core.addPart "3001.dat" 14 (vec3 0 0 0) model0
+
+                    copyKey =
+                        let
+                            k =
+                                pressOn "CANVAS" "c"
+                        in
+                        { k | ctrl = True }
+
+                    pasteKey =
+                        let
+                            k =
+                                pressOn "CANVAS" "v"
+                        in
+                        { k | ctrl = True }
+
+                    dupKey =
+                        let
+                            k =
+                                pressOn "CANVAS" "d"
+                        in
+                        { k | ctrl = True }
+
+                    ( afterCopy, _, _ ) =
+                        Core.update (Core.ViewportMsg (Viewport.KeyPressed copyKey)) model1
+
+                    ( afterPaste, _, _ ) =
+                        Core.update (Core.ViewportMsg (Viewport.KeyPressed pasteKey)) afterCopy
+
+                    ( afterDup, _, _ ) =
+                        Core.update (Core.ViewportMsg (Viewport.KeyPressed dupKey)) afterPaste
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (Core.hasClipboard afterCopy) True
+                    , \_ -> Expect.equal (List.length (Core.getPlacements afterPaste)) 2
+                    , \_ -> Expect.equal (List.length (Core.getPlacements afterDup)) 3
+                    ]
+                    ()
         ]

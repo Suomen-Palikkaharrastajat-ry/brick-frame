@@ -782,6 +782,39 @@ sharingAndToastTests =
 
                     Nothing ->
                         Expect.fail "Failed to decode shareHash payload"
+        , test "fixed model mode disables paste" <|
+            \_ ->
+                let
+                    ( fixedModel, _ ) =
+                        init { testFlags | initialHash = "#model=&parts=" }
+                in
+                Expect.equal False fixedModel.studio.pasteEnabled
+        , test "Ctrl+C and Ctrl+V canvas shortcuts seamlessly reach Core" <|
+            \_ ->
+                let
+                    ( model0, _ ) =
+                        init testFlags
+
+                    ( addedModel, _ ) =
+                        addFirst model0
+
+                    copyEvent =
+                        { key = "c", shift = False, ctrl = True, meta = False, alt = False, repeat = False, targetTag = "CANVAS", targetEditable = False, targetRole = "" }
+
+                    pasteEvent =
+                        { key = "v", shift = False, ctrl = True, meta = False, alt = False, repeat = False, targetTag = "CANVAS", targetEditable = False, targetRole = "" }
+
+                    ( copiedModel, _ ) =
+                        update (StudioMsg (Core.ViewportMsg (Viewport.KeyPressed copyEvent))) addedModel
+
+                    ( pastedModel, _ ) =
+                        update (StudioMsg (Core.ViewportMsg (Viewport.KeyPressed pasteEvent))) copiedModel
+                in
+                Expect.all
+                    [ \_ -> Expect.equal True (Core.hasClipboard copiedModel.studio)
+                    , \_ -> Expect.equal 2 (List.length (Core.getPlacements pastedModel.studio))
+                    ]
+                    ()
         ]
 
 

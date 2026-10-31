@@ -44,6 +44,8 @@ type Action
     | Redo
     | DeleteSelection
     | DuplicateSelection
+    | CopySelection
+    | PasteClipboard
     | SelectAll
     | ClearSelection
     | GroupSubmodel
@@ -152,6 +154,12 @@ actionFor context event =
 
             "d" ->
                 Just DuplicateSelection
+
+            "c" ->
+                Just CopySelection
+
+            "v" ->
+                Just PasteClipboard
 
             "a" ->
                 Just SelectAll
@@ -442,6 +450,8 @@ helpRows =
         , ( "↑ ↓", "Tip forward / back (Shift: 45°)" )
         , ( "X Y Z", "Turn the selection (Shift: the other way)" )
         , ( "Delete", "Remove the selection" )
+        , ( "Ctrl C", "Copy" )
+        , ( "Ctrl V", "Paste" )
         , ( "Ctrl D", "Duplicate" )
         , ( "Ctrl A", "Select all" )
         , ( "Esc", "Cancel a drag, or clear selection" )

@@ -205,6 +205,7 @@ type alias Model =
     , globeDrag : Maybe CameraGlobe.Drag
     , cameraSheet : Bool
     , fineMove : Bool
+    , clipboard : Maybe { items : List Edit.NewPart, pasteCount : Int }
     }
 
 
@@ -250,6 +251,8 @@ type Msg
     | Redo
     | DeleteSelection
     | DuplicateSelection
+    | CopySelection
+    | PasteClipboard
     | SelectAll
     | ClearSelection
     | RotateSelection Axis Int
@@ -418,6 +421,7 @@ init flags =
             , globeDrag = Nothing
             , cameraSheet = False
             , fineMove = False
+            , clipboard = Nothing
             }
 
         ( opened, openCmd ) =
@@ -637,6 +641,16 @@ announce msg before after =
 
         DuplicateSelection ->
             ifTrue changed ("Duplicated " ++ count (Set.size before.selection))
+
+        CopySelection ->
+            if Set.isEmpty before.selection then
+                ""
+
+            else
+                "Copied " ++ count (Set.size before.selection)
+
+        PasteClipboard ->
+            ifTrue changed ("Pasted " ++ count (Set.size after.selection))
 
         NudgeSelection _ ->
             ifTrue changed ("Moved " ++ count (Set.size after.selection))
@@ -962,6 +976,75 @@ updatePage msg model =
 
         DuplicateSelection ->
             whenSelected duplicate model
+
+        CopySelection ->
+            if model.drag /= Nothing || Set.isEmpty model.selection then
+                ( model, Cmd.none )
+
+            else
+                let
+                    parts =
+                        model.selection
+                            |> Set.toList
+                            |> List.filterMap (\id -> Document.getPlacement id model.document)
+                            |> List.map
+                                (\p ->
+                                    { part = p.fileText
+                                    , color = p.color
+                                    , matrix = p.matrix
+                                    }
+                                )
+                in
+                if List.isEmpty parts then
+                    ( model, Cmd.none )
+
+                else
+                    ( { model | clipboard = Just { items = parts, pasteCount = 0 } }, Cmd.none )
+
+        PasteClipboard ->
+            if model.drag /= Nothing then
+                ( model, Cmd.none )
+
+            else
+                case model.clipboard of
+                    Nothing ->
+                        ( model, Cmd.none )
+
+                    Just cb ->
+                        if List.isEmpty cb.items then
+                            ( model, Cmd.none )
+
+                        else
+                            let
+                                offsetAmount =
+                                    toFloat (cb.pasteCount + 1) * lateralStep model
+
+                                offset =
+                                    Mat4.makeTranslate3 offsetAmount 0 0
+
+                                parts =
+                                    cb.items
+                                        |> List.map
+                                            (\p ->
+                                                { part = p.part
+                                                , color = p.color
+                                                , matrix = Mat4.mul offset p.matrix
+                                                }
+                                            )
+
+                                ( document, history ) =
+                                    recordAligned model.viewport.partCache (AddIn model.context.activeSubmodel parts) model.document model.history
+
+                                newIds =
+                                    List.range model.document.nextId (model.document.nextId + List.length parts - 1)
+                            in
+                            syncDocument
+                                { model
+                                    | document = document
+                                    , history = history
+                                    , selection = Set.fromList newIds
+                                    , clipboard = Just { cb | pasteCount = cb.pasteCount + 1 }
+                                }
 
         SelectAll ->
             if model.drag /= Nothing then
@@ -4817,6 +4900,12 @@ msgForStudioAction action =
 
         StudioShortcuts.DuplicateSelection ->
             DuplicateSelection
+
+        StudioShortcuts.CopySelection ->
+            CopySelection
+
+        StudioShortcuts.PasteClipboard ->
+            PasteClipboard
 
         StudioShortcuts.SelectAll ->
             SelectAll

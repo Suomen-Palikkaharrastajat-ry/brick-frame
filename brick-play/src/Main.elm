@@ -401,6 +401,7 @@ init flags =
                         >> Core.setTwoFingerOrbits True
                         -- Glue locks parts in a puzzle; free building may glue and unglue.
                         >> Core.setGlueEditable free
+                        >> Core.setPasteEnabled (free || not (List.isEmpty inventory))
                         >> Step.apply Step.Stud
                     )
 
@@ -3335,6 +3336,9 @@ helpRows model =
         , ( "Delete", "Remove the selected part" )
         , ( "Ctrl + Z", "Undo" )
         , ( "Ctrl + Shift + Z  Ctrl + Y", "Redo" )
+        , ( "Ctrl + C", "Copy" )
+        , ( "Ctrl + V", "Paste" )
+        , ( "Ctrl + D", "Duplicate" )
         , ( "Ctrl + A", "Select all" )
         , ( "Ctrl + click  Shift + click", "Add to or remove from the selection" )
         , ( "Tidy up (pill, top left)", "Shown when parts sit off the studs or overlap. Tidy up previews the moves as ghosts; Apply makes them one undo step, Cancel or Esc changes nothing" )
