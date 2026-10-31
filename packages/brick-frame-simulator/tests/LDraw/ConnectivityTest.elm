@@ -18,6 +18,7 @@ import LDraw.Connectivity as Connectivity
         , isCompatible
         , isSnapColliding
         , isStudded
+        , isUpright
         , knownCatalogPart
         , makeAxle
         , makeGear
@@ -164,6 +165,31 @@ extractionTests =
 
                     _ ->
                         Expect.fail ("Expected 1 connection point, got " ++ String.fromInt (List.length points))
+        , test "extracts stud4od.dat as AntiStud at its open end with normal (0, 1, 0)" <|
+            \_ ->
+                let
+                    lines =
+                        [ SubFileRef
+                            { color = 16
+                            , transform = Mat4.mul (Mat4.makeTranslate3 0 20 0) (Mat4.makeScale3 1 -1 1)
+                            , file = "stud4od.dat"
+                            }
+                        ]
+
+                    points =
+                        extractConnections lines
+                in
+                case points of
+                    [ p ] ->
+                        Expect.all
+                            [ \pt -> Expect.equal AntiStud pt.connType
+                            , \pt -> Expect.equal 24 (Vec3.getY pt.localPosition)
+                            , \pt -> Expect.equal 1 (Vec3.getY pt.normal)
+                            ]
+                            p
+
+                    _ ->
+                        Expect.fail ("Expected 1 connection point, got " ++ String.fromInt (List.length points))
         , test "knownCatalogPart builds Brick 2x4 with 8 studs and 8 anti-studs" <|
             \_ ->
                 case knownCatalogPart "3001.dat" of
@@ -221,6 +247,108 @@ extractionTests =
 
                     Nothing ->
                         Expect.fail "Catalog part 3034.dat was not found"
+        , test "knownCatalogPart builds Plate 2x6 (3795) with 12 studs and 12 anti-studs" <|
+            \_ ->
+                case knownCatalogPart "3795.dat" of
+                    Just conn ->
+                        let
+                            studs =
+                                List.filter (\c -> c.connType == Stud) conn.connections
+
+                            antiStuds =
+                                List.filter (\c -> c.connType == AntiStud) conn.connections
+                        in
+                        Expect.all
+                            [ \_ -> Expect.equal 12 (List.length studs)
+                            , \_ -> Expect.equal 12 (List.length antiStuds)
+                            , \_ ->
+                                case conn.boundingBoxes of
+                                    [ box ] ->
+                                        Expect.all
+                                            [ \_ -> Expect.equal (vec3 -60 -4 -20) box.min
+                                            , \_ -> Expect.equal (vec3 60 8 20) box.max
+                                            ]
+                                            ()
+
+                                    _ ->
+                                        Expect.fail "Expected 1 bounding box for Plate 2x6"
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "Catalog part 3795.dat was not found"
+        , test "knownCatalogPart builds Plate 4x4 (3031) with 16 studs and 16 anti-studs" <|
+            \_ ->
+                case knownCatalogPart "3031.dat" of
+                    Just conn ->
+                        let
+                            studs =
+                                List.filter (\c -> c.connType == Stud) conn.connections
+
+                            antiStuds =
+                                List.filter (\c -> c.connType == AntiStud) conn.connections
+                        in
+                        Expect.all
+                            [ \_ -> Expect.equal 16 (List.length studs)
+                            , \_ -> Expect.equal 16 (List.length antiStuds)
+                            , \_ ->
+                                case conn.boundingBoxes of
+                                    [ box ] ->
+                                        Expect.all
+                                            [ \_ -> Expect.equal (vec3 -40 -4 -40) box.min
+                                            , \_ -> Expect.equal (vec3 40 8 40) box.max
+                                            ]
+                                            ()
+
+                                    _ ->
+                                        Expect.fail "Expected 1 bounding box for Plate 4x4"
+                            ]
+                            ()
+
+                    Nothing ->
+                        Expect.fail "Catalog part 3031.dat was not found"
+        , test "knownCatalogPart builds round plates (4073, 6141, 85861) and round brick (3062b)" <|
+            \_ ->
+                let
+                    verifyRoundPart partName expectedHeight =
+                        case knownCatalogPart partName of
+                            Just conn ->
+                                let
+                                    studs =
+                                        List.filter (\c -> c.connType == Stud) conn.connections
+
+                                    antiStuds =
+                                        List.filter (\c -> c.connType == AntiStud) conn.connections
+                                in
+                                Expect.all
+                                    [ \_ -> Expect.equal 1 (List.length studs)
+                                    , \_ -> Expect.equal 1 (List.length antiStuds)
+                                    , \_ ->
+                                        case conn.boundingBoxes of
+                                            [ box ] ->
+                                                Expect.all
+                                                    [ \_ -> Expect.equal (vec3 -10 -4 -10) box.min
+                                                    , \_ -> Expect.equal (vec3 10 expectedHeight 10) box.max
+                                                    ]
+                                                    ()
+
+                                            _ ->
+                                                Expect.fail ("Expected 1 bounding box for " ++ partName)
+                                    ]
+                                    ()
+
+                            Nothing ->
+                                Expect.fail ("Catalog part " ++ partName ++ " was not found")
+                in
+                Expect.all
+                    [ \_ -> verifyRoundPart "4073.dat" 8
+                    , \_ -> verifyRoundPart "6141.dat" 8
+                    , \_ -> verifyRoundPart "85861.dat" 8
+                    , \_ -> verifyRoundPart "3062.dat" 24
+                    , \_ -> verifyRoundPart "3062a.dat" 24
+                    , \_ -> verifyRoundPart "3062b.dat" 24
+                    ]
+                    ()
         , test "makeAxle produces connection points at stud intervals and correct bounds" <|
             \_ ->
                 let
@@ -438,6 +566,18 @@ studLatticeTests =
 
         turnedY =
             Mat4.makeRotate (pi / 2) (vec3 0 1 0)
+
+        rot0 =
+            Mat4.identity
+
+        rot90 =
+            turnedY
+
+        rot180 =
+            Mat4.makeRotate pi (vec3 0 1 0)
+
+        rot270 =
+            Mat4.makeRotate (3 * pi / 2) (vec3 0 1 0)
     in
     describe "stud offset and the 60592 window"
         [ test "a 1x1 (odd on both axes) is offset 10 on both" <|
@@ -490,6 +630,73 @@ studLatticeTests =
 
                     Nothing ->
                         Expect.fail "Catalog part 60592.dat was not found"
+        , test "studOffset across rotations (0°, 90°, 180°, 270°) for 1x1, 2x4, 1x2, 2x3, 2x6, 4x4" <|
+            \_ ->
+                Expect.all
+                    [ -- 1x1 (odd on both axes): { x = 10, z = 10 } at all 4 rotations
+                      \_ -> Expect.equal { x = 10, z = 10 } (offsetOf "3005.dat" rot0)
+                    , \_ -> Expect.equal { x = 10, z = 10 } (offsetOf "3005.dat" rot90)
+                    , \_ -> Expect.equal { x = 10, z = 10 } (offsetOf "3005.dat" rot180)
+                    , \_ -> Expect.equal { x = 10, z = 10 } (offsetOf "3005.dat" rot270)
+                    , -- 2x4 (even on both axes): { x = 0, z = 0 } at all 4 rotations
+                      \_ -> Expect.equal { x = 0, z = 0 } (offsetOf "3001.dat" rot0)
+                    , \_ -> Expect.equal { x = 0, z = 0 } (offsetOf "3001.dat" rot90)
+                    , \_ -> Expect.equal { x = 0, z = 0 } (offsetOf "3001.dat" rot180)
+                    , \_ -> Expect.equal { x = 0, z = 0 } (offsetOf "3001.dat" rot270)
+                    , -- 1x2 (even X, odd Z): swaps offset when turned 90° or 270°
+                      \_ -> Expect.equal { x = 0, z = 10 } (offsetOf "3004.dat" rot0)
+                    , \_ -> Expect.equal { x = 10, z = 0 } (offsetOf "3004.dat" rot90)
+                    , \_ -> Expect.equal { x = 0, z = 10 } (offsetOf "3004.dat" rot180)
+                    , \_ -> Expect.equal { x = 10, z = 0 } (offsetOf "3004.dat" rot270)
+                    , -- 2x3 (odd X, even Z): swaps offset when turned 90° or 270°
+                      \_ -> Expect.equal { x = 10, z = 0 } (offsetOf "3002.dat" rot0)
+                    , \_ -> Expect.equal { x = 0, z = 10 } (offsetOf "3002.dat" rot90)
+                    , \_ -> Expect.equal { x = 10, z = 0 } (offsetOf "3002.dat" rot180)
+                    , \_ -> Expect.equal { x = 0, z = 10 } (offsetOf "3002.dat" rot270)
+                    , -- 2x6 (even on both axes): { x = 0, z = 0 } at all 4 rotations
+                      \_ -> Expect.equal { x = 0, z = 0 } (offsetOf "3795.dat" rot0)
+                    , \_ -> Expect.equal { x = 0, z = 0 } (offsetOf "3795.dat" rot90)
+                    , \_ -> Expect.equal { x = 0, z = 0 } (offsetOf "3795.dat" rot180)
+                    , \_ -> Expect.equal { x = 0, z = 0 } (offsetOf "3795.dat" rot270)
+                    , -- 4x4 (even on both axes): { x = 0, z = 0 } at all 4 rotations
+                      \_ -> Expect.equal { x = 0, z = 0 } (offsetOf "3031.dat" rot0)
+                    , \_ -> Expect.equal { x = 0, z = 0 } (offsetOf "3031.dat" rot90)
+                    , \_ -> Expect.equal { x = 0, z = 0 } (offsetOf "3031.dat" rot180)
+                    , \_ -> Expect.equal { x = 0, z = 0 } (offsetOf "3031.dat" rot270)
+                    ]
+                    ()
+        , test "isUpright reports True for yaw rotations and False for tipped/inverted parts" <|
+            \_ ->
+                let
+                    conn2x4 =
+                        Connectivity.extractPartConnectivity "3001.dat" noLines
+
+                    conn1x1 =
+                        Connectivity.extractPartConnectivity "3024.dat" noLines
+
+                    pitch90 =
+                        Mat4.makeRotate (pi / 2) (vec3 1 0 0)
+
+                    roll90 =
+                        Mat4.makeRotate (pi / 2) (vec3 0 0 1)
+
+                    upsideDown =
+                        Mat4.makeRotate pi (vec3 1 0 0)
+                in
+                Expect.all
+                    [ \_ -> Expect.equal True (isUpright conn2x4 rot0)
+                    , \_ -> Expect.equal True (isUpright conn2x4 rot90)
+                    , \_ -> Expect.equal True (isUpright conn2x4 rot180)
+                    , \_ -> Expect.equal True (isUpright conn2x4 rot270)
+                    , \_ -> Expect.equal True (isUpright conn1x1 rot0)
+                    , \_ -> Expect.equal True (isUpright conn1x1 rot90)
+                    , \_ -> Expect.equal False (isUpright conn2x4 pitch90)
+                    , \_ -> Expect.equal False (isUpright conn2x4 roll90)
+                    , \_ -> Expect.equal False (isUpright conn2x4 upsideDown)
+                    , \_ -> Expect.equal False (isUpright conn1x1 pitch90)
+                    , \_ -> Expect.equal False (isUpright conn1x1 upsideDown)
+                    ]
+                    ()
         ]
 
 
@@ -886,6 +1093,94 @@ collisionSATTests =
                         toOBB boxB matB
                 in
                 Expect.equal False (testOBB 0.5 obbA obbB)
+        , test "vertical stacking plate-on-plate (3024 on 3022) with effectiveEnvelope does not collide" <|
+            \_ ->
+                case ( knownCatalogPart "3022.dat", knownCatalogPart "3024.dat" ) of
+                    ( Just conn3022, Just conn3024 ) ->
+                        case ( conn3022.boundingBoxes, conn3024.boundingBoxes ) of
+                            ( [ box3022 ], [ box3024 ] ) ->
+                                let
+                                    env3022 =
+                                        effectiveEnvelope box3022 conn3022.connections
+
+                                    env3024 =
+                                        effectiveEnvelope box3024 conn3024.connections
+
+                                    -- Plate 3022 placed at y = 0..8
+                                    mat3022 =
+                                        Mat4.makeTranslate3 0 0 0
+
+                                    -- Plate 3024 stacked on top: translated by y = -8 (occupies y = -8..0 in world)
+                                    mat3024 =
+                                        Mat4.makeTranslate3 10 -8 10
+
+                                    obb3022 =
+                                        toOBB env3022 mat3022
+
+                                    obb3024 =
+                                        toOBB env3024 mat3024
+
+                                    rawObb3022 =
+                                        toOBB box3022 mat3022
+
+                                    rawObb3024 =
+                                        toOBB box3024 mat3024
+                                in
+                                Expect.all
+                                    [ \_ -> Expect.equal True (testOBB 0.5 rawObb3022 rawObb3024)
+                                    , \_ -> Expect.equal False (testOBB 0.5 obb3022 obb3024)
+                                    ]
+                                    ()
+
+                            _ ->
+                                Expect.fail "Expected 1 bounding box each for 3022 and 3024"
+
+                    _ ->
+                        Expect.fail "Catalog parts 3022.dat and 3024.dat must exist"
+        , test "vertical stacking plate-on-brick (3024 on 3005) with effectiveEnvelope does not collide" <|
+            \_ ->
+                case ( knownCatalogPart "3005.dat", knownCatalogPart "3024.dat" ) of
+                    ( Just conn3005, Just conn3024 ) ->
+                        case ( conn3005.boundingBoxes, conn3024.boundingBoxes ) of
+                            ( [ box3005 ], [ box3024 ] ) ->
+                                let
+                                    env3005 =
+                                        effectiveEnvelope box3005 conn3005.connections
+
+                                    env3024 =
+                                        effectiveEnvelope box3024 conn3024.connections
+
+                                    -- Brick 3005 placed at y = 0..24
+                                    mat3005 =
+                                        Mat4.makeTranslate3 0 0 0
+
+                                    -- Plate 3024 stacked on top: translated by y = -8 (occupies y = -8..0 in world)
+                                    mat3024 =
+                                        Mat4.makeTranslate3 0 -8 0
+
+                                    obb3005 =
+                                        toOBB env3005 mat3005
+
+                                    obb3024 =
+                                        toOBB env3024 mat3024
+
+                                    rawObb3005 =
+                                        toOBB box3005 mat3005
+
+                                    rawObb3024 =
+                                        toOBB box3024 mat3024
+                                in
+                                Expect.all
+                                    [ \_ -> Expect.equal True (testOBB 0.5 rawObb3005 rawObb3024)
+                                    , \_ -> Expect.equal False (testOBB 0.5 obb3005 obb3024)
+                                    ]
+                                    ()
+
+                            _ ->
+                                Expect.fail "Expected 1 bounding box each for 3005 and 3024"
+
+                    _ ->
+                        Expect.fail "Catalog parts 3005.dat and 3024.dat must exist"
         , test "brick intersecting by 10 LDU inside another is flagged by checkCollisions" <|
             \_ ->
                 let

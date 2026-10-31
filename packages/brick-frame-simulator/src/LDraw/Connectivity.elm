@@ -1217,12 +1217,8 @@ isStudFile f =
 
 isAntiStudFile : String -> Bool
 isAntiStudFile f =
-    f
-        == "stud4.dat"
-        || f
-        == "stud3.dat"
-        || f
-        == "stud3a.dat"
+    String.startsWith "stud4" f
+        || String.startsWith "stud3" f
         || f
         == "tube.dat"
         || f
@@ -1640,6 +1636,38 @@ knownCatalogPart name =
         "3623" ->
             -- Plate 1 x 3
             Just (makeBrick 3 1 8 "3623.dat")
+
+        "3795" ->
+            -- Plate 2 x 6
+            Just (makeBrick 6 2 8 "3795.dat")
+
+        "3031" ->
+            -- Plate 4 x 4
+            Just (makeBrick 4 4 8 "3031.dat")
+
+        "4073" ->
+            -- Plate 1 x 1 Round
+            Just (makeBrick 1 1 8 "4073.dat")
+
+        "6141" ->
+            -- Plate 1 x 1 Round
+            Just (makeBrick 1 1 8 "6141.dat")
+
+        "85861" ->
+            -- Plate 1 x 1 Round with open stud
+            Just (makeBrick 1 1 8 "85861.dat")
+
+        "3062" ->
+            -- Brick 1 x 1 Round
+            Just (makeBrick 1 1 24 "3062.dat")
+
+        "3062a" ->
+            -- Brick 1 x 1 Round
+            Just (makeBrick 1 1 24 "3062a.dat")
+
+        "3062b" ->
+            -- Brick 1 x 1 Round
+            Just (makeBrick 1 1 24 "3062b.dat")
 
         "3700" ->
             Just (makeTechnicBrick 2 "3700.dat")
