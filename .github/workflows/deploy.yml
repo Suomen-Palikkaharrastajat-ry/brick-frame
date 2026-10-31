@@ -98,7 +98,7 @@ jobs:
       - name: Build
         env:
           VITE_PUBLIC_BASE: https://kehys.palikkaharrastajat.fi/
-          VITE_LDRAW_BASE: https://kehys.palikkaharrastajat.fi/ldraw/
+          VITE_LDRAW_BASE: "https://catalog.palikkaharrastajat.fi/raw"
         run: devenv shell --profile ci -- make dist-ci
 
       - name: Publish web-components bundle at site root

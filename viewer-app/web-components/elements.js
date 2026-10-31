@@ -93,7 +93,7 @@ class BaseBricksElement extends HTMLElement {
       mode: this.mode,
       defaultModel: this.getAttribute('src') ?? undefined,
       controlsEnabled: this.hasAttribute('controls'),
-      ldrawBase: this.getAttribute('ldraw-base') ?? undefined,
+      ldrawBase: this.getAttribute('ldraw-base') || import.meta.env.VITE_LDRAW_BASE || 'https://catalog.palikkaharrastajat.fi/raw',
       ldrawFallbackBase: this.getAttribute('ldraw-fallback-base') ?? undefined,
       maxRpm: this.getAttribute('max-rpm') ?? undefined,
       initialMotorIndex: this.getAttribute('motor-index') ?? undefined,
