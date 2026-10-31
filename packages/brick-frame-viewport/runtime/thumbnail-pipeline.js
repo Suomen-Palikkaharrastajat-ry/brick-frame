@@ -156,7 +156,27 @@ async function fetchDatText(file, ldrawBase) {
 
   const pending = (async () => {
     const base = ldrawBase.replace(/\/+$/, '')
-    for (const url of [`${base}/parts/${normalized}`, `${base}/p/${normalized}`]) {
+    const isPrimitive =
+      normalized.startsWith('p/') ||
+      normalized.startsWith('48/') ||
+      normalized.startsWith('8/') ||
+      normalized.includes('-') ||
+      /^(stud|ring|edge|cyl|disc|box|tooth|peghole|bush|rect|joint)/.test(normalized)
+
+    const urls = []
+    if (normalized.startsWith('parts/') || normalized.startsWith('p/')) {
+      urls.push(`${base}/${normalized}`)
+    } else if (normalized.startsWith('s/')) {
+      urls.push(`${base}/parts/${normalized}`)
+    } else if (normalized.startsWith('48/') || normalized.startsWith('8/')) {
+      urls.push(`${base}/p/${normalized}`)
+    } else if (isPrimitive) {
+      urls.push(`${base}/p/${normalized}`, `${base}/parts/${normalized}`, `${base}/parts/s/${normalized}`)
+    } else {
+      urls.push(`${base}/parts/${normalized}`, `${base}/parts/s/${normalized}`, `${base}/p/${normalized}`)
+    }
+
+    for (const url of urls) {
       try {
         const resp = await fetch(url)
         if (!resp.ok) continue

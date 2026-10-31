@@ -1236,11 +1236,11 @@ handlePartResult name result model =
                 -- references in turn, then build the placements that are ready.
                 let
                     newLines =
-                        case result of
-                            Ok text ->
-                                Parser.parseFile text
+                        case Dict.get name newCache of
+                            Just (Resolve.Loaded lines) ->
+                                lines
 
-                            Err _ ->
+                            _ ->
                                 []
 
                     pending =
@@ -1263,11 +1263,11 @@ handlePartResult name result model =
                 Resolve.updateCache name result Parser.parseFile model.partCache
 
             newLines =
-                case result of
-                    Ok text ->
-                        Parser.parseFile text
+                case Dict.get name newCache of
+                    Just (Resolve.Loaded lines) ->
+                        lines
 
-                    Err _ ->
+                    _ ->
                         []
 
             additionalPending =

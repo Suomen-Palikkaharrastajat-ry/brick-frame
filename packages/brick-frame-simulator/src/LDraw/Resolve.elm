@@ -7,6 +7,7 @@ module LDraw.Resolve exposing
     , fetchPartPrimitive
     , initCache
     , markLoading
+    , partCandidateUrls
     , pendingParts
     , resolverConfig
     , seedFromMpd
@@ -284,7 +285,6 @@ library — none of them starts a file in `parts/` — so primitives such as
 isLikelyPrimitiveName : String -> Bool
 isLikelyPrimitiveName name =
     String.contains "-" name
-        || startsWithDigit name
         || isLetterTwoDigitsLetter [ 't', 'r' ] name
         || isLetterDigit 'h' name
         || List.any
@@ -378,16 +378,6 @@ isLetterDigit letter name =
             first == letter && Char.isDigit d
 
         _ ->
-            False
-
-
-startsWithDigit : String -> Bool
-startsWithDigit value =
-    case String.uncons value of
-        Just ( first, _ ) ->
-            first >= '0' && first <= '9'
-
-        Nothing ->
             False
 
 
