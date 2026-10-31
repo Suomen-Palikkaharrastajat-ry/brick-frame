@@ -188,6 +188,16 @@ misalignmentTests =
                             |> Tuple.first
                 in
                 Expect.equal [] (Health.check noParts doc Set.empty)
+        , test "an upright brick adjacent to a SNOT side stud is not falsely treated as vertically supported by the side stud" <|
+            \_ ->
+                let
+                    doc =
+                        lines
+                            [ brick "87087.dat" 10 -24 10
+                            , brick "3005.dat" 10 -38 -20
+                            ]
+                in
+                Expect.equal [] (Health.check noParts doc Set.empty)
         , test "an aligned slope on a brick is healthy" <|
             \_ ->
                 lines [ brick "3003.dat" 0 -24 0, brick "3039.dat" 0 -48 10 ]
@@ -297,6 +307,34 @@ technicTests =
             \_ ->
                 lines [ "1 7 5 -24 0 1 0 0 0 1 0 0 0 1 3648.dat" ]
                     |> (\doc -> Expect.equal [] (Health.check noParts doc Set.empty))
+        , test "a friction pin 2780 in a Technic brick 3700 hole is not an overlap" <|
+            \_ ->
+                lines
+                    [ brick "3700.dat" 0 -24 0
+                    , brick "2780.dat" 0 -14 0
+                    ]
+                    |> (\doc -> Expect.equal [] (Health.check noParts doc Set.empty))
+        , test "a friction pin 2780 in a 3648 gear pin hole is not an overlap" <|
+            \_ ->
+                lines
+                    [ "1 7 0 -60 0 1 0 0 0 1 0 0 0 1 3648.dat"
+                    , brick "2780.dat" 10 -50 0
+                    ]
+                    |> (\doc -> Expect.equal [] (Health.check noParts doc Set.empty))
+        , test "a friction pin 2780 colliding with 3648 gear rim is an overlap" <|
+            \_ ->
+                let
+                    doc =
+                        lines
+                            [ "1 7 0 -60 0 1 0 0 0 1 0 0 0 1 3648.dat"
+                            , brick "2780.dat" 25 -60 0
+                            ]
+                in
+                Expect.equal True (List.any isOverlap (Health.check noParts doc Set.empty))
+        , test "a Technic brick 3700 placed off-grid is exempt from the stud rule" <|
+            \_ ->
+                lines [ brick "3700.dat" 5 -24 0 ]
+                    |> (\doc -> Expect.equal [] (Health.check noParts doc Set.empty))
         ]
 
 
@@ -368,6 +406,23 @@ planTests =
                 in
                 Expect.equal [ "Lift 2 x 4 brick out of another brick" ]
                     (List.map (Health.describe (\_ _ -> "2 x 4 brick") doc) fixes)
+        , test "when a ground brick is misaligned with a stacked brick on top, only the ground brick is planned to move in the first pass" <|
+            \_ ->
+                let
+                    doc =
+                        lines [ brick "3001.dat" 5 -24 0, brick "3005.dat" 15 -48 10 ]
+
+                    issues =
+                        Health.check noParts doc Set.empty
+
+                    fixes =
+                        Health.plan noParts doc Set.empty issues
+                in
+                Expect.all
+                    [ \_ -> Expect.equal [ Misaligned { placement = 0 } ] issues
+                    , \_ -> Expect.equal [ 0 ] (List.map .placement fixes)
+                    ]
+                    ()
         ]
 
 

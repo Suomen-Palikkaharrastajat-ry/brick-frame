@@ -484,9 +484,17 @@ worldPoints keep item =
             )
 
 
-studsOf : Item -> List Vec3
-studsOf item =
-    List.map Tuple.first item.studs
+upwardStudsOf : Item -> List Vec3
+upwardStudsOf item =
+    item.studs
+        |> List.filterMap
+            (\( pos, norm ) ->
+                if Vec3.getY norm < -0.7 then
+                    Just pos
+
+                else
+                    Nothing
+            )
 
 
 antiStudsOf : Item -> List Vec3
@@ -551,6 +559,7 @@ levelOf item =
 
 
 {-| The studs of other parts at the part's anti-stud height, under its footprint.
+Only upward-facing studs (normal Y < -0.7) can vertically support an upright part.
 -}
 supportStuds : Item -> List Item -> List Vec3
 supportStuds item others =
@@ -563,7 +572,7 @@ supportStuds item others =
                 footprint =
                     DragPlane.worldBox item.matrix item.box
             in
-            List.concatMap studsOf others
+            List.concatMap upwardStudsOf others
                 |> List.filter
                     (\stud ->
                         abs (Vec3.getY stud - level)
