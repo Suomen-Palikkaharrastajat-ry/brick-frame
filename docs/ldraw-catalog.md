@@ -134,14 +134,15 @@ The bundler traverses lines 1 of each `.dat` file to find dependencies:
 In `brick-frame`, environment variables configure the resolution tiers:
 
 ```env
-# Primary CDN (hosted on GitHub Pages)
-VITE_LDRAW_BASE="https://brick-frame.github.io/ldraw-catalog/raw"
-VITE_LDRAW_BUNDLES_BASE="https://brick-frame.github.io/ldraw-catalog/bundles"
-VITE_LDRAW_THUMBNAILS_BASE="https://brick-frame.github.io/ldraw-catalog/thumbnails"
-VITE_LDRAW_INDICES_BASE="https://brick-frame.github.io/ldraw-catalog/indices"
+# Primary CDN (brick-catalog, hosted on GitHub Pages)
+VITE_LDRAW_BASE="https://catalog.palikkaharrastajat.fi/raw"
+VITE_LDRAW_BUNDLES_BASE="https://catalog.palikkaharrastajat.fi/bundles"
+VITE_LDRAW_INDICES_BASE="https://catalog.palikkaharrastajat.fi/indices"
+VITE_LDRAW_MANIFEST_URL="https://catalog.palikkaharrastajat.fi/manifests/library-manifest.json"
 
-# Fallback CDN (official or raw mirror)
-VITE_LDRAW_FALLBACK_BASE="https://raw.githubusercontent.com/gkjohnson/ldraw-parts-library/master/complete/ldraw"
+# Optional fallback for parts the catalog does not have (default: disabled).
+# Example: an unofficial full-library mirror; leave unset to use only the catalog.
+# VITE_LDRAW_FALLBACK_BASE="https://raw.githubusercontent.com/kulits/ldraw-parts/master/ldraw"
 ```
 
 ### 4.2 Elm Resolver Upgrades (`Resolve.elm`)
